@@ -26,6 +26,10 @@ function buyUpgrades() {
 //! Achievement Hunt
 function achievementHunt() {
     console.log('Achievement hunt started')
+
+    console.log('--- Olden days ---')
+    oldenDays()
+
     console.log('--- Tabloid addiction ---')
     tabloidAddiction()
 }
@@ -43,4 +47,13 @@ function tabloidAddiction() {
         commentsText1Q?.click()
         clickCount++
     }, 100)
+}
+
+//* Olden days
+function oldenDays() {
+    const logButtonQ = document.querySelector('#logButton div')
+    logButtonQ?.click()
+    const oldenDayButtonQ = document.querySelector('#oldenDays .icon')
+    oldenDayButtonQ?.click()
+    logButtonQ?.click()
 }
