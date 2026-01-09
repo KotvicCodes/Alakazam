@@ -75,7 +75,7 @@ async function updateAutoClickerStatus() {
                updateButtonState(response.enabled)
           }
      } catch (error) {
-          // Ignore if tab is not ready
+          // ignore if tab is not ready
      }
 }
 

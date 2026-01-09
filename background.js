@@ -1,20 +1,20 @@
-//! Background Service Worker
+//
 
-//* Extension Lifecycle
+//! Background Service Worker
+//* Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
-     console.log('Cookie Clicker Optimizer installed')
+     console.log('Alakazam installed')
 })
 
-//* Message Handling
+//* Message handling
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
      if (request.action === 'contentScriptReady') {
           console.log('Content script ready on tab:', sender.tab.id)
      }
-
      return true
 })
 
-//* Periodic Data Collection (Optional)
+//* Periodic data collection (optional)
 // you can implement periodic analysis here
 // for example, check game state every minute
 let analysisInterval = null
