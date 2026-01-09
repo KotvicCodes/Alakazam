@@ -23,25 +23,24 @@ function buyUpgrades() {
     upgrades.forEach((upgrade) => upgrade.click())
 }
 
+//! Achievement Hunt
 function achievementHunt() {
     console.log('Achievement hunt started')
-    //* Tabloid addiction
-    const commentsTextQ = document.getElementById('commentsText')
+    console.log('--- Tabloid addiction ---')
+    tabloidAddiction()
+}
+
+//* Tabloid addiction
+function tabloidAddiction() {
     const commentsText1Q = document.getElementById('commentsText1')
-    const commentsText2Q = document.getElementById('commentsText2')
 
+    let clickCount = 0
     const clickInterval = setInterval(() => {
-        const achievementTitle = document.querySelector('h5 .title')?.innerText
-        const tabloidAddictionAchieved = achievementTitle === 'Tabloid addiction'
-
-        if (tabloidAddictionAchieved) {
-            console.log('Tabloid addiction achieved!')
+        if (clickCount >= 75) {
             clearInterval(clickInterval)
-        } else {
-            commentsTextQ?.click()
-            commentsText1Q?.click()
-            commentsText2Q?.click()
-            console.log('clicking for tabloid addiction')
+            return
         }
+        commentsText1Q?.click()
+        clickCount++
     }, 100)
 }
