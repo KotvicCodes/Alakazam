@@ -1,9 +1,11 @@
-console.log('Cookie Clicker Optimizer: Content script loaded')
+//
+
+console.log('Alakazam: Content script loaded')
 
 let autoClickerEnabled = false
 let autoClickerInterval = null
 
-// Wait for the game to be ready
+// wait for the game to be ready
 function waitForGame() {
      return new Promise((resolve) => {
           const checkGame = setInterval(() => {
@@ -15,13 +17,13 @@ function waitForGame() {
      })
 }
 
-// Initialize when game is ready
+// initialize when game is ready
 waitForGame().then(() => {
-     console.log('Cookie Clicker game detected and ready!')
-     chrome.runtime.sendMessage({ action: 'contentScriptReady' })
+  console.log('Alakazam: Cookie Clicker game detected and ready!')
+  chrome.runtime.sendMessage({ action: 'contentScriptReady' })
 })
 
-// Listen for messages from popup
+// listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
      if (request.action === 'getGameData') {
           try {
@@ -54,7 +56,7 @@ function startAutoClicker() {
 
      autoClickerInterval = setInterval(() => {
           if (typeof Game !== 'undefined' && Game.ready) {
-               // Click the big cookie
+               // click the big cookie
                Game.ClickCookie()
           }
      }, 10) // click every 10ms (100 clicks per second)
