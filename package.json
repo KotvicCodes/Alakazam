@@ -8,7 +8,7 @@
   "prettier": {
     "semi": false,
     "singleQuote": true,
-    "tabWidth": 5,
+    "tabWidth": 4,
     "printWidth": 105,
     "trailingComma": "none"
   }
