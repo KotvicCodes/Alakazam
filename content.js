@@ -27,10 +27,8 @@ function buyUpgrades() {
 function achievementHunt() {
     console.log('Achievement hunt started')
 
-    console.log('--- Olden days ---')
     oldenDays()
-
-    console.log('--- Tabloid addiction ---')
+    godComplex()
     tabloidAddiction()
 }
 
@@ -53,7 +51,29 @@ function tabloidAddiction() {
 function oldenDays() {
     const logButtonQ = document.querySelector('#logButton div')
     logButtonQ?.click()
+
     const oldenDayButtonQ = document.querySelector('#oldenDays .icon')
     oldenDayButtonQ?.click()
+
     logButtonQ?.click()
+}
+
+//* God complex
+function godComplex() {
+    const bakeryNameQ = document.getElementById('bakeryName')
+    bakeryNameQ.click()
+
+    const bakeryNameInputQ = document.getElementById('bakeryNameInput')
+    bakeryNameInputQ.value = 'Orteil'
+
+    const confrimButtonQ = document.getElementById('promptOption0')
+    confrimButtonQ.click()
+
+    setTimeout(() => {
+        const bakeryNameAfterQ = document.getElementById('bakeryName')
+        bakeryNameAfterQ.click()
+        const bakeryNameInputAfterQ = document.getElementById('bakeryNameInput')
+        bakeryNameInputAfterQ.value = 'Alakazam'
+        confrimButtonQ.click()
+    }, 1000)
 }
