@@ -29,6 +29,9 @@ function achievementHunt() {
 
     oldenDays()
     godComplex()
+    setTimeout(() => {
+        hereYouGo()
+    }, 500)
     tabloidAddiction()
 }
 
@@ -75,5 +78,17 @@ function godComplex() {
         const bakeryNameInputAfterQ = document.getElementById('bakeryNameInput')
         bakeryNameInputAfterQ.value = 'Alakazam'
         confrimButtonQ.click()
+    }, 1000)
+}
+
+//* Here you go
+function hereYouGo() {
+    const statsQ = document.querySelector('#statsButton div')
+    statsQ?.click()
+
+    setTimeout(() => {
+        const achievementSlotQ = document.querySelector('[data-id="204"]')
+        achievementSlotQ?.click()
+        statsQ?.click()
     }, 1000)
 }
