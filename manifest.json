@@ -24,8 +24,5 @@
       "js": ["content.js"],
       "run_at": "document_idle"
     }
-  ],
-  "background": {
-    "service_worker": "background.js"
-  }
+  ]
 }
