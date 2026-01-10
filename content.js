@@ -27,7 +27,7 @@ function buyUpgrades() {
     upgrades.forEach((upgrade) => upgrade.click())
 }
 
-//* Golden cookie clicker
+//! Golden cookie clicker
 setInterval(() => {
     checkForGolden()
 }, 500)
@@ -43,6 +43,7 @@ function checkForGolden() {
 function achievementHunt() {
     console.log('Achievement hunt started')
 
+    tinyCookie()
     oldenDays()
     godComplex()
     setTimeout(() => {
@@ -107,4 +108,15 @@ function hereYouGo() {
         achievementSlotQ?.click()
         statsQ?.click()
     }, 1000)
+}
+
+//* Tiny cookie
+function tinyCookie() {
+    const statsQ = document.querySelector('#statsButton div')
+    statsQ?.click()
+
+    const tinyCookieQ = document.querySelector('#statsGeneral .listing .price .tinyCookie')
+    tinyCookieQ?.click()
+
+    statsQ?.click()
 }
