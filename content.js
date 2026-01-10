@@ -1,5 +1,6 @@
 //
 
+//! Main Script
 console.log('Alakazam: Content script loaded')
 const bigCookieQ = document.getElementById('bigCookie')
 
@@ -8,19 +9,34 @@ setTimeout(() => {
         bigCookieQ?.click()
         buyUpgrades()
         buyBakers()
+        checkForGolden()
     }, 1)
 
     achievementHunt()
 }, 3000)
 
+//* Buy bakers
 function buyBakers() {
     const bakers = document.querySelectorAll('.product.unlocked')
     bakers.forEach((upgrade) => upgrade.click())
 }
 
+//* Buy upgrades
 function buyUpgrades() {
     const upgrades = document.querySelectorAll('.crate.upgrade')
     upgrades.forEach((upgrade) => upgrade.click())
+}
+
+//* Golden cookie clicker
+setInterval(() => {
+    checkForGolden()
+}, 500)
+
+function checkForGolden() {
+    const goldenCookieQ = document.querySelector('#shimmers .shimmer')
+    if (goldenCookieQ) {
+        goldenCookieQ.click()
+    }
 }
 
 //! Achievement Hunt
