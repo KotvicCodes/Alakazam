@@ -22,3 +22,11 @@ Also please do not sue me if your computer explodes, implodes or does something 
     - Stifling the press
     - Cookie-dunker
     - Fading luck
+
+## Debugging
+For debugging, it is useful to see, how exactly does the macro work in different stages of the game. Here is the code to accelerate your progress:
+``` JavaScript 
+for (let i = 0; i < 50; i++) {
+    var newShimmer=new Game.shimmer("golden");
+}
+```
