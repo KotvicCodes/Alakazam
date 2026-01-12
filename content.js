@@ -9,7 +9,7 @@ setTimeout(() => {
         bigCookieQ?.click()
         buyUpgrades()
         buyBakers()
-        checkForGolden()
+        clickGoldenCookie()
     }, 1)
 
     achievementHunt()
@@ -152,11 +152,7 @@ function buyUpgrades() {
 }
 
 //! Golden cookie clicker
-setInterval(() => {
-    checkForGolden()
-}, 500)
-
-function checkForGolden() {
+function clickGoldenCookie() {
     const goldenCookieQ = document.querySelector('#shimmers .shimmer')
     if (goldenCookieQ) {
         goldenCookieQ.click()
