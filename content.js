@@ -15,7 +15,7 @@ setTimeout(() => {
     achievementHunt()
 }, 3000)
 
-//* Buy bakers
+//! Cookies Per Second Tracking
 function getCPS() {
     const cpsQ = document.getElementById('cookiesPerSecond')
     const cpsFull = cpsQ.innerText.replace('per second:', '').trim()
@@ -140,12 +140,39 @@ const suffixes = {
     centillion: 10 ** 303
 }
 
+//! Buy Towers
+//* Base cps
+// prettier-ignore
+buildingBaseProduction = {
+    "cursor": 0.1,
+    "grandma": 1,
+    "farm": 8,
+    "mine": 47,
+    "factory": 260,
+    "bank": 1400,
+    "temple": 7_800,
+    "wizard tower": 44_000,
+    "shipment": 260_000,
+    "alchemy lab": 1_600_000,
+    "portal": 10_000_000,
+    "time machine": 65_000_000,
+    "antimatter condenser": 430_000_000,
+    "prism": 2900_000_000,
+    "chancemaker": 21_000_000_000,
+    "fractal engine": 150_000_000_000,
+    "javascript console": 1100_000_000_000,
+    "idleverse": 8300_000_000_000,
+    "cortex baker": 64_000_000_000_000,
+    "you": 510_000_000_000_000,
+}
+
+//* Buying towers logic
 function buyBakers() {
     const bakers = document.querySelectorAll('.product.unlocked')
     bakers.forEach((upgrade) => upgrade.click())
 }
 
-//* Buy upgrades
+//! Buy upgrades
 function buyUpgrades() {
     const upgrades = document.querySelectorAll('.crate.upgrade')
     upgrades.forEach((upgrade) => upgrade.click())
