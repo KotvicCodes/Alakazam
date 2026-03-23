@@ -166,16 +166,148 @@ buildingBaseProduction = {
     "you": 510_000_000_000_000,
 }
 
-//* Buying towers logic
-function buyBakers() {
-    const bakers = document.querySelectorAll('.product.unlocked')
-    bakers.forEach((upgrade) => upgrade.click())
+//! Autobuy Strategy Implementation
+let evaluationWindowMs = 30000 // 30 seconds
+let lastAutobuyTime = 0
+let currentlyWaitingFor = null
+
+function getCurrentCookies() {
+    const cookieCounterQ = document.getElementById('cookies')
+    if (!cookieCounterQ) return 0
+    
+    const cookieText = cookieCounterQ.innerText.replace(/[^\d.]/g, '')
+    return parseFloat(cookieText) || 0
 }
 
-//! Buy upgrades
+function getBuildingPrice(buildingName) {
+    const productQ = document.querySelector(`.product[onclick*="${buildingName}"]`)
+    if (!productQ) return null
+    
+    const priceQ = productQ.querySelector('.price')
+    if (!priceQ) return null
+    
+    const priceText = priceQ.innerText.replace(/[^\d.]/g, '')
+    return parseFloat(priceText) || 0
+}
+
+function getUpgradePrices() {
+    const upgrades = []
+    const upgradeElements = document.querySelectorAll('.crate.upgrade')
+    
+    upgradeElements.forEach(upgrade => {
+        const priceQ = upgrade.querySelector('.price')
+        if (!priceQ) return
+        
+        const priceText = priceQ.innerText.replace(/[^\d.]/g, '')
+        const price = parseFloat(priceText) || 0
+        
+        upgrades.push({
+            element: upgrade,
+            price: price,
+            affordable: price <= getCurrentCookies()
+        })
+    })
+    
+    return upgrades
+}
+
+function getAffordableBuildings() {
+    const buildings = []
+    const productElements = document.querySelectorAll('.product.unlocked')
+    const currentCookies = getCurrentCookies()
+    const currentCPS = getCPS()
+    const futureTime = Date.now() + evaluationWindowMs
+    
+    productElements.forEach(product => {
+        const priceQ = product.querySelector('.price')
+        if (!priceQ) return
+        
+        const priceText = priceQ.innerText.replace(/[^\d.]/g, '')
+        const price = parseFloat(priceText) || 0
+        
+        // Get building name from the product
+        const nameQ = product.querySelector('.name')
+        const buildingName = nameQ ? nameQ.innerText : 'unknown'
+        
+        // Get base CPS for this building
+        const baseCPS = buildingBaseProduction[buildingName.toLowerCase()] || 0
+        
+        const timeToAfford = currentCookies >= price ? 0 : (price - currentCookies) / currentCPS * 1000
+        const isAffordableInWindow = timeToAfford <= evaluationWindowMs
+        
+        if (isAffordableInWindow) {
+            buildings.push({
+                element: product,
+                name: buildingName,
+                price: price,
+                baseCPS: baseCPS,
+                efficiency: baseCPS / price, // CPS gain per cookie
+                timeToAfford: timeToAfford,
+                isAffordableNow: currentCookies >= price
+            })
+        }
+    })
+    
+    return buildings
+}
+
 function buyUpgrades() {
-    const upgrades = document.querySelectorAll('.crate.upgrade')
-    upgrades.forEach((upgrade) => upgrade.click())
+    // Buy all affordable upgrades immediately (highest priority)
+    const upgrades = getUpgradePrices()
+    let boughtUpgrade = false
+    
+    upgrades.forEach(upgrade => {
+        if (upgrade.affordable) {
+            upgrade.element.click()
+            boughtUpgrade = true
+        }
+    })
+    
+    return boughtUpgrade
+}
+
+function buyBakers() {
+    // If upgrades were bought, wait until next cycle
+    if (buyUpgrades()) {
+        lastAutobuyTime = Date.now()
+        return
+    }
+    
+    const now = Date.now()
+    
+    // Only evaluate buildings every evaluation window
+    if (now - lastAutobuyTime < evaluationWindowMs && currentlyWaitingFor) {
+        // Check if our target building is now affordable
+        if (getCurrentCookies() >= currentlyWaitingFor.price) {
+            currentlyWaitingFor.element.click()
+            currentlyWaitingFor = null
+            lastAutobuyTime = now
+        }
+        return
+    }
+    
+    // Time to re-evaluate
+    const affordableBuildings = getAffordableBuildings()
+    
+    if (affordableBuildings.length === 0) {
+        return // Nothing to do
+    }
+    
+    // Sort by efficiency (highest first)
+    affordableBuildings.sort((a, b) => b.efficiency - a.efficiency)
+    
+    const bestBuilding = affordableBuildings[0]
+    
+    if (bestBuilding.isAffordableNow) {
+        // Buy immediately if already affordable
+        bestBuilding.element.click()
+        lastAutobuyTime = now
+        currentlyWaitingFor = null
+    } else {
+        // Set as target to wait for
+        currentlyWaitingFor = bestBuilding
+        lastAutobuyTime = now
+    }
 }
 
 //! Golden cookie clicker
