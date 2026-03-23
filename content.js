@@ -5,12 +5,19 @@ console.log('Alakazam: Content script loaded')
 const bigCookieQ = document.getElementById('bigCookie')
 
 setTimeout(() => {
+    // fast click loop - dedicated to clicking only
     setInterval(() => {
         bigCookieQ?.click()
+    }, 0)
+    
+    console.log('Alakazam: Click loop started')
+    
+    // slower purchase logic loop
+    setInterval(() => {
         buyUpgrades()
         buyBakers()
         clickGoldenCookie()
-    }, 1)
+    }, 50)
 
     achievementHunt()
 }, 3000)
