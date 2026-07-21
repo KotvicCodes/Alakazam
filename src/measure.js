@@ -11,11 +11,38 @@
 const { parseGameNumber, firstNumberIn } = window.Alakazam.parse
 const { hoverOn, hoverOff } = window.Alakazam.input
 
-//* nextFrame
-// waits one animation frame; the game redraws its tooltip on its own loop, so
-// after hovering we yield a frame (or two) before reading #tooltip
-function nextFrame() {
-    return new Promise(resolve => requestAnimationFrame(() => resolve()))
+//* Base production
+// published base CpS per building (public knowledge, the same values the game's
+// wiki lists). used to score a building before you own one of it, when its
+// tooltip shows only flavor text and has no per-unit production line yet.
+const BASE_PRODUCTION = {
+    cursor: 0.1,
+    grandma: 1,
+    farm: 8,
+    mine: 47,
+    factory: 260,
+    bank: 1400,
+    temple: 7800,
+    'wizard tower': 44000,
+    shipment: 260000,
+    'alchemy lab': 1600000,
+    portal: 10000000,
+    'time machine': 65000000,
+    'antimatter condenser': 430000000,
+    prism: 2900000000,
+    chancemaker: 21000000000,
+    'fractal engine': 150000000000,
+    'javascript console': 1100000000000,
+    idleverse: 8300000000000,
+    'cortex baker': 64000000000000,
+    you: 510000000000000
+}
+
+//* settle
+// after hovering, the game fills #tooltip on its own draw loop rather than
+// synchronously; wait a beat so the fresh text is in place before we read it
+function settle() {
+    return new Promise(resolve => setTimeout(resolve, 90))
 }
 
 //* readTooltip
@@ -23,8 +50,7 @@ function nextFrame() {
 // element (or null). caller reads what it needs, then we hover back off.
 async function readTooltip(el) {
     hoverOn(el)
-    await nextFrame()
-    await nextFrame()
+    await settle()
     const tip = document.getElementById('tooltip')
     // clone-free read: return the live node only while it is shown for this el
     const text = tip ? tip.innerText : ''
@@ -64,22 +90,29 @@ async function readBuildings(bank) {
     const products = document.querySelectorAll('.product.unlocked')
 
     for (const product of products) {
-        const nameEl = product.querySelector('.name')
         const priceEl = product.querySelector('.price')
-        if (!nameEl || !priceEl) continue
+        if (!priceEl) continue
 
-        const name = nameEl.innerText.trim()
+        // the name lives in .productName (fallback .title); it is only used for
+        // the base-production lookup and logging, so a miss must not skip the
+        // building the way requiring .name used to skip every one of them
+        const nameEl = product.querySelector('.productName') || product.querySelector('.title')
+        const name = nameEl ? nameEl.innerText.trim() : ''
         const price = parseGameNumber(priceEl.innerText)
         if (Number.isNaN(price)) continue
 
-        // pull per-unit CpS from the tooltip's "each ... produces N cookies per second"
+        // exact, upgrade-aware per-unit CpS is in the tooltip only once you own
+        // at least one; before that the tooltip is flavor text, so also carry the
+        // base production so the first purchase stays scorable
         const tip = await readTooltip(product)
-        const perUnit = perUnitCpsFromTooltip(tip.text)
+        const perUnitCps = perUnitCpsFromTooltip(tip.text)
+        const baseCps = BASE_PRODUCTION[name.toLowerCase()]
 
         buildings.push({
             name,
             price,
-            perUnitCps: perUnit,       // NaN if the line was not found
+            perUnitCps,   // NaN until owned >= 1
+            baseCps,      // undefined if the display name is unknown
             affordable: bank >= price,
             element: product
         })

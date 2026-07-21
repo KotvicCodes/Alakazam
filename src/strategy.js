@@ -22,7 +22,12 @@ function paybackSeconds(price, deltaCps) {
 // building with no readable per-unit CpS (Infinity payback) sorts to the back.
 function rankBuildings(buildings) {
     return buildings
-        .map(b => ({ ...b, payback: paybackSeconds(b.price, b.perUnitCps) }))
+        .map(b => {
+            // prefer the exact tooltip figure; before a building is owned that is
+            // NaN, so fall back to its published base production
+            const cps = Number.isFinite(b.perUnitCps) && b.perUnitCps > 0 ? b.perUnitCps : b.baseCps
+            return { ...b, scoredCps: cps, payback: paybackSeconds(b.price, cps) }
+        })
         .sort((a, b) => a.payback - b.payback)
 }
 
