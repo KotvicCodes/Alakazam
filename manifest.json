@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Alakazam",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Analyzes and optimizes Cookie Clicker strategy",
   "permissions": [
     "activeTab",
