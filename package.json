@@ -1,6 +1,6 @@
 {
   "name": "alakazam",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Analyzes and optimizes Cookie Clicker strategy",
   "devDependencies": {
     "prettier": "^3.1.0"

@@ -112,6 +112,37 @@ const SUFFIXES = {
     centillion: 10 ** 303
 }
 
+//* Short suffixes
+// Cookie Clicker's "Short numbers" setting renders magnitudes as abbreviations
+// ("134B", "1.234Qa", "5.6Qi") instead of full words. Keys are lowercase because
+// parseGameNumber lowercases the text first. These match the game's own scheme:
+// M/B/T then Qa/Qi/Sx/Sp/Oc/No/Dc, and the *-decillion family as <prefix>D.
+// The single-letter and mid-range entries cover essentially all normal play;
+// the very high tail (past vigintillion) is worth a live sanity-check, and long
+// and scientific display modes are already fully covered elsewhere.
+const SHORT_SUFFIXES = {
+    m: 10 ** 6,
+    b: 10 ** 9,
+    t: 10 ** 12,
+    qa: 10 ** 15,
+    qi: 10 ** 18,
+    sx: 10 ** 21,
+    sp: 10 ** 24,
+    oc: 10 ** 27,
+    no: 10 ** 30,
+    dc: 10 ** 33,
+    und: 10 ** 36,
+    dod: 10 ** 39,
+    trd: 10 ** 42,
+    qad: 10 ** 45,
+    qid: 10 ** 48,
+    sxd: 10 ** 51,
+    spd: 10 ** 54,
+    ocd: 10 ** 57,
+    nod: 10 ** 60,
+    vg: 10 ** 63
+}
+
 //* parseGameNumber
 // turns any Cookie Clicker rendered number into a plain Number, or NaN when the
 // text holds no number. handles suffix words, scientific notation and grouped
@@ -138,7 +169,7 @@ function parseGameNumber(rawText) {
     const suffixWord = match[2]
     if (!suffixWord) return numberPart
 
-    const multiplier = SUFFIXES[suffixWord]
+    const multiplier = SUFFIXES[suffixWord] || SHORT_SUFFIXES[suffixWord]
     // an unrecognized trailing word (e.g. "cookies") is not a magnitude suffix,
     // so treat the leading number as-is rather than discarding it
     return multiplier ? numberPart * multiplier : numberPart
@@ -149,11 +180,14 @@ function parseGameNumber(rawText) {
 // lines like "each cursor produces 0.1 cookies per second".
 function firstNumberIn(rawText) {
     if (rawText === null || rawText === undefined) return NaN
-    const match = String(rawText).match(/-?[\d,.]+(?:\s*e\s*[+-]?\d+)?(?:\s+[a-z]+illion| thousand| googol)?/i)
+    // digits, then either scientific tail or a suffix word/abbreviation. an
+    // attached unit like " cookies" gets captured too but parseGameNumber ignores
+    // any word that is not a known magnitude, so the value stays correct.
+    const match = String(rawText).match(/-?[\d,.]+(?:\s*e\s*[+-]?\d+|\s*[a-z]+)?/i)
     return match ? parseGameNumber(match[0]) : NaN
 }
 
 // expose on window so the other content-script files can use these (content
 // scripts share one global scope but are separate files)
 window.Alakazam = window.Alakazam || {}
-window.Alakazam.parse = { SUFFIXES, parseGameNumber, firstNumberIn }
+window.Alakazam.parse = { SUFFIXES, SHORT_SUFFIXES, parseGameNumber, firstNumberIn }
