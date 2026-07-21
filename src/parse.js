@@ -1,3 +1,6 @@
+// wrapped in an IIFE so its top-level names stay private: all content scripts
+// share one scope, so bare top-level declarations across files would collide
+;(function () {
 //! Number Parsing
 // Cookie Clicker renders numbers in several display modes depending on the
 // player's settings: named suffixes ("1.234 million"), short scientific
@@ -263,3 +266,4 @@ function firstNumberIn(rawText) {
 // scripts share one global scope but are separate files)
 window.Alakazam = window.Alakazam || {}
 window.Alakazam.parse = { SUFFIXES, SHORT_SUFFIXES, parseGameNumber, firstNumberIn }
+})()

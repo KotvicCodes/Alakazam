@@ -1,3 +1,6 @@
+// wrapped in an IIFE so its top-level names stay private: all content scripts
+// share one scope, so bare top-level declarations across files would collide
+;(function () {
 //! Alakazam Main
 // Orchestrates the fair-play autoplayer: a fast loop that clicks the big cookie
 // and grabs shimmers, and a slow loop that measures the DOM, asks the strategy
@@ -153,3 +156,4 @@ function tinyCookie() {
     simulateClick(document.querySelector('#statsGeneral .listing .price .tinyCookie'))
     simulateClick(statsButton)
 }
+})()

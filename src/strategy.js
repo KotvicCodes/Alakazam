@@ -1,3 +1,6 @@
+// wrapped in an IIFE so its top-level names stay private: all content scripts
+// share one scope, so bare top-level declarations across files would collide
+;(function () {
 //! Local Strategy Engine
 // Pure functions over a snapshot(): given what we measured, decide the single
 // best next purchase. Nothing here touches the DOM; it returns a decision and
@@ -65,3 +68,4 @@ function decide(snap) {
 
 window.Alakazam = window.Alakazam || {}
 window.Alakazam.strategy = { decide, rankBuildings, paybackSeconds }
+})()

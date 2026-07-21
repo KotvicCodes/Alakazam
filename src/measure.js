@@ -1,3 +1,6 @@
+// wrapped in an IIFE so its top-level names stay private: all content scripts
+// share one scope, so bare top-level declarations across files would collide
+;(function () {
 //! DOM-Only Measurement Layer
 // Everything here reads only what a human sees in the rendered page. Exact
 // per-building production and upgrade prices come from the game's own hover
@@ -194,3 +197,4 @@ async function snapshot() {
 
 window.Alakazam = window.Alakazam || {}
 window.Alakazam.measure = { snapshot, readGlobals, readShimmers }
+})()
