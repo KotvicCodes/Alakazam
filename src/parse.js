@@ -114,13 +114,14 @@ const SUFFIXES = {
 
 //* Short suffixes
 // Cookie Clicker's "Short numbers" setting renders magnitudes as abbreviations
-// ("134B", "1.234Qa", "5.6Qi") instead of full words. Keys are lowercase because
-// parseGameNumber lowercases the text first. These match the game's own scheme:
-// M/B/T then Qa/Qi/Sx/Sp/Oc/No/Dc, and the *-decillion family as <prefix>D.
-// The single-letter and mid-range entries cover essentially all normal play;
-// the very high tail (past vigintillion) is worth a live sanity-check, and long
-// and scientific display modes are already fully covered elsewhere.
+// ("134B", "1.234Qa", "5.6Qi") instead of full words. This is the game's full
+// list, taken verbatim from its source (formatEveryThirdPower): the abbreviation
+// at each 10^3 step from thousand up to 10^276, after which the game switches to
+// scientific notation (already handled below). Keys are lowercase because
+// parseGameNumber lowercases the text first; the game's scheme has no lowercase
+// collisions (e.g. it uses "UnV" for 10^63, not a bare "V"/"Vg").
 const SHORT_SUFFIXES = {
+    k: 10 ** 3,
     m: 10 ** 6,
     b: 10 ** 9,
     t: 10 ** 12,
@@ -140,7 +141,78 @@ const SHORT_SUFFIXES = {
     spd: 10 ** 54,
     ocd: 10 ** 57,
     nod: 10 ** 60,
-    vg: 10 ** 63
+    unv: 10 ** 63,
+    dov: 10 ** 66,
+    trv: 10 ** 69,
+    qav: 10 ** 72,
+    qiv: 10 ** 75,
+    sxv: 10 ** 78,
+    spv: 10 ** 81,
+    ocv: 10 ** 84,
+    nov: 10 ** 87,
+    unt: 10 ** 90,
+    dot: 10 ** 93,
+    trt: 10 ** 96,
+    qat: 10 ** 99,
+    qit: 10 ** 102,
+    sxt: 10 ** 105,
+    spt: 10 ** 108,
+    oct: 10 ** 111,
+    not: 10 ** 114,
+    unqa: 10 ** 117,
+    doqa: 10 ** 120,
+    trqa: 10 ** 123,
+    qaqa: 10 ** 126,
+    qiqa: 10 ** 129,
+    sxqa: 10 ** 132,
+    spqa: 10 ** 135,
+    ocqa: 10 ** 138,
+    noqa: 10 ** 141,
+    unqi: 10 ** 144,
+    doqi: 10 ** 147,
+    trqi: 10 ** 150,
+    qaqi: 10 ** 153,
+    qiqi: 10 ** 156,
+    sxqi: 10 ** 159,
+    spqi: 10 ** 162,
+    ocqi: 10 ** 165,
+    noqi: 10 ** 168,
+    unsx: 10 ** 171,
+    dosx: 10 ** 174,
+    trsx: 10 ** 177,
+    qasx: 10 ** 180,
+    qisx: 10 ** 183,
+    sxsx: 10 ** 186,
+    spsx: 10 ** 189,
+    ocsx: 10 ** 192,
+    nosx: 10 ** 195,
+    unsp: 10 ** 198,
+    dosp: 10 ** 201,
+    trsp: 10 ** 204,
+    qasp: 10 ** 207,
+    qisp: 10 ** 210,
+    sxsp: 10 ** 213,
+    spsp: 10 ** 216,
+    ocsp: 10 ** 219,
+    nosp: 10 ** 222,
+    unoc: 10 ** 225,
+    dooc: 10 ** 228,
+    troc: 10 ** 231,
+    qaoc: 10 ** 234,
+    qioc: 10 ** 237,
+    sxoc: 10 ** 240,
+    spoc: 10 ** 243,
+    ococ: 10 ** 246,
+    nooc: 10 ** 249,
+    unno: 10 ** 252,
+    dono: 10 ** 255,
+    trno: 10 ** 258,
+    qano: 10 ** 261,
+    qino: 10 ** 264,
+    sxno: 10 ** 267,
+    spno: 10 ** 270,
+    ocno: 10 ** 273,
+    nono: 10 ** 276
 }
 
 //* parseGameNumber
