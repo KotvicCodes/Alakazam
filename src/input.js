@@ -1,3 +1,6 @@
+// wrapped in an IIFE so its top-level names stay private: all content scripts
+// share one scope, so bare top-level declarations across files would collide
+;(function () {
 //! Fair-Play Input Layer
 // The fair-play contract for this extension: act on the page only the way a
 // human physically could, through real pointer and mouse events. Nothing here
@@ -114,3 +117,4 @@ window.Alakazam.input = {
     stopAutoclicker,
     BURST_PER_FRAME
 }
+})()
