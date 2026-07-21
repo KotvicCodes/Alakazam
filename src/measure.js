@@ -89,7 +89,10 @@ async function readBuildings(bank) {
 // the per-single-unit figure ("each cursor produces 0.1 cookies per second")
 function perUnitCpsFromTooltip(text) {
     if (!text) return NaN
-    const match = text.match(/produces\s+([\d.,]+(?:\s*e\s*[+-]?\d+)?(?:\s+\w+illion|\s+thousand|\s+googol)?)\s+cookies?\s+per\s+second/i)
+    // grab whatever sits between "produces" and "cookies per second" (a number
+    // in any display form: "0.1", "134B", "1.234 million", "1.2e9") and let
+    // parseGameNumber decode it, rather than hard-coding number shapes here
+    const match = text.match(/produces\s+(.+?)\s+cookies?\s+per\s+second/i)
     return match ? parseGameNumber(match[1]) : NaN
 }
 
