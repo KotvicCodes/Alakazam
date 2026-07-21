@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Alakazam",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Analyzes and optimizes Cookie Clicker strategy",
   "permissions": [
     "activeTab",
@@ -21,7 +21,13 @@
   "content_scripts": [
     {
       "matches": ["https://orteil.dashnet.org/cookieclicker/*"],
-      "js": ["content.js"],
+      "js": [
+        "src/parse.js",
+        "src/input.js",
+        "src/measure.js",
+        "src/strategy.js",
+        "src/main.js"
+      ],
       "run_at": "document_idle"
     }
   ]
