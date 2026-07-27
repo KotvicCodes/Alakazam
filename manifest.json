@@ -40,6 +40,7 @@
                 "src/modules/grimoire.js",
                 "src/modules/pantheon.js",
                 "src/modules/garden.js",
+                "src/modules/market.js",
                 "src/modules/purchase.js",
                 "src/modules/achievements.js",
                 "src/main.js"
