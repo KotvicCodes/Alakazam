@@ -65,8 +65,12 @@
     // disabled by repeated failure, and both the master switch and its own
     // settings flag are on
     function shouldRun(mod, slot) {
-        if (!running || paused) return false
+        if (!running) return false
         if (slot.disabled || slot.busy) return false
+        // an `always` module runs through both the master switch and a pause,
+        // because it is the UI those are operated from
+        if (mod.always) return true
+        if (paused) return false
         return store.moduleEnabled(mod.setting)
     }
 

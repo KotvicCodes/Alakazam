@@ -30,6 +30,10 @@
             name: mod.name,
             interval: mod.interval === 'frame' ? 'frame' : Math.max(0, mod.interval || 1000),
             setting: mod.setting || mod.name,
+            // `always` modules ignore the master switch. only the HUD uses it, and
+            // it has to: pausing everything must not freeze the one piece of UI
+            // that can unpause it again
+            always: mod.always === true,
             setup: typeof mod.setup === 'function' ? mod.setup : null,
             tick: mod.tick
         }
