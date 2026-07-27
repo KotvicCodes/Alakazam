@@ -26,6 +26,7 @@
                 "src/input.js",
                 "src/data/buildings.js",
                 "src/data/gods.js",
+                "src/data/plants.js",
                 "src/act/store.js",
                 "src/act/drag.js",
                 "src/measure/live.js",
@@ -38,6 +39,7 @@
                 "src/modules/lumps.js",
                 "src/modules/grimoire.js",
                 "src/modules/pantheon.js",
+                "src/modules/garden.js",
                 "src/modules/purchase.js",
                 "src/modules/achievements.js",
                 "src/main.js"
