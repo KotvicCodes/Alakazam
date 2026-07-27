@@ -43,6 +43,7 @@
                 "src/modules/market.js",
                 "src/modules/purchase.js",
                 "src/modules/achievements.js",
+                "src/hud.js",
                 "src/main.js"
             ],
             "run_at": "document_idle"
