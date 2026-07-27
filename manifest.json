@@ -29,7 +29,7 @@
                 "src/measure/live.js",
                 "src/measure/catalog.js",
                 "src/measure/save.js",
-                "src/strategy.js",
+                "src/strategy/score.js",
                 "src/modules/autoclick.js",
                 "src/modules/shimmers.js",
                 "src/modules/purchase.js",
