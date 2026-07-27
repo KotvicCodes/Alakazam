@@ -32,6 +32,7 @@
                 "src/strategy/score.js",
                 "src/modules/autoclick.js",
                 "src/modules/shimmers.js",
+                "src/modules/wrinklers.js",
                 "src/modules/purchase.js",
                 "src/modules/achievements.js",
                 "src/main.js"
