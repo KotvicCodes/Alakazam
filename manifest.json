@@ -25,6 +25,7 @@
                 "src/parse.js",
                 "src/input.js",
                 "src/data/buildings.js",
+                "src/act/store.js",
                 "src/measure/live.js",
                 "src/measure/catalog.js",
                 "src/measure/save.js",
