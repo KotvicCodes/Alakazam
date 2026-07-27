@@ -33,6 +33,7 @@
                 "src/modules/autoclick.js",
                 "src/modules/shimmers.js",
                 "src/modules/wrinklers.js",
+                "src/modules/lumps.js",
                 "src/modules/purchase.js",
                 "src/modules/achievements.js",
                 "src/main.js"
