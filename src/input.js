@@ -74,49 +74,13 @@
         return true
     }
 
-    //! Autoclicker Burst Dispatcher
-    // A real user clicks a few times a second; an autoclicker tool clicks many
-    // times a second. We keep every click a genuine dispatched event (fair-play),
-    // and simply issue a burst of them per animation frame. BURST_PER_FRAME is the
-    // throughput knob: raise it for more clicks, lower it if the tab stutters. Note
-    // the ceiling is the game's own click-handler cost, and a large burst is
-    // effectively superhuman even though each event is real.
-    const BURST_PER_FRAME = 50
-
-    let clickTarget = null
-    let burstRunning = false
-
-    function burstFrame() {
-        if (!burstRunning) return
-        if (clickTarget && clickTarget.isConnected) {
-            for (let i = 0; i < BURST_PER_FRAME; i++) {
-                simulateClick(clickTarget)
-            }
-        }
-        requestAnimationFrame(burstFrame)
-    }
-
-    // startAutoclicker begins bursting clicks at the given element every frame
-    function startAutoclicker(el) {
-        clickTarget = el
-        if (!burstRunning) {
-            burstRunning = true
-            requestAnimationFrame(burstFrame)
-        }
-    }
-
-    function stopAutoclicker() {
-        burstRunning = false
-        clickTarget = null
-    }
+    // the autoclicker's burst loop used to live here. it owns cadence rather than
+    // input mechanics, so it is a scheduler module now: see modules/autoclick.js
 
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.input = {
         simulateClick,
         hoverOn,
-        hoverOff,
-        startAutoclicker,
-        stopAutoclicker,
-        BURST_PER_FRAME
+        hoverOff
     }
 })()
