@@ -390,7 +390,7 @@
         if (!value) return []
         return value
             .split(',')
-            .map((v) => parseInt(v, 10))
+            .map(v => parseInt(v, 10))
             .filter(Number.isFinite)
     }
 
