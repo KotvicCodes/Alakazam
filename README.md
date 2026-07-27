@@ -36,16 +36,43 @@ for (let i = 0; i < 50; i++) {
 # Game Strategy
 
 ## Fair-Play Contract
-Alakazam plays the way a human physically could:
-- **Perceive**: it reads only what is rendered on screen. Exact per-building
-  production and upgrade prices are pulled from the game's own hover tooltips,
-  the same numbers a player sees. It never reads the page's `Game` object.
+Alakazam plays the way a human physically could, and it is honest about where it
+looks:
 - **Act**: every action is a real dispatched pointer/mouse event (see
   `src/input.js`). It never calls `element.click()` or any Cookie Clicker JS API.
+  This half of the contract is absolute.
+- **Perceive**: three sources, in order of preference.
+  - *Rendered DOM* for anything live: the bank, CpS, on-store prices, shimmers on
+    screen, active buffs.
+  - *The game's own hover tooltips* for exact per-building production and upgrade
+    effects, the same numbers a player reads by hovering.
+  - *The save file* that the game itself writes to `localStorage` on this origin.
+    It never reads the page's `Game` object and never injects into the page.
 - **Compute**: all optimization runs locally in the extension. There is no backend.
 
+### Why the save file
+Some state is simply never rendered. The garden's plot contents and seed log, the
+hidden trend mode behind every stock, pantheon swap timers, grimoire magic, and
+which achievements you already hold are all in the save and nowhere on screen.
+Reading it also replaces most of the tooltip hovering that used to make a single
+measurement pass take seconds, so Alakazam can act continuously instead of once
+every couple of seconds.
+
+The save lags: the game writes it on autosave, up to 60 seconds behind. So it is
+used only for slow, structural state. Anything Alakazam spends cookies on is read
+live from the DOM.
+
+**Your data stays yours.** The raw save string is never logged, never stored
+verbatim, and never leaves your machine. Your bakery name is treated as user data.
+The per-save identifier Alakazam remembers you by is a hash, not the values.
+
 ## Architecture
-Five ordered content scripts sharing one global (`window.Alakazam`):
+Ordered content scripts sharing one global (`window.Alakazam`):
+- `src/core/savefile.js` — decodes the game's `localStorage` save into plain data:
+  scalars, per-building records, the upgrade and achievement bitfields, and the
+  garden / stock market / pantheon / grimoire sub-saves. Pure apart from one read.
+- `src/core/identity.js` — derives a stable per-save `legacyId` and per-ascension
+  `runId` by hashing the save's seed and timestamps.
 - `src/parse.js` — turns any rendered number (suffix words, scientific, grouped
   digits) into a plain `Number`.
 - `src/input.js` — the only place clicks happen: `simulateClick`, `hoverOn/Off`,
