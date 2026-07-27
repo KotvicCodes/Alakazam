@@ -70,7 +70,7 @@
             return
         }
         const wanted = [SETTINGS_KEY, namespace]
-        const got = await new Promise((resolve) => {
+        const got = await new Promise(resolve => {
             try {
                 api.get(wanted, resolve)
             } catch (err) {
@@ -157,7 +157,7 @@
         if (pending.has(SETTINGS_KEY)) payload[SETTINGS_KEY] = settings
         if (pending.has(namespace)) payload[namespace] = cache
 
-        return new Promise((resolve) => {
+        return new Promise(resolve => {
             try {
                 api.set(payload, resolve)
             } catch (err) {

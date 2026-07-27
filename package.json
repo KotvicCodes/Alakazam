@@ -1,15 +1,16 @@
 {
-  "name": "alakazam",
-  "version": "1.0.10",
-  "description": "Analyzes and optimizes Cookie Clicker strategy",
-  "devDependencies": {
-    "prettier": "^3.1.0"
-  },
-  "prettier": {
-    "semi": false,
-    "singleQuote": true,
-    "tabWidth": 4,
-    "printWidth": 105,
-    "trailingComma": "none"
-  }
+    "name": "alakazam",
+    "version": "1.0.10",
+    "description": "Analyzes and optimizes Cookie Clicker strategy",
+    "devDependencies": {
+        "prettier": "^3.1.0"
+    },
+    "prettier": {
+        "semi": false,
+        "singleQuote": true,
+        "tabWidth": 4,
+        "printWidth": 105,
+        "trailingComma": "none",
+        "arrowParens": "avoid"
+    }
 }
