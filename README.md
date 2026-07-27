@@ -14,15 +14,34 @@ Also please do not sue me if your computer explodes, implodes or does something 
 4. Click "Load unpacked" and select the folder containing this repository
 5. Open Cookie Clicker and profit!
 
+There is no build step. The repository *is* the extension.
+
+## Using it
+A panel appears in the top right of the game. It shows what Alakazam is currently
+doing and why, and every part of it can be switched off independently: the
+autoclicker, buying, the garden, the pantheon, and so on. Drag it by its header,
+collapse it with the button, or turn it off entirely. The toolbar popup mirrors
+the same switches.
+
+Everything Alakazam knows is also on `window.__alakazam` in the console.
+
+## Development
+```bash
+npm test              # unit tests, no browser needed
+npm run format:check  # prettier
+```
+
+Tests run under `node --test` against a small fake document and a fake Cookie
+Clicker, so the content scripts are loaded exactly as the manifest lists them and
+exercised without a browser.
+
 ## Todo
-- Add some memory, so Alakazam won't go for already completed achievements after refreshing the window
-- Add free starting achievements
-    - Stifling the press
-    - Cookie-dunker
-    - Fading luck
-- Autoclose completed achievements - they are annoying
-- Sugar lumps optimization strategy
-- Buying suboptimal buildings for specific achievements/upgrades
+- Pop wrinklers automatically (they are drawn on a canvas, so this needs hit-testing)
+- Cookie-dunker, which needs the cookie to physically reach the milk
+- Ascension planning, loans and golden cookie combos
+
+Everything else that used to be here is done, and the larger plans have moved to
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Debugging
 For debugging, it is useful to see how exactly the macro works in different stages of the game. Paste this code to the console to accelerate your progress.
@@ -67,37 +86,88 @@ verbatim, and never leaves your machine. Your bakery name is treated as user dat
 The per-save identifier Alakazam remembers you by is a hash, not the values.
 
 ## Architecture
-Ordered content scripts sharing one global (`window.Alakazam`):
-- `src/core/savefile.js` — decodes the game's `localStorage` save into plain data:
+Content scripts sharing one global (`window.Alakazam`), loaded in the order
+`manifest.json` lists them. Only `src/core` has to be ordered; every module
+registers itself, so adding one is a file and a manifest line.
+
+**Core**
+- `src/core/savefile.js` — decodes the `localStorage` save into plain data:
   scalars, per-building records, the upgrade and achievement bitfields, and the
-  garden / stock market / pantheon / grimoire sub-saves. Pure apart from one read.
-- `src/core/identity.js` — derives a stable per-save `legacyId` and per-ascension
-  `runId` by hashing the save's seed and timestamps.
-- `src/parse.js` — turns any rendered number (suffix words, scientific, grouped
-  digits) into a plain `Number`.
-- `src/input.js` — the only place clicks happen: `simulateClick`, `hoverOn/Off`,
-  and the burst autoclicker.
-- `src/measure.js` — `snapshot()` reads the DOM (and tooltips) into a plain data
-  object: cookies, CpS, per-building price + per-unit production, store upgrades
-  with prices and classification, shimmers, buffs, lumps, wrinklers.
-- `src/strategy.js` — pure payback scoring over a snapshot; returns one decision.
-- `src/main.js` — a fast loop (autoclick + shimmer grab) and a slow loop
-  (measure → decide → buy).
+  garden / stock market / pantheon / grimoire sub-saves. Version gated.
+- `src/core/identity.js` — a stable per-save `legacyId` and per-ascension `runId`,
+  hashed from the save's seed and timestamps.
+- `src/core/store.js` — `chrome.storage.local`, namespaced per save. Also the
+  bridge to the popup, so there is no background worker.
+- `src/core/registry.js` / `scheduler.js` — modules self-register with their own
+  cadence. One frame loop and one millisecond driver run all of them, isolating
+  failures and budgeting clicks.
+
+**Perception**
+- `src/parse.js` — any rendered number (suffix words, scientific, grouped digits)
+  into a plain `Number`.
+- `src/measure/live.js` — the hot path. Bank, CpS, prices, shimmers, buffs. Reads
+  rendered text only and hovers nothing, so a full pass is sub-millisecond.
+- `src/measure/catalog.js` — the cold path. Tooltip reads behind a mutex, one
+  building and two upgrades per tick, and never while your real mouse is moving.
+- `src/measure/save.js` — reparses the save only when its fingerprint changes.
+
+**Action**
+- `src/input.js` — the only place clicks happen: `simulateClick`, `hoverOn/Off`.
+- `src/act/store.js` — owns the store's shared buy/sell mode and 1/10/100 amount,
+  and always puts it back.
+- `src/act/drag.js` — the mousedown/move/up sequence the pantheon needs.
+
+**Decisions** — `src/strategy/score.js`, pure functions over a measured view.
+
+**Modules** — `src/modules/*`: autoclick, shimmers, wrinklers, purchase, lumps,
+grimoire, pantheon, garden, market, achievements. Plus `src/hud.js`.
 
 ## Autobuy Strategy
-Every slow cycle:
-1. **Buy the cheapest affordable ordinary upgrade** (upgrades dominate ROI;
-   toggles, pledges and season switchers are classified and skipped).
-2. Otherwise **rank buildings by payback** (`price / per-unit CpS`). Buy the best
-   one if affordable, else wait so cookies accumulate toward it instead of being
-   spent on a worse building.
+Buying used to be one purchase every couple of seconds, because measuring the
+store meant hovering every building and every upgrade first. Now prices come from
+the store faces, which are already on screen, so a decision costs nothing and
+purchases run in a drain loop: buy, re-evaluate, buy again, until nothing is worth
+buying or the tick's click budget runs out.
 
-The latest measurement is exposed on `window.__alakazam` and logged as a compact
-line each cycle, so the collected data is inspectable in the console.
+Everything competes on one scale, payback in seconds:
+1. **Upgrades** are scored by the CpS delta parsed out of their tooltip. An
+   upgrade whose effect cannot be read gets a deliberately pessimistic estimate,
+   so it has to be genuinely cheap to win. Toggles, pledges and season switchers
+   are classified and skipped.
+2. **Buildings** are scored by price over per-unit production, with a discount for
+   a purchase that crosses 10, 25, 50, 100 and so on, because those unlock the
+   next tiered upgrade.
+3. If the best thing is not affordable, **wait** rather than settling for a worse
+   one.
+
+**How many to buy** is its own decision, and the largest of three rules wins:
+buying one at a time is always the most efficient, so the batch size is however
+many a one-at-a-time loop would have bought before something else became the
+better target; a batch that reaches a tier boundary is worth slightly worse
+payback; and once a batch costs under a twentieth of the bank, take it, because
+the elapsed time of clicking singles costs more than the ordering efficiency it
+protects.
+
+## What else it plays
+- **Sugar lumps** — harvests on ripe, where the game guarantees the lump, rather
+  than on mature, where it fails half the time. Spends them on the four minigame
+  unlocks first, then the garden's full plot, then click levels, and banks a
+  hundred for the production bonus.
+- **Garden** — reads the plot and seed log from the save, hunts the next reachable
+  mutation, harvests anything that unlocks a seed or pays out, and switches to
+  wood chips to triple mutation chances while hunting.
+- **Grimoire** — models magic capacity and regeneration from the game's own
+  formulas, and casts Force the Hand of Fate only while a production buff is up.
+- **Pantheon** — sets up the temple and then mostly leaves it alone, because swaps
+  regenerate over hours. Never slots Holobore, which unslots itself the moment a
+  golden cookie is clicked, and Alakazam clicks every golden cookie it sees.
+- **Golden cookies** — clicked immediately. Wrath cookies are held off while a
+  buff is running, so a Clot or a Ruin cannot end a combo.
+- **Stock market** — the save records each good's hidden trend outright, so
+  Alakazam can tell you which way every stock is going. Trading on that is
+  switched off by default; it advises unless you turn it on.
 
 ## Future Improvements
-- Convert upgrade tooltip effects into a real CpS delta for payback scoring
-- Golden-cookie buff timing (buy during frenzies)
-- Sugar lump type strategy and wrinkler farming
-- Ascension / prestige planning
-- Building purchases for specific achievements
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full list, including ascension
+planning, pre-ascension loans, golden cookie combos, the dragon, seasons, and the
+stock market tick oracle.
