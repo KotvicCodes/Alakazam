@@ -128,17 +128,33 @@
         return shimmers
     }
 
+    //* readBuffs
+    // buffs render a name and a countdown. the name matters: spending magic on a
+    // golden cookie is only worth it under a production buff, and a click buff
+    // wants entirely different handling from a production one.
     function readBuffs() {
         const buffs = []
         document.querySelectorAll('#buffs .buff').forEach(b => {
-            // buffs render a countdown; capture whatever number is shown
+            const text = b.innerText || ''
             const timeText = b.querySelector('.icon + div, .buffName ~ div')
             buffs.push({
-                timeLeft: timeText ? firstNumberIn(timeText.innerText) : NaN,
+                name: text.split('\n')[0].trim(),
+                text,
+                timeLeft: timeText ? firstNumberIn(timeText.innerText) : firstNumberIn(text),
                 element: b
             })
         })
         return buffs
+    }
+
+    //* productionBuffs
+    // the buffs that multiply cookies per second, which are the ones worth timing
+    // a Force the Hand of Fate cast against
+    const PRODUCTION_BUFFS =
+        /frenzy|dragon harvest|building special|high-five|congregation|luxuriant harvest|ore vein|oiled-up|juicy profits|fervent adoration|manabloom|delicious lifeforms|breakthrough|righteous cataclysm|golden ages|extra cycles|solar flare|winning streak|macrocosm|refactoring|cosmic nursery|brainstorm|deliciousness/i
+
+    function hasProductionBuff() {
+        return readBuffs().some(b => PRODUCTION_BUFFS.test(b.name))
     }
 
     //* readWrinklers
@@ -176,6 +192,7 @@
         readUpgradeCrates,
         readShimmers,
         readBuffs,
+        hasProductionBuff,
         readWrinklers,
         crateKey
     }
