@@ -25,7 +25,9 @@
                 "src/parse.js",
                 "src/input.js",
                 "src/data/buildings.js",
+                "src/data/gods.js",
                 "src/act/store.js",
+                "src/act/drag.js",
                 "src/measure/live.js",
                 "src/measure/catalog.js",
                 "src/measure/save.js",
@@ -35,6 +37,7 @@
                 "src/modules/wrinklers.js",
                 "src/modules/lumps.js",
                 "src/modules/grimoire.js",
+                "src/modules/pantheon.js",
                 "src/modules/purchase.js",
                 "src/modules/achievements.js",
                 "src/main.js"
