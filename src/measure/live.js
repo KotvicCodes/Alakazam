@@ -106,12 +106,24 @@
 
     //! Shimmers, buffs, wrinklers
 
+    //* readShimmers
+    // The class the game actually uses is .goldenCookie, not .golden, so the type
+    // is read from the class list as-is rather than guessed at.
+    //
+    // Wrath cookies share the .goldenCookie class and are told apart only by the
+    // sprite the game sets on them, so that is what gets checked. When the sprite
+    // cannot be read the shimmer is treated as an ordinary golden cookie, which
+    // keeps the safe behaviour of clicking it.
     function readShimmers() {
         const shimmers = []
         document.querySelectorAll('#shimmers .shimmer').forEach(sh => {
-            // the shimmer type is in its class list (golden, wrath, reindeer)
             const type = Array.from(sh.classList).find(c => c !== 'shimmer') || 'unknown'
-            shimmers.push({ type, element: sh })
+            const image = (sh.style && sh.style.backgroundImage) || ''
+            shimmers.push({
+                type,
+                wrath: /wrath|wrinkler/i.test(image) || sh.classList.contains('wrath'),
+                element: sh
+            })
         })
         return shimmers
     }
@@ -129,15 +141,16 @@
         return buffs
     }
 
+    //* readWrinklers
+    // Wrinklers are drawn onto #backgroundLeftCanvas, not built as elements: the
+    // game's stylesheet has no .wrinkler rule at all. So there is nothing here to
+    // find or click, and the old selector this replaced always matched zero.
+    //
+    // Their count and hoard are in the save instead, which is what the wrinklers
+    // module reports from. Popping them would need hit-testing against the canvas;
+    // see docs/ROADMAP.md.
     function readWrinklers() {
-        const wrinklers = []
-        document.querySelectorAll('#wrinklers .wrinkler').forEach(w => {
-            // shiny wrinklers are worth far more left alone, and the game marks
-            // them with their own class
-            const classes = Array.from(w.classList)
-            wrinklers.push({ shiny: classes.indexOf('shinyWrinkler') !== -1, element: w })
-        })
-        return wrinklers
+        return { canvas: document.getElementById('backgroundLeftCanvas'), elements: [] }
     }
 
     //! snapshot
