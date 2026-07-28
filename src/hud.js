@@ -100,6 +100,14 @@
 
         if (store.get('hudFolded', false)) root.classList.add('az-folded')
 
+        // put the panel back where it was left last time
+        const position = store.get('hudPosition', null)
+        if (position && position.left) {
+            root.style.left = position.left
+            root.style.top = position.top
+            root.style.right = 'auto'
+        }
+
         fold.addEventListener('click', event => {
             event.stopPropagation()
             const folded = root.classList.toggle('az-folded')
@@ -112,29 +120,50 @@
     }
 
     //* makeDraggable
-    // real listeners on real events: this is our own UI, not the game, so there is
-    // nothing to simulate here
+    // Real listeners on real events: this is our own UI, not the game, so there is
+    // nothing to simulate here.
+    //
+    // The isTrusted checks are load bearing, not defensive. The autoclicker fires
+    // around fifty synthetic mousemove events every frame at the big cookie, and
+    // those bubble all the way to the document. Without this the panel followed
+    // them and snapped to the cookie the instant you grabbed it, which looked like
+    // it was jumping to wherever you had clicked.
     function makeDraggable(handle) {
         let dragging = false
         let offsetX = 0
         let offsetY = 0
 
         handle.addEventListener('mousedown', event => {
+            if (!event.isTrusted) return
             dragging = true
             const rect = root.getBoundingClientRect()
             offsetX = event.clientX - rect.left
             offsetY = event.clientY - rect.top
+            // pin the panel by its left edge for the whole drag, so the right
+            // offset it starts life with cannot fight the position being set
+            root.style.left = `${rect.left}px`
+            root.style.top = `${rect.top}px`
+            root.style.right = 'auto'
             event.preventDefault()
         })
+
         document.addEventListener('mousemove', event => {
-            if (!dragging) return
-            root.style.left = `${event.clientX - offsetX}px`
-            root.style.top = `${event.clientY - offsetY}px`
-            root.style.right = 'auto'
+            if (!dragging || !event.isTrusted) return
+            const maxX = window.innerWidth - root.offsetWidth
+            const maxY = window.innerHeight - root.offsetHeight
+            root.style.left = `${clamp(event.clientX - offsetX, 0, maxX)}px`
+            root.style.top = `${clamp(event.clientY - offsetY, 0, maxY)}px`
         })
-        document.addEventListener('mouseup', () => {
+
+        document.addEventListener('mouseup', event => {
+            if (!event.isTrusted) return
+            if (dragging) store.set('hudPosition', { left: root.style.left, top: root.style.top })
             dragging = false
         })
+    }
+
+    function clamp(value, low, high) {
+        return Math.max(low, Math.min(Number.isFinite(high) ? high : value, value))
     }
 
     //! Rendering
