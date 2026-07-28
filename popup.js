@@ -89,8 +89,18 @@ async function render() {
     for (const key of Object.keys(LABELS)) {
         const on = settings[key] !== false
         const button = document.createElement('button')
-        button.className = 'btn ' + (key === 'enabled' ? 'btn-primary' : '')
-        button.textContent = `${LABELS[key]}: ${on ? 'on' : 'off'}`
+        // the master switch is the one that has to read at a glance, so it gets
+        // the loud treatment: green running, red paused. the rest just light up.
+        const classes = ['btn']
+        if (key === 'enabled') {
+            classes.push('btn-primary')
+            if (!on) classes.push('active')
+        } else if (on) {
+            classes.push('on')
+        }
+        button.className = classes.join(' ')
+        button.textContent =
+            key === 'enabled' ? (on ? 'RUNNING' : 'PAUSED') : `${LABELS[key]}: ${on ? 'on' : 'off'}`
         button.addEventListener('click', async () => {
             const current = (await get([SETTINGS_KEY]))[SETTINGS_KEY] || {}
             current[key] = !on
