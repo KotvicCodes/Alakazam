@@ -15,11 +15,26 @@
 
     const { PRICE_GROWTH, COUNT_THRESHOLDS } = window.Alakazam.data.buildings
 
-    // what to assume an upgrade gives when its tooltip cannot be parsed. Cookie
-    // Clicker upgrades range from a few percent to a straight doubling, so a flat
-    // 5% of current production is a deliberately pessimistic prior: an unparsed
-    // upgrade has to be genuinely cheap before it beats a building.
-    const UNKNOWN_UPGRADE_GAIN = 0.05
+    //! Why upgrades are not scored against buildings
+    // They used to be. An upgrade whose tooltip could not be parsed was given an
+    // assumed gain of a few percent of current production, and then had to beat
+    // the best building on payback like anything else.
+    //
+    // That was wrong in a way that got worse the longer you played. The assumed
+    // gain scaled with CpS, so the very same hundred-cookie upgrade scored a 2000
+    // second payback at 1 CpS and a 2 second payback at 1000 CpS. Early on, when
+    // upgrades matter most, none of them were ever bought. Later, every one of
+    // them looked irresistible. The behaviour flipped purely because production
+    // had grown, which is not a reason to change your mind about an upgrade.
+    //
+    // Cookie Clicker upgrades are almost always worth buying the moment you can
+    // afford them: they are cheap relative to their effect and most are permanent
+    // multipliers. So they are simply bought, cheapest first, ahead of buildings.
+    // Buying the cheapest first means the drain loop works through them in order
+    // and an expensive one waits until it is comfortably affordable.
+    //
+    // Parsed effects are still computed, because they are worth reporting and
+    // they break ties, but nothing hinges on whether a tooltip could be read.
 
     // crossing a count threshold unlocks that building's next tiered upgrade, so
     // the purchase is worth more than the buildings alone. rather than invent a
@@ -140,11 +155,16 @@
             .filter(u => u.kind === 'buy')
             .map(u => {
                 const parsed = upgradeDeltaCps(u, view)
-                const estimated = !Number.isFinite(parsed) || parsed <= 0
-                const delta = estimated ? view.cps * UNKNOWN_UPGRADE_GAIN : parsed
-                return { ...u, deltaCps: delta, estimated, payback: paybackSeconds(u.price, delta) }
+                const measured = Number.isFinite(parsed) && parsed > 0
+                return {
+                    ...u,
+                    deltaCps: measured ? parsed : NaN,
+                    measured,
+                    // reported, not used to decide whether to buy
+                    payback: measured ? paybackSeconds(u.price, parsed) : Infinity
+                }
             })
-            .sort((a, b) => a.payback - b.payback)
+            .sort((a, b) => a.price - b.price)
     }
 
     //! Buildings
@@ -233,18 +253,19 @@
         const upgrades = scoreUpgrades(view)
         const buildings = rankBuildings(view.buildings).filter(b => Number.isFinite(b.payback))
 
-        const bestUpgrade = upgrades.find(u => u.affordable && Number.isFinite(u.payback)) || null
+        // upgrades first, cheapest first, always: see the note at the top of the file
+        const nextUpgrade = upgrades.find(u => u.affordable) || null
         const bestBuilding = buildings.length > 0 ? buildings[0] : null
 
-        const upgradeWins = bestUpgrade && (!bestBuilding || bestUpgrade.payback <= bestBuilding.payback)
-
-        if (upgradeWins) {
-            const how = bestUpgrade.estimated ? 'assumed' : 'measured'
+        if (nextUpgrade) {
+            const how = nextUpgrade.measured
+                ? `${nextUpgrade.payback.toFixed(1)}s payback`
+                : 'effect not readable'
             return {
                 action: 'buyUpgrade',
-                target: bestUpgrade,
+                target: nextUpgrade,
                 amount: 1,
-                reason: `upgrade ${bestUpgrade.name} (${bestUpgrade.payback.toFixed(1)}s, ${how})`
+                reason: `upgrade ${nextUpgrade.name} (${how})`
             }
         }
 
