@@ -83,7 +83,8 @@
             // passive production is what the game shows; clicking is measured on
             // top of it, and click upgrades are scored against that
             clickCps: clicks.clickCps(),
-            clicksPerSecond: clicks.stats().clicksPerSecond,
+            // the rate the game registers, not the rate we dispatch
+            clicksPerSecond: clicks.clicksPerSecond(),
             effectiveCps: clicks.effectiveCps(globals.cps),
             buildings,
             upgrades

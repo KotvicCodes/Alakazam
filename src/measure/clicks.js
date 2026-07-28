@@ -5,25 +5,31 @@
     // The number in #cookiesPerSecond is passive production only. It does not
     // include a single cookie earned by clicking, and Alakazam clicks the big
     // cookie constantly, so the rate it was reasoning about was never the rate it
-    // was actually earning at. That mattered most for the early clicking upgrades,
-    // whose whole effect is on a number nothing was measuring.
+    // was actually earning at.
     //
-    // Rather than assume a click rate, both halves are measured:
+    // The important thing this file gets right, having got it wrong once: the
+    // clicks Alakazam *sends* and the clicks the game *registers* are wildly
+    // different numbers. The autoclicker dispatches fifty per animation frame,
+    // about three thousand a second, and the game acts on a few of them. Reporting
+    // the dispatched figure made the panel claim 3000 clicks a second next to a
+    // game counting three, and worse, it was the number used to value clicking
+    // upgrades: a thousandfold overestimate of what one is worth.
     //
-    //   clicks per second   counted from the clicks we actually issue, because
-    //                       what the autoclicker asks for and what the game
-    //                       processes are not the same number
-    //   cookies per click   inferred from the bank. Over a window, whatever the
-    //                       bank gained beyond passive production came from
-    //                       clicking, so dividing that by the clicks in the window
-    //                       gives the value of one click.
+    // So all three quantities are measured separately, each from the source that
+    // actually knows:
     //
-    // The inference is only valid in a quiet window, so samples are thrown away
-    // whenever anything else could have moved the bank: a purchase, a buff, or a
-    // golden cookie. That leaves fewer samples but honest ones, and they are
-    // smoothed because any single window is noisy.
+    //   income     what clicking earns per second. Taken straight from the bank:
+    //              whatever it gained beyond passive production came from clicks.
+    //              This needs no click count at all, so it cannot be wrong about
+    //              one, and it is the number that matters.
+    //   registered how many clicks the game acted on, from its own cookieClicks
+    //              counter in the save. Exact, just up to a minute behind.
+    //   dispatched what we sent. Only interesting as a diagnostic.
+    //
+    // Income samples are thrown away whenever anything else could have moved the
+    // bank: a purchase, a buff, or a golden cookie.
 
-    const { live, registry } = window.Alakazam
+    const { live, save, registry } = window.Alakazam
 
     const TICK_MS = 1000
 
@@ -33,20 +39,25 @@
     // ignore windows shorter than this: the arithmetic gets noisy
     const MIN_WINDOW_MS = 400
 
-    let clicksIssued = 0
+    let dispatched = 0
     let lastAt = 0
     let lastBank = 0
-    let lastClicks = 0
+    let lastDispatched = 0
     let dirtyWindow = true
 
-    let cookiesPerClick = NaN
-    let clicksPerSecond = 0
-    let samples = 0
+    let income = 0
+    let incomeSamples = 0
+
+    let registeredRate = 0
+    let dispatchedRate = 0
+    let lastRegistered = NaN
+    let lastRegisteredAt = 0
 
     //* record
-    // called by the autoclicker with however many clicks it just issued
+    // called by the autoclicker with however many clicks it just issued. this is
+    // what we sent, which is not what the game counted.
     function record(count) {
-        clicksIssued += count
+        dispatched += count
     }
 
     //* spoil
@@ -56,12 +67,11 @@
         dirtyWindow = true
     }
 
-    function tick() {
-        const now = Date.now()
-        const globals = live.readGlobals()
-        const bank = globals.cookies
-        const clicks = clicksIssued
+    //! Measuring
 
+    //* sampleIncome
+    // the bank's rise above passive production, per second
+    function sampleIncome(now, globals) {
         const elapsed = now - lastAt
         const usable =
             lastAt > 0 &&
@@ -71,43 +81,84 @@
             live.readBuffs().length === 0 &&
             live.readShimmers().length === 0
 
-        if (usable) {
-            const seconds = elapsed / 1000
-            const gained = bank - lastBank
-            const windowClicks = clicks - lastClicks
+        const seconds = elapsed / 1000
 
-            // a bank that went down means something was bought; a window with no
-            // clicks says nothing about what a click is worth
-            if (gained > 0 && windowClicks > 0) {
+        // how many clicks we sent is a fact about us, not about the bank, so it is
+        // measured whatever else happened in the window. gating it on a clean
+        // income window meant a steady stream of purchases suppressed it entirely.
+        if (lastAt > 0 && elapsed >= MIN_WINDOW_MS) {
+            const sent = (dispatched - lastDispatched) / seconds
+            dispatchedRate = dispatchedRate ? dispatchedRate * (1 - SMOOTHING) + sent * SMOOTHING : sent
+        }
+
+        if (usable) {
+            const gained = globals.cookies - lastBank
+            // a bank that went down means something was bought
+            if (gained > 0) {
                 const fromClicking = gained - globals.cps * seconds
                 if (fromClicking > 0) {
-                    const sample = fromClicking / windowClicks
-                    cookiesPerClick = Number.isFinite(cookiesPerClick)
-                        ? cookiesPerClick * (1 - SMOOTHING) + sample * SMOOTHING
-                        : sample
-                    samples++
+                    const sample = fromClicking / seconds
+                    income = incomeSamples > 0 ? income * (1 - SMOOTHING) + sample * SMOOTHING : sample
+                    incomeSamples++
                 }
-                const rate = windowClicks / seconds
-                clicksPerSecond = clicksPerSecond
-                    ? clicksPerSecond * (1 - SMOOTHING) + rate * SMOOTHING
-                    : rate
             }
         }
 
         lastAt = now
-        lastBank = bank
-        lastClicks = clicks
+        lastBank = globals.cookies
+        lastDispatched = dispatched
         dirtyWindow = false
+    }
 
+    //* sampleRegistered
+    // the game keeps its own tally of clicks it acted on. it only reaches us when
+    // the game autosaves, so this updates in jumps, but the rate it implies over
+    // the gap is exact rather than inferred.
+    function sampleRegistered(now) {
+        const s = save.get()
+        if (!s.ok || !s.scalars || !s.scalars.trusted) return
+        const count = s.scalars.cookieClicks
+        if (!Number.isFinite(count)) return
+
+        if (Number.isFinite(lastRegistered) && count > lastRegistered && now > lastRegisteredAt) {
+            const rate = (count - lastRegistered) / ((now - lastRegisteredAt) / 1000)
+            registeredRate = registeredRate ? registeredRate * (1 - SMOOTHING) + rate * SMOOTHING : rate
+        }
+        if (!Number.isFinite(lastRegistered) || count !== lastRegistered) {
+            lastRegistered = count
+            lastRegisteredAt = now
+        }
+    }
+
+    function tick() {
+        const now = Date.now()
+        sampleIncome(now, live.readGlobals())
+        sampleRegistered(now)
         window.__alakazam.clicks = stats()
     }
 
+    //! What callers use
+
     //* clickCps
-    // what clicking is earning per second, on the same scale as passive CpS.
-    // zero until there is something to base it on, so it can always be added.
+    // what clicking is earning per second, measured rather than derived from a
+    // click count. zero until there is something to base it on.
     function clickCps() {
-        if (!Number.isFinite(cookiesPerClick) || cookiesPerClick <= 0) return 0
-        return cookiesPerClick * clicksPerSecond
+        return income > 0 ? income : 0
+    }
+
+    //* clicksPerSecond
+    // how many clicks the game actually acts on. this is the one to value a
+    // clicking upgrade against, never the dispatched figure.
+    function clicksPerSecond() {
+        return registeredRate
+    }
+
+    //* cookiesPerClick
+    // derived from the two measurements rather than counted, so it describes a
+    // click the game registered, not one we sent
+    function cookiesPerClick() {
+        if (registeredRate <= 0 || income <= 0) return NaN
+        return income / registeredRate
     }
 
     //* effectiveCps
@@ -118,16 +169,26 @@
     }
 
     function stats() {
+        const perClick = cookiesPerClick()
         return {
-            cookiesPerClick: Number.isFinite(cookiesPerClick) ? cookiesPerClick : null,
-            clicksPerSecond: Math.round(clicksPerSecond * 10) / 10,
             clickCps: clickCps(),
-            samples
+            registeredPerSecond: Math.round(registeredRate * 10) / 10,
+            dispatchedPerSecond: Math.round(dispatchedRate),
+            cookiesPerClick: Number.isFinite(perClick) ? perClick : null,
+            samples: incomeSamples
         }
     }
 
     registry.register({ name: 'clicks', interval: TICK_MS, setting: 'enabled', tick })
 
     window.Alakazam = window.Alakazam || {}
-    window.Alakazam.clicks = { record, spoil, clickCps, effectiveCps, stats }
+    window.Alakazam.clicks = {
+        record,
+        spoil,
+        clickCps,
+        clicksPerSecond,
+        cookiesPerClick,
+        effectiveCps,
+        stats
+    }
 })()
