@@ -1,0 +1,322 @@
+const { test } = require('node:test')
+const assert = require('node:assert')
+const { boot, sleep } = require('./harness')
+const fx = require('./fixtures')
+const { El } = require('./dom')
+
+const HOUR = 3600e3
+
+//! Store controls
+
+test('sumPrice matches the game to within rounding', () => {
+    const h = boot({ game: { bank: 1e9 } })
+    const g = h.game
+    for (const [i, n] of [
+        [0, 1],
+        [0, 10],
+        [0, 100],
+        [2, 10],
+        [5, 100]
+    ]) {
+        const est = h.A.act.store.sumPrice(g.unitPrice(i), n)
+        const real = g.sumPrice(i, n)
+        assert.ok(
+            Math.abs(est - real) / real < 0.02,
+            `${g.BUILDINGS[i][0]} x${n}: estimated ${est}, real ${real}`
+        )
+    }
+})
+
+test('withBulk restores the store even when the body throws', async () => {
+    const h = boot({ game: { bank: 1e6 } })
+    const store = h.A.act.store
+    assert.equal(store.currentMode(), 'buy')
+    assert.equal(store.currentAmount(), 1)
+
+    await assert.rejects(
+        store.withBulk('sell', 100, () => {
+            assert.equal(store.currentMode(), 'sell')
+            assert.equal(store.currentAmount(), 100)
+            throw new Error('boom')
+        })
+    )
+
+    assert.equal(store.currentMode(), 'buy')
+    assert.equal(store.currentAmount(), 1)
+    assert.equal(h.game.state.mode, 'buy')
+    assert.equal(h.game.state.amount, 1)
+})
+
+test('a bulk buy over budget is refused rather than made', async () => {
+    const h = boot({ game: { bank: 1e6 } })
+    const products = h.A.live.readProducts()
+    const result = await h.A.act.store.buy(products[1], 100, 500)
+    assert.equal(result.bought, false)
+    assert.match(result.reason, /budget/)
+    assert.equal(h.A.act.store.currentAmount(), 1)
+})
+
+test('without bulk controls, buying one still works and bulk is refused', async () => {
+    const h = boot({ game: { bank: 1e6 } })
+    for (const id of [
+        'storeBulkBuy',
+        'storeBulkSell',
+        'storeBulk1',
+        'storeBulk10',
+        'storeBulk100',
+        'storeBulkMax'
+    ]) {
+        const el = h.game.doc.getElementById(id)
+        el.parent.children = el.parent.children.filter(x => x !== el)
+    }
+    assert.equal(h.A.act.store.available(), false)
+    const products = h.A.live.readProducts()
+    assert.equal((await h.A.act.store.buy(products[0], 1, Infinity)).bought, true)
+    assert.equal((await h.A.act.store.buy(products[0], 10, Infinity)).bought, false)
+})
+
+test('selling works and leaves the store back in buy mode', async () => {
+    const h = boot({ game: { bank: 1e6, owned: [50, 0, 0, 0, 0, 0, 0, 0] } })
+    const products = h.A.live.readProducts()
+    await h.A.act.store.sell(products[0], 10)
+    assert.equal(h.game.state.owned[0], 40)
+    assert.equal(h.A.act.store.currentMode(), 'buy')
+})
+
+//! Live measurement
+
+test('the live pass reads prices without touching the tooltip', () => {
+    const h = boot({ game: { bank: 5000, cps: 42, owned: [10, 5, 1, 0, 0, 0, 0, 0] } })
+    const snap = h.A.live.snapshot()
+    assert.equal(snap.cookies, 5000)
+    assert.equal(snap.cps, 42)
+    assert.equal(snap.products[0].name, 'Cursor')
+    assert.equal(snap.products[0].index, 0)
+    assert.equal(h.game.tooltip.innerText, '', 'live measurement must not populate the tooltip')
+})
+
+test('shimmer types are read from the class the game actually uses', () => {
+    const h = boot({})
+    const shimmers = h.game.doc.getElementById('shimmers')
+    shimmers.append(
+        new El('div', {
+            class: 'shimmer goldenCookie',
+            style: { backgroundImage: 'url(img/goldCookie.png)' }
+        }),
+        new El('div', {
+            class: 'shimmer goldenCookie',
+            style: { backgroundImage: 'url(img/wrathCookie.png)' }
+        }),
+        new El('div', { class: 'shimmer reindeer', style: { backgroundImage: 'url(img/reindeer.png)' } })
+    )
+    const read = h.A.live.readShimmers()
+    assert.equal(read[0].type, 'goldenCookie')
+    assert.equal(read[0].wrath, false)
+    assert.equal(read[1].wrath, true, 'a wrath cookie is only distinguishable by its sprite')
+    assert.equal(read[2].type, 'reindeer')
+})
+
+test('wrinklers are canvas drawn, so there is nothing to find', () => {
+    const h = boot({})
+    assert.deepEqual(h.A.live.readWrinklers().elements, [])
+})
+
+//! Grimoire
+
+test('max magic follows the source formula', () => {
+    const G = boot({}).A.grimoire
+    assert.equal(G.maxMagic(1, 1), 5)
+    assert.equal(G.maxMagic(38, 1), 31)
+    assert.equal(G.maxMagic(530, 1), 100)
+    assert.ok(G.maxMagic(100, 10) > G.maxMagic(100, 1), 'levels raise capacity')
+})
+
+test('spell costs scale with capacity', () => {
+    const G = boot({}).A.grimoire
+    const fthof = G.SPELLS[1]
+    assert.equal(G.spellCost(fthof, 20), 22)
+    assert.equal(G.spellCost(fthof, 100), 70)
+})
+
+test('magic regenerates faster when the bar is fuller', () => {
+    const G = boot({}).A.grimoire
+    assert.ok(G.regenPerSecond(90, 100) > G.regenPerSecond(10, 100))
+})
+
+test('more wizard towers make the casting cycle longer', () => {
+    const G = boot({}).A.grimoire
+    assert.ok(G.cycleSeconds(600, 1) > G.cycleSeconds(100, 1))
+    assert.match(G.towerAdvice(38, 1).note, /slower/)
+})
+
+//! Sugar lumps
+
+function lumpSave(hours, lumps, levels, amounts) {
+    return fx.save({
+        lumps,
+        lumpsTotal: 500,
+        lumpT: Date.now() - hours * HOUR,
+        lumpType: 2,
+        levels,
+        amounts
+    }).raw
+}
+
+const OWNED = { 0: 100, 2: 30, 5: 5, 6: 3, 7: 2 }
+
+test('lump ripeness is derived from the growth timestamp', () => {
+    const at = h => h.A.lumps.lumpState()
+    assert.equal(at(boot({ save: lumpSave(19, 1, {}, OWNED) })).ripe, false)
+    assert.equal(at(boot({ save: lumpSave(21, 1, {}, OWNED) })).mature, true)
+    assert.equal(at(boot({ save: lumpSave(21, 1, {}, OWNED) })).ripe, false)
+    assert.equal(at(boot({ save: lumpSave(23.5, 1, {}, OWNED) })).ripe, true)
+})
+
+test('lumps buy the minigame unlocks first', () => {
+    const h = boot({ save: lumpSave(5, 1, {}, OWNED) })
+    assert.match(h.A.lumps.nextSpend(1).why, /Grimoire/)
+})
+
+test('lumps skip a building that has not been built', () => {
+    const h = boot({ save: lumpSave(5, 5, {}, { 0: 100, 2: 30, 5: 5, 6: 3 }) })
+    assert.match(h.A.lumps.nextSpend(5).why, /Pantheon/)
+})
+
+test('lumps are banked at a hundred rather than spent', () => {
+    const done = { 7: 1, 6: 1, 2: 9, 5: 1, 0: 12 }
+    assert.equal(boot({ save: lumpSave(5, 60, done, OWNED) }).A.lumps.nextSpend(60), null)
+    assert.ok(boot({ save: lumpSave(5, 150, done, OWNED) }).A.lumps.nextSpend(150))
+})
+
+//! Garden
+
+test('garden data covers every plant and recipe', () => {
+    const P = boot({}).A.data.plants
+    assert.equal(P.PLANTS.length, 34)
+    assert.equal(P.byKey('bakerWheat').id, 0)
+    assert.equal(P.byId(13).key, 'meddleweed')
+    assert.ok(P.recipesFor('cronerice').length > 0)
+})
+
+test('a mutation is only reachable when its parents are unlocked and it fits', () => {
+    const P = boot({}).A.data.plants
+    const cronerice = P.recipesFor('cronerice')[0]
+    assert.equal(P.reachable(cronerice, ['bakerWheat', 'thumbcorn'], 36), true)
+    assert.equal(P.reachable(cronerice, ['bakerWheat'], 36), false)
+    const everdaisy = P.recipesFor('everdaisy')[0]
+    assert.equal(
+        P.reachable(
+            everdaisy,
+            P.PLANTS.map(p => p.key),
+            4
+        ),
+        false,
+        'needs six tiles'
+    )
+})
+
+test('the garden picks the best reachable seed as its goal', () => {
+    const h = boot({
+        save: fx.save({
+            levels: { 2: 1 },
+            amounts: { 2: 30 },
+            minigames: { 2: fx.garden({ unlocked: [0, 1] }) }
+        }).raw
+    })
+    const state = h.A.garden.state()
+    assert.equal(state.unlockedCount, 2)
+    assert.equal(h.A.garden.nextGoal(state).plant.key, 'cronerice')
+})
+
+test('a complete seed log has no goal left', () => {
+    const all = Array.from({ length: 34 }, (_, i) => i)
+    const h = boot({
+        save: fx.save({
+            levels: { 2: 9 },
+            amounts: { 2: 30 },
+            minigames: { 2: fx.garden({ unlocked: all }) }
+        }).raw
+    })
+    const state = h.A.garden.state()
+    assert.equal(state.complete, true)
+    assert.equal(h.A.garden.nextGoal(state), null)
+})
+
+//! Market
+
+test('the hidden trend mode drives the signal', () => {
+    const goods = [
+        { val: 5, mode: 3 },
+        { val: 50, mode: 4, stock: 10 },
+        { val: 50, mode: 5, stock: 10 }
+    ]
+    const h = boot({
+        save: fx.save({ levels: { 5: 10 }, amounts: { 5: 20 }, minigames: { 5: fx.market({ goods }) } })
+            .raw
+    })
+    const s = h.A.market.state()
+    assert.equal(s.goods[0].signal, 'strong buy')
+    assert.equal(s.goods[1].signal, 'strong sell')
+    assert.equal(s.goods[2].signal, 'hold', 'chaotic has no usable bias')
+})
+
+test('trading is off by default', () => {
+    const h = boot({
+        save: fx.save({ levels: { 5: 10 }, amounts: { 5: 20 }, minigames: { 5: fx.market({}) } }).raw
+    })
+    assert.equal(h.A.market.state().trading, false)
+})
+
+test('resting value rises with the bank level', () => {
+    const M = boot({}).A.market
+    assert.equal(M.restingValue(0, 10), 19)
+    assert.equal(M.restingValue(16, 10), 179)
+})
+
+//! Scheduler
+
+test('a module that keeps throwing is switched off and the rest keep running', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    h.A.registry.register({
+        name: 'boom',
+        interval: 30,
+        tick() {
+            throw new Error('kaboom')
+        }
+    })
+    await sleep(400)
+    const stats = h.A.scheduler.stats()
+    assert.equal(stats.find(m => m.name === 'boom').disabled, true)
+    assert.ok(stats.find(m => m.name === 'shimmers').ran > 1)
+    h.A.scheduler.stop()
+})
+
+test('the master switch stops modules but never the HUD', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(150)
+    const ranCount = name => h.A.scheduler.stats().find(m => m.name === name).ran
+
+    h.A.store.setSetting('enabled', false)
+
+    // a tick already in flight is allowed to finish, and a drain runs for up to
+    // its whole time slice. rather than guess at how long that takes on a loaded
+    // machine, wait until the count stops moving.
+    let previous = -1
+    let current = ranCount('purchase')
+    while (current !== previous) {
+        previous = current
+        await sleep(300)
+        current = ranCount('purchase')
+    }
+
+    const hudBefore = ranCount('hud')
+    await sleep(400)
+
+    assert.equal(ranCount('purchase'), current, 'purchase stays stopped once settled')
+    assert.ok(ranCount('hud') > hudBefore, 'the HUD is how you turn everything back on')
+    h.A.scheduler.stop()
+})
