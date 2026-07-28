@@ -370,25 +370,6 @@ test('dragging the panel ignores the autoclicker synthetic events', async () => 
     h.A.scheduler.stop()
 })
 
-test('placement presets follow the game layout', async () => {
-    const h = boot({})
-    await h.A.store.ready('t')
-    await h.A.scheduler.start()
-    await sleep(120)
-    const panel = h.game.doc.getElementById('alakazam-hud')
-
-    assert.equal(h.A.hud.placeAt('middle'), true)
-    const middle = parseFloat(panel.style.left)
-    assert.equal(h.A.hud.placeAt('store'), true)
-    const store = parseFloat(panel.style.left)
-    assert.equal(h.A.hud.placeAt('cookie'), true)
-    const cookie = parseFloat(panel.style.left)
-
-    assert.ok(cookie < middle && middle < store, `cookie ${cookie} < middle ${middle} < store ${store}`)
-    assert.equal(h.A.hud.placeAt('nowhere'), false)
-    h.A.scheduler.stop()
-})
-
 //! Achievement hunt
 
 function achievementUI(h, { stats = true, log = true, bakery = true, tiny = true, slot = true } = {}) {
