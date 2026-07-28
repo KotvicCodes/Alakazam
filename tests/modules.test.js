@@ -529,3 +529,39 @@ test('the manifest and package versions stay in step', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
     assert.equal(manifest.version, pkg.version)
 })
+
+//! Click measurement
+
+test('the click meter separates what the game registers from what we send', async () => {
+    const h = boot({ save: fx.save({ cookieClicks: 1200 }).raw })
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+
+    // the autoclicker sends thousands a second; the save's tally never moves,
+    // which is exactly the situation that produced "3000 clicks per second"
+    const sending = setInterval(() => h.A.clicks.record(300), 100)
+    await sleep(2500)
+    clearInterval(sending)
+    h.A.scheduler.stop()
+
+    const stats = h.A.clicks.stats()
+    assert.ok(stats.dispatchedPerSecond > 1000, `sent rate was ${stats.dispatchedPerSecond}`)
+    assert.equal(stats.registeredPerSecond, 0, 'the game registered none of them')
+    assert.equal(h.A.clicks.clicksPerSecond(), 0, 'scoring must use the registered rate')
+})
+
+test('clicking upgrades are valued off the registered rate, not the dispatched one', () => {
+    const S = boot({}).A.strategy
+    const base = {
+        cps: 1000,
+        cookies: 1e6,
+        buildings: [{ name: 'Cursor', owned: 10, price: 100, perUnitCps: 1, baseCps: 1 }],
+        upgrades: []
+    }
+    const upgrade = { description: 'Clicking gains +1% of your CpS.' }
+
+    // three registered clicks a second: 3 x 1000 x 1%
+    assert.equal(S.upgradeDeltaCps(upgrade, { ...base, clicksPerSecond: 3 }), 30)
+    // the dispatched figure would have valued the same upgrade a thousand times higher
+    assert.equal(S.upgradeDeltaCps(upgrade, { ...base, clicksPerSecond: 3000 }), 30000)
+})

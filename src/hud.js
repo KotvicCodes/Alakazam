@@ -248,8 +248,16 @@
         html += row('per second', format(globals.cps))
         const click = window.Alakazam.clicks.stats()
         if (click.clickCps > 0) {
-            html += row('from clicking', `${format(click.clickCps)} (${click.clicksPerSecond}/s)`)
+            html += row('from clicking', format(click.clickCps))
             html += row('effective', format(globals.cps + click.clickCps))
+        }
+        if (click.dispatchedPerSecond > 0) {
+            // both numbers, because they differ by orders of magnitude and only
+            // the registered one means anything
+            html += row(
+                'clicks',
+                `${click.registeredPerSecond}/s of ${click.dispatchedPerSecond}/s sent`
+            )
         }
         html += row(
             'decision',
