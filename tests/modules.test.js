@@ -466,3 +466,45 @@ test('a routine is given up on after a few real attempts', async () => {
     assert.ok(!h.debug().achievements || !h.debug().achievements.waiting.includes('tinyCookie'))
     h.A.scheduler.stop()
 })
+
+test('ticker clicks are only counted when the news actually changes', async () => {
+    const h = boot({})
+    const d = h.game.doc
+    const comments = new El('div', { id: 'comments' })
+    const text = new El('div', { id: 'commentsText' })
+    const layer1 = new El('div', { id: 'commentsText1', class: 'commentsText', text: 'news 0' })
+    text.append(layer1)
+    comments.append(text)
+    d.body.append(comments)
+
+    // the game advances the news on a registered click, and only one per item
+    let item = 0
+    let lastAt = 0
+    comments.addEventListener('click', () => {
+        const now = Date.now()
+        if (now - lastAt < 100) return // a second click on the same item does nothing
+        lastAt = now
+        item++
+        layer1.text = 'news ' + item
+    })
+
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(3000)
+    h.A.scheduler.stop()
+
+    const counted = h.A.store.get('tickerClicks', 0)
+    assert.ok(counted > 0, 'should have registered some clicks')
+    assert.equal(counted, item, `counted ${counted} but the game advanced ${item} times`)
+})
+
+test('the ticker gives up if no click ever registers', async () => {
+    const h = boot({ disk: { 'legacy:t': { tickerTries: 500, tickerClicks: 0 } } })
+    const comments = new El('div', { id: 'comments', text: 'static' })
+    h.game.doc.body.append(comments)
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(1200)
+    h.A.scheduler.stop()
+    assert.equal(comments.events.filter(e => e === 'click').length, 0, 'should have stopped poking it')
+})
