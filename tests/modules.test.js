@@ -388,3 +388,81 @@ test('placement presets follow the game layout', async () => {
     assert.equal(h.A.hud.placeAt('nowhere'), false)
     h.A.scheduler.stop()
 })
+
+//! Achievement hunt
+
+function achievementUI(h, { stats = true, log = true, bakery = true, tiny = true, slot = true } = {}) {
+    const d = h.game.doc
+    const mk = (id, cls) => {
+        const e = new El('div', { id, class: cls || '' })
+        d.body.append(e)
+        return e
+    }
+    if (stats) {
+        const b = mk('statsButton')
+        b.append(new El('div'))
+        const general = mk('statsGeneral')
+        if (tiny) {
+            const listing = new El('div', { class: 'listing' })
+            const price = new El('div', { class: 'price' })
+            price.append(new El('div', { class: 'tinyCookie' }))
+            listing.append(price)
+            general.append(listing)
+        }
+        if (slot) {
+            const s = new El('div', { class: 'achievement' })
+            s.setAttribute('data-id', '204')
+            d.body.append(s)
+        }
+    }
+    if (log) {
+        const b = mk('logButton')
+        b.append(new El('div'))
+        const olden = mk('oldenDays')
+        olden.append(new El('div', { class: 'icon' }))
+    }
+    if (bakery) {
+        mk('bakeryName')
+        mk('bakeryNameInput')
+        mk('promptOption0')
+    }
+    mk('commentsText1')
+}
+
+test('a routine whose UI is missing is retried, not written off', async () => {
+    const disk = {}
+    // first load: the stats menu has no tiny cookie and no achievement slot yet
+    let h = boot({ disk })
+    achievementUI(h, { tiny: false, slot: false })
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    // the routines wait for each menu to draw, so the whole sweep takes a moment
+    await sleep(3600)
+
+    assert.equal(h.A.achievements.attempts('tinyCookie'), 0, 'a no-op must not burn an attempt')
+    assert.equal(h.A.achievements.giveUp('tinyCookie'), false)
+    assert.ok(h.A.achievements.attempts('godComplex') > 0, 'a routine that worked does count')
+    h.A.scheduler.stop()
+    await h.A.store.flush()
+
+    // second load, this time the menu is fully drawn
+    h = boot({ disk })
+    achievementUI(h)
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(3600)
+    assert.ok(h.A.achievements.attempts('tinyCookie') > 0, 'it should have run once it could')
+    h.A.scheduler.stop()
+})
+
+test('a routine is given up on after a few real attempts', async () => {
+    const disk = { 'legacy:t': { 'attempts:tinyCookie': 4 } }
+    const h = boot({ disk })
+    achievementUI(h)
+    await h.A.store.ready('t')
+    assert.equal(h.A.achievements.giveUp('tinyCookie'), true)
+    await h.A.scheduler.start()
+    await sleep(300)
+    assert.ok(!h.debug().achievements || !h.debug().achievements.waiting.includes('tinyCookie'))
+    h.A.scheduler.stop()
+})
