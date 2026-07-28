@@ -17,7 +17,7 @@
     // would quietly rot; counting does not.
 
     const { simulateClick } = window.Alakazam.input
-    const { identity, save, store, registry } = window.Alakazam
+    const { save, store, registry } = window.Alakazam
 
     const INTERVAL_MS = 3000
 
@@ -56,19 +56,18 @@
         simulateClick(logButton)
     }
 
-    //* God complex: rename the bakery to "Orteil", then put it back
-    // The old version renamed the bakery to "Alakazam" and left it there, quietly
-    // overwriting whatever the player had called it. The real name is read out of
-    // the save first and restored afterwards.
+    //* God complex: rename the bakery to "Orteil", then to "Alakazam"
+    // Renaming to Orteil is what unlocks the achievement; renaming to Alakazam
+    // afterwards is deliberate branding, not an accident. This runs once per save
+    // and never again, so it will not keep overwriting a name you set yourself.
     function godComplex() {
-        const original = identity.bakeryName() || 'Cookies'
         simulateClick(document.getElementById('bakeryName'))
         typeInto(document.getElementById('bakeryNameInput'), 'Orteil')
         simulateClick(document.getElementById('promptOption0'))
 
         setTimeout(() => {
             simulateClick(document.getElementById('bakeryName'))
-            typeInto(document.getElementById('bakeryNameInput'), original)
+            typeInto(document.getElementById('bakeryNameInput'), 'Alakazam')
             simulateClick(document.getElementById('promptOption0'))
         }, 1000)
     }
