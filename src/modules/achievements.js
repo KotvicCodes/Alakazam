@@ -5,18 +5,24 @@
     // One-off routines that unlock free achievements a human could also trigger by
     // poking the UI. All clicks route through simulateClick to honour fair-play.
     //
-    // These originally re-ran on every single page load, which was wasteful but
-    // self-healing: a routine that failed because the game had not finished
-    // drawing simply got another go next time. Recording them as done after one
-    // run stopped the waste and threw away the healing with it. A routine that
-    // silently found none of its elements, which is exactly what happens on a
-    // fresh save where the menus are still nearly empty, was marked finished and
-    // never attempted again.
+    // Getting the retry policy right here took two goes, and both failures are
+    // worth remembering.
     //
-    // So a routine is now only considered attempted when its elements were
-    // actually there, and it gets a few goes across page loads before being given
-    // up on. Re-running one that already worked costs nothing: the achievement is
-    // owned, and poking the menu again does nothing.
+    // Marking a routine done after a single run made a routine that silently
+    // found nothing, which is what happens on a fresh save where the menus are
+    // barely populated, never run again for that save.
+    //
+    // Then only counting an attempt when the routine found its target made the
+    // opposite mistake: a routine whose target is simply not there, because the
+    // achievement is already owned or the entry does not exist in this version,
+    // went back on the queue and reopened the same menu every few seconds
+    // forever. Visibly, and annoyingly.
+    //
+    // The rule that works: opening a menu is the costly, visible part, so it
+    // counts as an attempt whether or not the target was inside. Finding the
+    // target retires the routine immediately. Not finding it earns a retry, but
+    // only a few, and only after a cooldown. A routine whose menu is not even
+    // drawn yet costs nothing and is simply looked at again next tick.
 
     const { simulateClick } = window.Alakazam.input
     const { save, store, registry } = window.Alakazam
@@ -30,6 +36,10 @@
     // the game builds its menus when you click, but give each one a beat to appear
     // before reaching inside it
     const MENU_MS = 350
+
+    // how long to leave a routine alone before retrying it. reopening the stats
+    // panel every few seconds is exactly the kind of thrashing this avoids.
+    const RETRY_COOLDOWN_MS = 60000
 
     // the news ticker has three separate achievements at increasing click counts,
     // and the highest is well into the hundreds. clicks are spread across sessions
@@ -85,16 +95,22 @@
         return document.querySelector('#logButton div')
     }
 
-    //* Tiny cookie: click the tiny cookie in the stats panel
-    async function tinyCookie() {
+    //* Stats panel: the tiny cookie and the "here you go" achievement slot
+    // Both of these live in the stats panel, so they share one visit. Opening it
+    // twice in a row for two clicks was needless churn on screen.
+    async function statsPanel() {
         simulateClick(statsButton())
         await wait(MENU_MS)
+
         const tiny = document.querySelector('#statsGeneral .listing .price .tinyCookie')
-        const found = !!tiny
-        simulateClick(tiny)
+        if (tiny) simulateClick(tiny)
+
+        const slot = document.querySelector('[data-id="204"]')
+        if (slot) simulateClick(slot)
+
         await wait(80)
         simulateClick(statsButton())
-        return found
+        return !!tiny && !!slot
     }
 
     //* Olden days: open the info log and click the credits entry
@@ -129,27 +145,14 @@
         return true
     }
 
-    //* Here you go: open stats and click a specific achievement slot
-    async function hereYouGo() {
-        simulateClick(statsButton())
-        await wait(MENU_MS)
-        const slot = document.querySelector('[data-id="204"]')
-        const found = !!slot
-        simulateClick(slot)
-        await wait(80)
-        simulateClick(statsButton())
-        return found
-    }
-
     const ONE_OFFS = [
-        { name: 'tinyCookie', run: tinyCookie, ready: () => !!statsButton() },
+        { name: 'statsPanel', run: statsPanel, ready: () => !!statsButton() },
         { name: 'oldenDays', run: oldenDays, ready: () => !!logButton() },
         {
             name: 'godComplex',
             run: godComplex,
             ready: () => !!document.getElementById('bakeryName')
-        },
-        { name: 'hereYouGo', run: hereYouGo, ready: () => !!statsButton() }
+        }
     ]
 
     //! Running them
@@ -157,8 +160,13 @@
     // one at a time: they all drive the same menus and would fight each other
     let running = false
 
+    // opening a menu is visible and mildly annoying, so a routine that has to be
+    // retried waits rather than going again on the very next tick
+    let nextAttemptAt = 0
+
     async function runPending() {
         if (running || pending.length === 0) return
+        if (Date.now() < nextAttemptAt) return
         running = true
         try {
             // every routine that is ready gets its turn this tick, one after the
@@ -183,20 +191,25 @@
                     console.warn(`Alakazam: achievement routine "${job.name}" failed`, err)
                 }
 
+                // Opening a menu is the expensive, visible part, and it happened
+                // whether or not the thing we wanted was inside. So it counts as
+                // an attempt either way. Only counting successes meant a routine
+                // whose target simply is not there, because the achievement is
+                // already owned or the entry does not exist in this version, sat
+                // in the queue reopening the same menu every few seconds forever.
+                countAttempt(job.name)
+
                 if (worked) {
-                    countAttempt(job.name)
-                    if (giveUp(job.name)) {
-                        console.log(`Alakazam: done trying "${job.name}" for this save`)
-                    }
+                    // found it: no reason to ever come back
+                    store.set('attempts:' + job.name, MAX_ATTEMPTS)
+                } else if (giveUp(job.name)) {
+                    console.log(`Alakazam: done trying "${job.name}" for this save`)
                 } else {
-                    // the menu was there but what we needed inside it was not, so
-                    // this does not count against the budget either: the game may
-                    // still be filling it in, or the entry may not exist yet on a
-                    // fresh save
-                    console.log(`Alakazam: "${job.name}" had nothing to click yet, will retry`)
+                    console.log(`Alakazam: "${job.name}" found nothing to click, will retry later`)
                     pending.push(job)
                 }
             }
+            if (pending.length > 0) nextAttemptAt = Date.now() + RETRY_COOLDOWN_MS
         } finally {
             running = false
         }

@@ -429,41 +429,60 @@ function achievementUI(h, { stats = true, log = true, bakery = true, tiny = true
     mk('commentsText1')
 }
 
-test('a routine whose UI is missing is retried, not written off', async () => {
+test('a routine that finds nothing does not reopen the menu every tick', async () => {
     const disk = {}
-    // first load: the stats menu has no tiny cookie and no achievement slot yet
-    let h = boot({ disk })
+    // the stats menu is there but has neither the tiny cookie nor the slot
+    const h = boot({ disk })
     achievementUI(h, { tiny: false, slot: false })
     await h.A.store.ready('t')
     await h.A.scheduler.start()
-    // the routines wait for each menu to draw, so the whole sweep takes a moment
-    await sleep(3600)
+    await sleep(4000)
+    h.A.scheduler.stop()
 
-    assert.equal(h.A.achievements.attempts('tinyCookie'), 0, 'a no-op must not burn an attempt')
-    assert.equal(h.A.achievements.giveUp('tinyCookie'), false)
-    assert.ok(h.A.achievements.attempts('godComplex') > 0, 'a routine that worked does count')
+    // it ran, so it counts, but the cooldown means it ran once rather than
+    // once every three seconds
+    assert.equal(h.A.achievements.attempts('statsPanel'), 1)
+})
+
+test('a routine that finds its target is retired immediately', async () => {
+    const h = boot({})
+    achievementUI(h)
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(3000)
+    h.A.scheduler.stop()
+    assert.equal(h.A.achievements.giveUp('statsPanel'), true, 'no reason to ever run it again')
+})
+
+test('a routine whose menu is not drawn yet costs nothing and is retried', async () => {
+    const disk = {}
+    let h = boot({ disk })
+    achievementUI(h, { stats: false })
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(1500)
+    assert.equal(h.A.achievements.attempts('statsPanel'), 0, 'never opened, so never attempted')
     h.A.scheduler.stop()
     await h.A.store.flush()
 
-    // second load, this time the menu is fully drawn
     h = boot({ disk })
     achievementUI(h)
     await h.A.store.ready('t')
     await h.A.scheduler.start()
-    await sleep(3600)
-    assert.ok(h.A.achievements.attempts('tinyCookie') > 0, 'it should have run once it could')
+    await sleep(3000)
+    assert.ok(h.A.achievements.attempts('statsPanel') > 0, 'runs once the menu exists')
     h.A.scheduler.stop()
 })
 
 test('a routine is given up on after a few real attempts', async () => {
-    const disk = { 'legacy:t': { 'attempts:tinyCookie': 4 } }
+    const disk = { 'legacy:t': { 'attempts:statsPanel': 4 } }
     const h = boot({ disk })
     achievementUI(h)
     await h.A.store.ready('t')
-    assert.equal(h.A.achievements.giveUp('tinyCookie'), true)
+    assert.equal(h.A.achievements.giveUp('statsPanel'), true)
     await h.A.scheduler.start()
     await sleep(300)
-    assert.ok(!h.debug().achievements || !h.debug().achievements.waiting.includes('tinyCookie'))
+    assert.ok(!h.debug().achievements || !h.debug().achievements.waiting.includes('statsPanel'))
     h.A.scheduler.stop()
 })
 
