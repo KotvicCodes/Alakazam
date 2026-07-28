@@ -63,7 +63,7 @@ test('returns NaN for an effect it cannot read', () => {
     assert.ok(Number.isNaN(S.upgradeDeltaCps({ description: '' }, view())))
 })
 
-test('an unreadable upgrade gets a pessimistic prior, not a free pass', () => {
+test('an unreadable upgrade is marked unmeasured rather than guessed at', () => {
     const scored = S.scoreUpgrades(
         view({
             upgrades: [
@@ -77,12 +77,12 @@ test('an unreadable upgrade gets a pessimistic prior, not a free pass', () => {
             ]
         })
     )
-    assert.equal(scored[0].estimated, true)
-    // 5% of 1000 cps assumed, so 900000 / 50
-    assert.equal(scored[0].payback, 18000)
+    assert.equal(scored[0].measured, false)
+    assert.equal(scored[0].payback, Infinity)
+    assert.ok(Number.isNaN(scored[0].deltaCps))
 })
 
-test('a measured upgrade is not marked as estimated', () => {
+test('a measured upgrade reports its real payback', () => {
     const scored = S.scoreUpgrades(
         view({
             upgrades: [
@@ -96,8 +96,24 @@ test('a measured upgrade is not marked as estimated', () => {
             ]
         })
     )
-    assert.equal(scored[0].estimated, false)
+    assert.equal(scored[0].measured, true)
     assert.equal(scored[0].payback, 100)
+})
+
+test('upgrades are ordered cheapest first, so the drain loop works through them', () => {
+    const scored = S.scoreUpgrades(
+        view({
+            upgrades: [
+                { name: 'Dear', price: 9000, kind: 'buy', affordable: true, description: 'x' },
+                { name: 'Cheap', price: 50, kind: 'buy', affordable: true, description: 'x' },
+                { name: 'Middling', price: 500, kind: 'buy', affordable: true, description: 'x' }
+            ]
+        })
+    )
+    assert.deepEqual(
+        scored.map(u => u.name),
+        ['Cheap', 'Middling', 'Dear']
+    )
 })
 
 test('skips upgrades classified as toggles', () => {
@@ -107,15 +123,44 @@ test('skips upgrades classified as toggles', () => {
     assert.equal(scored.length, 0)
 })
 
-test('an expensive upgrade loses to a building instead of jumping the queue', () => {
+test('an affordable upgrade is always taken ahead of a building', () => {
     const decision = S.decide(
         view({
             upgrades: [
-                { name: 'Dear junk', price: 5e6, kind: 'buy', affordable: true, description: 'unclear' }
+                { name: 'Unreadable', price: 500, kind: 'buy', affordable: true, description: 'unclear' }
+            ]
+        })
+    )
+    assert.equal(decision.action, 'buyUpgrade')
+    assert.match(decision.reason, /not readable/)
+})
+
+test('an upgrade Alakazam cannot afford does not block a building', () => {
+    const decision = S.decide(
+        view({
+            upgrades: [
+                { name: 'Dear', price: 5e9, kind: 'buy', affordable: false, description: 'unclear' }
             ]
         })
     )
     assert.equal(decision.action, 'buyBuilding')
+})
+
+test('the same upgrade is judged the same way at every production level', () => {
+    // regression: the old scorer assumed an unreadable upgrade gave a few percent
+    // of current CpS, so this exact upgrade was refused at 1 CpS and snapped up at
+    // 1000. Production growing is not a reason to change your mind about a price.
+    const upgrade = {
+        name: 'Thousand fingers',
+        price: 100,
+        kind: 'buy',
+        affordable: true,
+        description: 'the mouse gains more'
+    }
+    for (const cps of [0.1, 1, 10, 1000, 1e6]) {
+        const decision = S.decide(view({ cps, upgrades: [upgrade] }))
+        assert.equal(decision.action, 'buyUpgrade', `should still buy at ${cps} cps`)
+    }
 })
 
 test('detects crossing a tier boundary', () => {
