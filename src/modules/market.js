@@ -8,13 +8,11 @@
     // guesses wrong.
     //
     // The save records it outright, along with each good's momentum and how many
-    // ticks the current mode has left. So the advice here is not a prediction; it
-    // is reading the answer. That is also exactly why trading is switched off by
-    // default: knowing the trend makes this trivially profitable, and whether that
-    // is the game you want to play is your call, not this extension's.
+    // ticks the current mode has left. So the decisions here are not predictions;
+    // they are reading the answer, which makes the market reliably profitable.
     //
-    // With trading off the module still watches and reports, which costs nothing
-    // and makes the HUD useful.
+    // Trading is on by default. Switch it off and the module keeps watching and
+    // reporting its signals to the HUD without touching your money.
 
     const { simulateClick } = window.Alakazam.input
     const { save, store, registry } = window.Alakazam
