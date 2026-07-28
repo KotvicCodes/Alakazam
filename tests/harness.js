@@ -68,6 +68,8 @@ function boot(opts = {}) {
         PointerEvent: FakeEvent,
         Event: FakeEvent,
         atob: s => Buffer.from(s, 'base64').toString('binary'),
+        innerWidth: 1440,
+        innerHeight: 900,
         localStorage: { getItem: k => (opts.save && k === 'CookieClickerGame' ? opts.save : null) }
     }
     ctx.window = ctx

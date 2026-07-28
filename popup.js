@@ -21,6 +21,15 @@ const LABELS = {
     hud: 'In-page panel'
 }
 
+//* Panel placements
+// the content script resolves these against the game's own layout; the popup only
+// names one and stamps the request so repeating a choice still moves the panel
+const PLACEMENTS = [
+    ['cookie', 'On the cookie'],
+    ['middle', 'Middle'],
+    ['store', 'On the store']
+]
+
 function get(keys) {
     return new Promise(resolve => chrome.storage.local.get(keys, resolve))
 }
@@ -82,6 +91,20 @@ async function render() {
         document.getElementById('buildings').textContent = status.seeds
             ? `${status.seeds} seeds`
             : `${status.lumps === null || status.lumps === undefined ? '-' : status.lumps} lumps`
+    }
+
+    const placement = document.getElementById('placement')
+    placement.innerHTML = ''
+    for (const [preset, label] of PLACEMENTS) {
+        const button = document.createElement('button')
+        button.className = 'btn'
+        button.textContent = label
+        button.addEventListener('click', async () => {
+            const current = (await get([SETTINGS_KEY]))[SETTINGS_KEY] || {}
+            current.hudPlacement = { preset, at: Date.now() }
+            await set({ [SETTINGS_KEY]: current })
+        })
+        placement.appendChild(button)
     }
 
     controls.style.display = ''

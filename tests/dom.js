@@ -73,6 +73,28 @@ class El {
 
     preventDefault() {}
 
+    get firstChild() {
+        return this.children[0] || null
+    }
+
+    // enough layout for code that positions itself
+    get offsetWidth() {
+        return 268
+    }
+    get offsetHeight() {
+        return 200
+    }
+
+    setPointerCapture(id) {
+        this.captured = id
+    }
+    releasePointerCapture() {
+        this.captured = null
+    }
+    hasPointerCapture(id) {
+        return this.captured === id
+    }
+
     get innerText() {
         if (this.text) return this.text
         return this.children
