@@ -147,8 +147,21 @@ class El {
     }
 
     matches(sel) {
+        // pull attribute selectors out first, since they contain characters the
+        // simple tokeniser below would mistake for tag names
+        const attrs = []
+        const rest = sel.replace(/\[([\w-]+)(?:=["']?([^\]"']*)["']?)?\]/g, (m, name, value) => {
+            attrs.push([name, value])
+            return ''
+        })
+        for (const [name, value] of attrs) {
+            const actual = this.getAttribute(name)
+            if (actual === undefined || actual === null) return false
+            if (value !== undefined && String(actual) !== value) return false
+        }
+
         // one compound term: tag / #id / .class, concatenated
-        const parts = sel.match(/[#.]?[\w-]+/g) || []
+        const parts = rest.match(/[#.]?[\w-]+/g) || []
         for (const p of parts) {
             if (p[0] === '#') {
                 if (this.id !== p.slice(1)) return false
