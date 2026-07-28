@@ -508,3 +508,24 @@ test('the ticker gives up if no click ever registers', async () => {
     h.A.scheduler.stop()
     assert.equal(comments.events.filter(e => e === 'click').length, 0, 'should have stopped poking it')
 })
+
+//! Version reporting
+
+test('no version number is hardcoded into the popup markup', () => {
+    const fs = require('fs')
+    const path = require('path')
+    const root = path.join(__dirname, '..')
+    const html = fs.readFileSync(path.join(root, 'popup.html'), 'utf8')
+    // it used to say "v1.0" forever, ten releases after that stopped being true
+    assert.equal(/v\d+\.\d+/.test(html), false, 'the popup must read its version from the manifest')
+    assert.match(fs.readFileSync(path.join(root, 'popup.js'), 'utf8'), /getManifest\(\)/)
+})
+
+test('the manifest and package versions stay in step', () => {
+    const fs = require('fs')
+    const path = require('path')
+    const root = path.join(__dirname, '..')
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'))
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+    assert.equal(manifest.version, pkg.version)
+})
