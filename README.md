@@ -164,8 +164,8 @@ protects.
 - **Golden cookies** — clicked immediately. Wrath cookies are held off while a
   buff is running, so a Clot or a Ruin cannot end a combo.
 - **Stock market** — the save records each good's hidden trend outright, so
-  Alakazam can tell you which way every stock is going. Trading on that is
-  switched off by default; it advises unless you turn it on.
+  Alakazam trades on that. Switch trading off and it keeps reporting the signals
+  without touching your money.
 
 ## Future Improvements
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the full list, including ascension

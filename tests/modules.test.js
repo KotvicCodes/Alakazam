@@ -260,10 +260,12 @@ test('the hidden trend mode drives the signal', () => {
     assert.equal(s.goods[2].signal, 'hold', 'chaotic has no usable bias')
 })
 
-test('trading is off by default', () => {
+test('trading is on by default and can be switched off', () => {
     const h = boot({
         save: fx.save({ levels: { 5: 10 }, amounts: { 5: 20 }, minigames: { 5: fx.market({}) } }).raw
     })
+    assert.equal(h.A.market.state().trading, true)
+    h.A.store.setSetting('marketTrading', false)
     assert.equal(h.A.market.state().trading, false)
 })
 
