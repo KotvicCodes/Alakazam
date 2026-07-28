@@ -322,3 +322,69 @@ test('the master switch stops modules but never the HUD', async () => {
     assert.ok(ranCount('hud') > hudBefore, 'the HUD is how you turn everything back on')
     h.A.scheduler.stop()
 })
+
+//! HUD
+
+test('dragging the panel ignores the autoclicker synthetic events', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(120)
+
+    const panel = h.game.doc.getElementById('alakazam-hud')
+    const head = h.game.doc.getElementById('alakazam-hud-head')
+    assert.ok(panel && head, 'the panel should have been built')
+
+    const trusted = (type, x, y) => {
+        const e = {
+            type,
+            pointerId: 1,
+            button: 0,
+            isTrusted: true,
+            clientX: x,
+            clientY: y,
+            preventDefault() {}
+        }
+        head.dispatchEvent(e)
+        return e
+    }
+
+    trusted('pointerdown', 700, 400)
+    trusted('pointermove', 720, 420)
+    const placed = panel.style.left
+
+    // the autoclicker fires untrusted pointer events constantly; they must not move it
+    head.dispatchEvent({
+        type: 'pointermove',
+        pointerId: 1,
+        button: 0,
+        isTrusted: false,
+        clientX: 5,
+        clientY: 5
+    })
+    assert.equal(panel.style.left, placed, 'synthetic moves must not drag the panel')
+
+    trusted('pointerup', 720, 420)
+    await h.A.store.flush()
+    assert.ok(h.disk['legacy:t'].hudPosition, 'the position should stick')
+    h.A.scheduler.stop()
+})
+
+test('placement presets follow the game layout', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(120)
+    const panel = h.game.doc.getElementById('alakazam-hud')
+
+    assert.equal(h.A.hud.placeAt('middle'), true)
+    const middle = parseFloat(panel.style.left)
+    assert.equal(h.A.hud.placeAt('store'), true)
+    const store = parseFloat(panel.style.left)
+    assert.equal(h.A.hud.placeAt('cookie'), true)
+    const cookie = parseFloat(panel.style.left)
+
+    assert.ok(cookie < middle && middle < store, `cookie ${cookie} < middle ${middle} < store ${store}`)
+    assert.equal(h.A.hud.placeAt('nowhere'), false)
+    h.A.scheduler.stop()
+})

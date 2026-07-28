@@ -72,7 +72,20 @@
 #alakazam-hud .az-tog.master.off { background: #7d3a3a; border-color: #a65353; color: #f7e8e8; }
 #alakazam-hud.az-folded #alakazam-hud-body { display: none; }
 #alakazam-hud .az-warn { color: #e0894f; }
+#alakazam-hud.az-dragging {
+    opacity: 0.88; box-shadow: 0 12px 34px rgba(0,0,0,0.7); transform: scale(1.02);
+}
+#alakazam-hud.az-dragging #alakazam-hud-head { cursor: grabbing; background: rgba(143,116,78,0.55); }
 `
+
+    //* Placement presets
+    // resolved against the game's own layout where possible, so "over the cookie"
+    // lands over the cookie whatever the window size is
+    const PLACEMENTS = {
+        cookie: { selector: '#sectionLeft', fallback: [0.16, 0.5] },
+        store: { selector: '#sectionRight', fallback: [0.86, 0.5] },
+        middle: { selector: null, fallback: [0.5, 0.5] }
+    }
 
     //! Building the panel
 
@@ -129,41 +142,96 @@
     // them and snapped to the cookie the instant you grabbed it, which looked like
     // it was jumping to wherever you had clicked.
     function makeDraggable(handle) {
-        let dragging = false
-        let offsetX = 0
-        let offsetY = 0
+        let pointer = null
 
-        handle.addEventListener('mousedown', event => {
-            if (!event.isTrusted) return
-            dragging = true
-            const rect = root.getBoundingClientRect()
-            offsetX = event.clientX - rect.left
-            offsetY = event.clientY - rect.top
-            // pin the panel by its left edge for the whole drag, so the right
-            // offset it starts life with cannot fight the position being set
-            root.style.left = `${rect.left}px`
-            root.style.top = `${rect.top}px`
-            root.style.right = 'auto'
+        handle.addEventListener('pointerdown', event => {
+            // real input only. the autoclicker fires a stream of synthetic pointer
+            // events at the big cookie and they bubble everywhere.
+            if (!event.isTrusted || event.button !== 0) return
+            pointer = event.pointerId
+
+            // Pointer capture is the reason this works at all. Listening on the
+            // document meant competing with everything else on the page for the
+            // move events; capturing routes them straight here for the whole drag,
+            // whatever the cursor happens to be over.
+            if (handle.setPointerCapture) handle.setPointerCapture(pointer)
+
+            root.classList.add('az-dragging')
+            // snap the panel under the cursor rather than preserving the grab
+            // offset. this is deliberate: it is the bit that felt good to grab.
+            moveTo(event.clientX, event.clientY)
             event.preventDefault()
         })
 
-        document.addEventListener('mousemove', event => {
-            if (!dragging || !event.isTrusted) return
-            const maxX = window.innerWidth - root.offsetWidth
-            const maxY = window.innerHeight - root.offsetHeight
-            root.style.left = `${clamp(event.clientX - offsetX, 0, maxX)}px`
-            root.style.top = `${clamp(event.clientY - offsetY, 0, maxY)}px`
+        handle.addEventListener('pointermove', event => {
+            if (pointer === null || event.pointerId !== pointer || !event.isTrusted) return
+            moveTo(event.clientX, event.clientY)
         })
 
-        document.addEventListener('mouseup', event => {
-            if (!event.isTrusted) return
-            if (dragging) store.set('hudPosition', { left: root.style.left, top: root.style.top })
-            dragging = false
-        })
+        const release = event => {
+            if (pointer === null || (event && event.pointerId !== pointer)) return
+            if (handle.releasePointerCapture && handle.hasPointerCapture(pointer)) {
+                handle.releasePointerCapture(pointer)
+            }
+            pointer = null
+            root.classList.remove('az-dragging')
+            remember()
+        }
+        handle.addEventListener('pointerup', release)
+        handle.addEventListener('pointercancel', release)
     }
 
+    //* moveTo
+    // centre the panel's header on a point, clamped so it can never be dragged
+    // somewhere it cannot be grabbed again
+    function moveTo(x, y) {
+        const width = root.offsetWidth || 268
+        const header = root.firstChild ? root.firstChild.offsetHeight || 26 : 26
+        const left = clamp(x - width / 2, 4, window.innerWidth - width - 4)
+        const top = clamp(y - header / 2, 4, window.innerHeight - header - 4)
+        root.style.left = `${left}px`
+        root.style.top = `${top}px`
+        root.style.right = 'auto'
+    }
+
+    //* remember
+    // the panel stays where you put it, across reloads
+    function remember() {
+        store.set('hudPosition', { left: root.style.left, top: root.style.top })
+    }
+
+    //* placeAt
+    // jump the panel to a named spot. the game's own section elements are measured
+    // when they are there, so this follows the real layout rather than guessing at
+    // where the cookie happens to be on this screen.
+    function placeAt(name) {
+        if (!root) return false
+        const preset = PLACEMENTS[name]
+        if (!preset) return false
+
+        const target = preset.selector ? document.querySelector(preset.selector) : null
+        let x
+        let y
+        if (target) {
+            const rect = target.getBoundingClientRect()
+            x = rect.left + rect.width / 2
+            y = rect.top + Math.min(rect.height / 2, 160)
+        } else {
+            x = window.innerWidth * preset.fallback[0]
+            y = window.innerHeight * preset.fallback[1]
+        }
+
+        // moveTo centres the header on the point, so nudge down by half the panel
+        // to leave the whole thing sitting over the target rather than above it
+        moveTo(x, y - (root.offsetHeight || 200) / 2 + 20)
+        remember()
+        return true
+    }
+
+    // low wins over high, so a viewport too small for the panel pins it to the
+    // top left rather than collapsing to a negative position
     function clamp(value, low, high) {
-        return Math.max(low, Math.min(Number.isFinite(high) ? high : value, value))
+        return Math.max(low, Math.min(value, Math.max(low, high)))
     }
 
     //! Rendering
@@ -328,7 +396,24 @@
         if (store.setting('hud') === false) return
         build()
         render()
-        store.subscribe(render)
+        // the popup asks for a placement by writing a setting; the storage change
+        // arrives here, which is the same bridge the module toggles already use
+        store.subscribe(settings => {
+            applyPlacementRequest(settings.hudPlacement)
+            render()
+        })
+        lastPlacementAt = (store.allSettings().hudPlacement || {}).at || 0
+    }
+
+    //* applyPlacementRequest
+    // the request carries a timestamp so asking for the same preset twice still
+    // moves the panel, rather than looking like no change at all
+    let lastPlacementAt = 0
+
+    function applyPlacementRequest(request) {
+        if (!request || !request.at || request.at === lastPlacementAt) return
+        lastPlacementAt = request.at
+        placeAt(request.preset)
     }
 
     function tick() {
@@ -351,5 +436,5 @@
     // master switch is able to stop.
     registry.register({ name: 'hud', interval: INTERVAL_MS, always: true, setup, tick })
 
-    window.Alakazam.hud = { render, format }
+    window.Alakazam.hud = { render, format, placeAt, PLACEMENTS }
 })()
