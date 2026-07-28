@@ -274,6 +274,11 @@
         html += section('game')
         html += row('cookies', format(globals.cookies))
         html += row('per second', format(globals.cps))
+        const click = window.Alakazam.clicks.stats()
+        if (click.clickCps > 0) {
+            html += row('from clicking', `${format(click.clickCps)} (${click.clicksPerSecond}/s)`)
+            html += row('effective', format(globals.cps + click.clickCps))
+        }
         html += row(
             'decision',
             debug.decision ? `${debug.decision.action}: ${debug.decision.reason}` : 'starting up'

@@ -14,7 +14,7 @@
     // else, but the behaviour is unchanged.
 
     const { simulateClick } = window.Alakazam.input
-    const { registry } = window.Alakazam
+    const { registry, clicks } = window.Alakazam
 
     const BURST_PER_FRAME = 50
 
@@ -30,6 +30,9 @@
         for (let i = 0; i < BURST_PER_FRAME; i++) {
             simulateClick(target)
         }
+        // tell the click meter what we issued, so what clicking earns can be
+        // measured rather than assumed
+        clicks.record(BURST_PER_FRAME)
     }
 
     registry.register({ name: 'autoclick', interval: 'frame', tick })

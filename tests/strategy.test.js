@@ -225,3 +225,30 @@ test('reports nothing scorable when there is nothing to score', () => {
     const decision = S.decide({ cps: 0, cookies: 0, buildings: [], upgrades: [] })
     assert.equal(decision.action, 'none')
 })
+
+test('clicking upgrades are valued from the measured click rate', () => {
+    const clicky = view({ cps: 1000, clicksPerSecond: 3.3, clickCps: 660 })
+    // 1% of 1000 CpS per click, 3.3 clicks a second
+    assert.ok(
+        Math.abs(S.upgradeDeltaCps({ description: 'Clicking gains +1% of your CpS.' }, clicky) - 33) <
+            0.001
+    )
+    // 174 non-cursor buildings owned in the fixture (50 grandmas + 24 farms)
+    assert.ok(
+        Math.abs(
+            S.upgradeDeltaCps(
+                {
+                    description:
+                        'The mouse and cursors gain +0.1 cookies for each non-cursor object owned.'
+                },
+                clicky
+            ) -
+                3.3 * 0.1 * 74
+        ) < 0.001
+    )
+})
+
+test('clicking upgrades read as unknown when nothing is clicking', () => {
+    const idle = view({ clicksPerSecond: 0, clickCps: 0 })
+    assert.ok(Number.isNaN(S.upgradeDeltaCps({ description: 'Clicking gains +1% of your CpS.' }, idle)))
+})

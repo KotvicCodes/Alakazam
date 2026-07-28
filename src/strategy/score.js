@@ -143,6 +143,35 @@
             return Number.isFinite(view.cps) ? view.cps * 0.1 : NaN
         }
 
+        //! Clicking upgrades
+        // These were the worst blind spot. Their entire effect lands on click
+        // income, which nothing was measuring, so every one of them parsed to
+        // "unknown" no matter how strong it was. With a measured click rate they
+        // convert to cookies per second like anything else.
+        const rate = Number.isFinite(view.clicksPerSecond) ? view.clicksPerSecond : 0
+        if (rate > 0) {
+            // "Clicking gains +1% of your CpS."
+            m = /clicking gains \+?([\d.]+)% of your (?:cps|cookies per second)/i.exec(text)
+            if (m && Number.isFinite(view.cps)) {
+                return rate * view.cps * (parseFloat(m[1]) / 100)
+            }
+
+            // "The mouse and cursors gain +0.1 cookies for each non-cursor object owned."
+            m = /gain \+?([\d.]+) cookies? for each non-cursor/i.exec(text)
+            if (m) {
+                const nonCursor = view.buildings
+                    .filter(b => normaliseName(b.name) !== 'cursor')
+                    .reduce((n, b) => n + (Number.isFinite(b.owned) ? b.owned : 0), 0)
+                return rate * parseFloat(m[1]) * nonCursor
+            }
+
+            // "The mouse and cursors are twice as efficient." applies to clicking,
+            // not to the cursor building line
+            if (/mouse and cursors are twice as efficient/i.test(text)) {
+                return Number.isFinite(view.clickCps) ? view.clickCps : NaN
+            }
+        }
+
         return NaN
     }
 

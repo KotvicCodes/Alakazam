@@ -22,7 +22,7 @@
 
     const { simulateClick } = window.Alakazam.input
     const { decide, sumPrice } = window.Alakazam.strategy
-    const { live, catalog, save, registry, act } = window.Alakazam
+    const { live, catalog, save, registry, act, clicks } = window.Alakazam
     const { BASE_PRODUCTION } = window.Alakazam.data.buildings
 
     const INTERVAL_MS = 250
@@ -76,7 +76,18 @@
             })
         }
 
-        return { timestamp: Date.now(), ...globals, cookies: balance, buildings, upgrades }
+        return {
+            timestamp: Date.now(),
+            ...globals,
+            cookies: balance,
+            // passive production is what the game shows; clicking is measured on
+            // top of it, and click upgrades are scored against that
+            clickCps: clicks.clickCps(),
+            clicksPerSecond: clicks.stats().clicksPerSecond,
+            effectiveCps: clicks.effectiveCps(globals.cps),
+            buildings,
+            upgrades
+        }
     }
 
     function wait(ms) {
@@ -98,6 +109,8 @@
             decision = decide(view)
 
             if (decision.action === 'buyUpgrade') {
+                // spending moves the bank, which would poison the click meter
+                clicks.spoil()
                 simulateClick(decision.target.element)
                 balance -= decision.target.price
                 bought++
@@ -108,6 +121,7 @@
 
             if (decision.action === 'buyBuilding') {
                 const amount = decision.amount || 1
+                clicks.spoil()
                 const result = await act.store.buy(decision.target, amount, balance)
                 if (!result.bought) {
                     // the rendered bulk price came in over budget: our estimate was
