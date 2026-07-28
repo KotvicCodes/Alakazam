@@ -101,7 +101,19 @@ async function render() {
     }
 }
 
+//* showVersion
+// read from the manifest rather than written into the markup. it was hardcoded,
+// so it still claimed v1.0 ten releases later. deriving it means there is one
+// version number in the project and no ritual to forget.
+function showVersion() {
+    const el = document.getElementById('version')
+    if (!el) return
+    const manifest = chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest() : null
+    el.textContent = manifest ? `v${manifest.version}` : ''
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    showVersion()
     render()
     // the page keeps writing status, so refresh while the popup is open
     setInterval(render, 2000)

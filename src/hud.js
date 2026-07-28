@@ -92,7 +92,16 @@
 
         root = el('div', { id: 'alakazam-hud' })
         const head = el('div', { id: 'alakazam-hud-head' })
-        const title = el('div', { id: 'alakazam-hud-title', textContent: 'ALAKAZAM' })
+        // the loaded version, straight from the manifest. worth showing: knowing
+        // which build is actually running in the tab is otherwise guesswork.
+        const version =
+            typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest
+                ? chrome.runtime.getManifest().version
+                : ''
+        const title = el('div', {
+            id: 'alakazam-hud-title',
+            textContent: version ? `ALAKAZAM v${version}` : 'ALAKAZAM'
+        })
         const fold = el('div', { id: 'alakazam-hud-fold', textContent: '-' })
         head.appendChild(title)
         head.appendChild(fold)
