@@ -35,7 +35,15 @@
     // and the highest is well into the hundreds. clicks are spread across sessions
     // rather than hammered in one go, and the running total is remembered.
     const TICKER_TARGET = 1000
-    const TICKER_PER_TICK = 12
+    const TICKER_PER_TICK = 6
+
+    // the game swaps the news item on each registered click, so leave a beat for
+    // that to happen before checking whether it did
+    const TICKER_GAP_MS = 120
+
+    // if this many clicks go by without a single one registering, something about
+    // the ticker has changed and hammering it forever helps nobody
+    const TICKER_MAX_TRIES = 200
 
     let pending = []
 
@@ -205,16 +213,52 @@
 
     //! Ongoing work
 
+    //* tickerTarget
+    // The news ticker is two stacked text layers, #commentsText1 and
+    // #commentsText2, that the game swaps between as the news rotates. Clicking a
+    // particular layer is unreliable: half the time it is the hidden one, and
+    // clicking the ticker advances the news, which swaps the nodes underneath.
+    //
+    // So aim at the stable container instead and let the event bubble, which is
+    // what happens when a player clicks the ticker anyway.
+    function tickerTarget() {
+        return (
+            document.getElementById('comments') ||
+            document.getElementById('commentsText') ||
+            document.getElementById('commentsText1')
+        )
+    }
+
+    function tickerText() {
+        const el = document.getElementById('commentsText') || tickerTarget()
+        return el ? el.innerText : ''
+    }
+
     //* clickTicker
-    // the news ticker rewards sheer persistence rather than timing, so a few
-    // clicks per tick get there without flooding anything
-    function clickTicker() {
-        const total = store.get('tickerClicks', 0)
-        if (total >= TICKER_TARGET) return
-        const comments = document.getElementById('commentsText1')
-        if (!comments) return
-        for (let i = 0; i < TICKER_PER_TICK; i++) simulateClick(comments)
-        store.set('tickerClicks', total + TICKER_PER_TICK)
+    // The ticker achievements are pure persistence, but only clicks the game
+    // actually registers count, and it registers at most one per news item.
+    // Firing a dozen clicks into the same millisecond therefore did almost
+    // nothing: the counter here climbed to its target while the game had seen a
+    // handful. Now each click is given a moment to land and is only counted when
+    // the news item actually changed, which is the observable proof it registered.
+    async function clickTicker() {
+        if (store.get('tickerClicks', 0) >= TICKER_TARGET) return
+
+        // if clicks never seem to register, stop rather than poking forever
+        const tries = store.get('tickerTries', 0)
+        if (tries > TICKER_MAX_TRIES && store.get('tickerClicks', 0) === 0) return
+
+        for (let i = 0; i < TICKER_PER_TICK; i++) {
+            const target = tickerTarget()
+            if (!target) return
+            const before = tickerText()
+            simulateClick(target)
+            await wait(TICKER_GAP_MS)
+            store.set('tickerTries', store.get('tickerTries', 0) + 1)
+            if (tickerText() !== before) {
+                store.set('tickerClicks', store.get('tickerClicks', 0) + 1)
+            }
+        }
     }
 
     //* closeNotes
@@ -226,7 +270,7 @@
 
     async function tick() {
         await runPending()
-        clickTicker()
+        await clickTicker()
         closeNotes()
 
         const s = save.get()
@@ -234,6 +278,7 @@
             won: save.achievementsWon(),
             known: s.ok && s.achievements ? s.achievements.length : 0,
             tickerClicks: store.get('tickerClicks', 0),
+            tickerTries: store.get('tickerTries', 0),
             waiting: pending.map(j => j.name),
             attempts: ONE_OFFS.map(j => `${j.name}:${attempts(j.name)}`)
         }
