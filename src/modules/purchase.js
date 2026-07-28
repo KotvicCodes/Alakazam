@@ -110,8 +110,6 @@
             decision = decide(view)
 
             if (decision.action === 'buyUpgrade') {
-                // spending moves the bank, which would poison the click meter
-                clicks.spoil()
                 simulateClick(decision.target.element)
                 balance -= decision.target.price
                 bought++
@@ -122,7 +120,6 @@
 
             if (decision.action === 'buyBuilding') {
                 const amount = decision.amount || 1
-                clicks.spoil()
                 const result = await act.store.buy(decision.target, amount, balance)
                 if (!result.bought) {
                     // the rendered bulk price came in over budget: our estimate was

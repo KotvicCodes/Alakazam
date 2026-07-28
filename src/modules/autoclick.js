@@ -4,10 +4,17 @@
     //! Autoclicker
     // A real user clicks a few times a second; an autoclicker clicks many times a
     // second. Every click here is still a genuine dispatched event (fair-play),
-    // we simply issue a burst of them per animation frame. BURST_PER_FRAME is the
-    // throughput knob: raise it for more clicks, lower it if the tab stutters.
-    // The ceiling is the game's own click-handler cost, and a large burst is
-    // effectively superhuman even though each event is real.
+    // we simply issue a burst of them per animation frame.
+    //
+    // That burst used to be fifty, about three thousand events a second. Now that
+    // the game's own click tally is being read, it is clear the game acts on a
+    // tiny fraction of those: the other 99% were pure cost, dispatching events
+    // that seven handlers each had to consider and then nothing came of. The
+    // burst is small enough to stay well clear of anything the game could
+    // plausibly consume and no larger.
+    //
+    // If the registered rate in the panel ever sits at the ceiling this implies,
+    // this is the number to raise.
     //
     // Cadence used to live in input.js as its own requestAnimationFrame loop.
     // It is a scheduler module now, so it can be paused and toggled like anything
@@ -16,7 +23,7 @@
     const { simulateClick } = window.Alakazam.input
     const { registry, clicks } = window.Alakazam
 
-    const BURST_PER_FRAME = 50
+    const BURST_PER_FRAME = 4
 
     let target = null
 

@@ -446,12 +446,29 @@
 
     //* rawFingerprint
     // a cheap change detector so callers can skip reparsing an unchanged save.
-    // deliberately only the length and a short prefix: never the save contents.
+    //
+    // This used to be the length and the first 24 characters, which was far too
+    // weak to be a change detector at all. The save is base64, so those 24
+    // characters cover the version and the start of the run metadata, and none of
+    // that moves during a run. That left length as the only real signal, and two
+    // consecutive autosaves very often have the same length: numbers keep their
+    // digit count for long stretches. Whole autosaves were silently skipped, and
+    // anything differencing the save's own totals over time saw the wrong gap.
+    //
+    // It is a hash now, over the whole string. That is a pass over ten or twenty
+    // kilobytes once every two seconds, which is nothing, and unlike a slice it
+    // notices a change wherever it happens. The digest is a number, so it still
+    // never holds on to any of the save's contents.
     function rawFingerprint() {
         try {
             const raw = window.localStorage.getItem(SAVE_KEY)
             if (!raw) return ''
-            return raw.length + ':' + raw.slice(0, 24)
+            // djb2: one multiply-add per character, folded to 32 bits by the
+            // bitwise or, which is as much collision resistance as a change
+            // detector between two consecutive saves ever needs
+            let hash = 5381
+            for (let i = 0; i < raw.length; i++) hash = (hash * 33 + raw.charCodeAt(i)) | 0
+            return raw.length + ':' + hash
         } catch (err) {
             return ''
         }

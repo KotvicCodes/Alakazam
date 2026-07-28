@@ -17,6 +17,7 @@ function save(opts = {}) {
     scalars[0] = opts.cookies != null ? opts.cookies : 1e6 // cookies
     scalars[1] = opts.cookiesEarned != null ? opts.cookiesEarned : 1e9 // cookiesEarned
     scalars[2] = opts.cookieClicks || 0 // cookieClicks, the game's own tally
+    scalars[4] = opts.handmadeCookies || 0 // cookies earned by clicking, ever
     scalars[14] = opts.resets || 0 // resets
     scalars[17] = opts.wrinklersPopped || 0
     scalars[22] = 0 // season

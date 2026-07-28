@@ -97,4 +97,19 @@ function boot(opts = {}) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
-module.exports = { boot, sleep, ROOT }
+//* waitFor
+// poll a condition instead of sleeping for however long the thing under test is
+// expected to take. Modules run on their own intervals, so a fixed sleep has to
+// be long enough for the slowest tick under load, and any sleep short enough to
+// keep the suite quick is one that fails on a busy machine. Returns whether the
+// condition ever held, so callers can assert on it.
+const waitFor = async (condition, timeout = 10000, step = 50) => {
+    const until = Date.now() + timeout
+    while (Date.now() < until) {
+        if (condition()) return true
+        await sleep(step)
+    }
+    return condition()
+}
+
+module.exports = { boot, sleep, waitFor, ROOT }
