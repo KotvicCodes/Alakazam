@@ -1,6 +1,6 @@
 {
     "name": "alakazam",
-    "version": "1.1.9",
+    "version": "1.1.10",
     "description": "Analyzes and optimizes Cookie Clicker strategy",
     "scripts": {
         "test": "node --test --test-force-exit tests/",
