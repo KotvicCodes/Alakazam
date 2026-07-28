@@ -37,45 +37,82 @@
     let body = null
     let lastStatusAt = 0
 
+    // The panel sits on top of the game, so it is styled to look like part of it:
+    // dark roasted brown, cream text outlined in black, and gold on anything that
+    // is a number, which is how Cookie Clicker draws its own furniture. The same
+    // palette is in popup.css, which cannot be shared with this file because this
+    // stylesheet is injected into the game's document rather than linked. Change a
+    // colour in one and change it in the other.
+    //
+    // Every id and class is prefixed so the extension's own selectors, which scan
+    // the game's DOM, can never mistake the panel for part of the store.
     const CSS = `
 #alakazam-hud {
     position: fixed; top: 12px; right: 12px; width: 268px; z-index: 2147483000;
     font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace;
-    color: #e9e2d0; background: rgba(24,18,12,0.94);
-    border: 1px solid #6b563a; border-radius: 6px;
-    box-shadow: 0 6px 22px rgba(0,0,0,0.55); user-select: none;
+    color: #e9e2d0;
+    background: linear-gradient(180deg, rgba(43,31,20,0.97) 0%, rgba(28,20,13,0.97) 55%, rgba(20,13,8,0.97) 100%);
+    border: 1px solid #6b563a; border-radius: 5px;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,240,214,0.09);
+    user-select: none;
 }
 #alakazam-hud-head {
     display: flex; align-items: center; justify-content: space-between; gap: 6px;
-    padding: 6px 8px; cursor: move; background: rgba(107,86,58,0.35);
-    border-bottom: 1px solid #6b563a; border-radius: 5px 5px 0 0;
+    padding: 5px 8px; cursor: move;
+    background: linear-gradient(180deg, rgba(122,98,66,0.5) 0%, rgba(74,58,38,0.5) 100%);
+    border-bottom: 1px solid #6b563a; border-radius: 4px 4px 0 0;
+    box-shadow: inset 0 1px 0 rgba(255,240,214,0.12);
 }
-#alakazam-hud-title { font-weight: 700; letter-spacing: 0.04em; }
+#alakazam-hud-title {
+    font-family: Georgia, 'Times New Roman', serif; font-size: 12px; font-weight: 700;
+    letter-spacing: 0.03em; color: #f2c98a;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.85), 0 0 10px rgba(232,178,58,0.25);
+}
 #alakazam-hud-fold {
-    cursor: pointer; padding: 0 5px; border: 1px solid #6b563a; border-radius: 3px;
-    background: rgba(0,0,0,0.25);
+    cursor: pointer; padding: 0 5px; border: 1px solid #6b563a; border-radius: 2px;
+    background: rgba(0,0,0,0.28); color: #a5906c;
 }
+#alakazam-hud-fold:hover { color: #e9e2d0; background: rgba(0,0,0,0.4); }
 #alakazam-hud-body { padding: 7px 8px 9px; max-height: 62vh; overflow-y: auto; }
 #alakazam-hud .az-row { display: flex; justify-content: space-between; gap: 8px; }
-#alakazam-hud .az-row span:last-child { color: #f2c98a; text-align: right; word-break: break-word; }
+#alakazam-hud .az-row span:first-child { color: #a5906c; }
+#alakazam-hud .az-row span:last-child {
+    color: #f2c98a; text-align: right; word-break: break-word;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.75);
+}
 #alakazam-hud .az-sec {
     margin: 7px 0 3px; padding-top: 5px; border-top: 1px solid rgba(107,86,58,0.5);
-    color: #a5906c; text-transform: uppercase; font-size: 9px; letter-spacing: 0.09em;
+    color: #8a7355; text-transform: uppercase; font-size: 9px; letter-spacing: 0.09em;
 }
 #alakazam-hud .az-toggles { display: flex; flex-wrap: wrap; gap: 3px; }
 #alakazam-hud .az-tog {
-    cursor: pointer; padding: 2px 5px; border-radius: 3px; font-size: 10px;
-    border: 1px solid #6b563a; background: rgba(0,0,0,0.3); color: #8a7c62;
+    cursor: pointer; padding: 2px 5px; border-radius: 2px; font-size: 10px;
+    border: 1px solid #5a4830; background: rgba(0,0,0,0.32); color: #7d6f57;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.75);
 }
-#alakazam-hud .az-tog.on { background: #4f7d3a; border-color: #6fa653; color: #f0f7e8; }
-#alakazam-hud .az-tog.master { flex: 1 0 100%; text-align: center; padding: 3px; }
+#alakazam-hud .az-tog:hover { color: #e9e2d0; }
+/* an enabled module is the same brown lit from within rather than a second
+   colour, so a dozen of them on at once does not turn the panel into a paint box */
+#alakazam-hud .az-tog.on {
+    background: rgba(232,178,58,0.11); border-color: #8a7048; color: #e9e2d0;
+}
+#alakazam-hud .az-tog.on:hover { background: rgba(232,178,58,0.18); }
+/* the master switch is the exception: it is the control that turns everything
+   back on, so it is the one thing worth reading across the room */
+#alakazam-hud .az-tog.master {
+    flex: 1 0 100%; text-align: center; padding: 3px; font-weight: 700;
+    letter-spacing: 0.08em; background: #4f7d3a; border-color: #6fa653; color: #f0f7e8;
+}
 #alakazam-hud .az-tog.master.off { background: #7d3a3a; border-color: #a65353; color: #f7e8e8; }
 #alakazam-hud.az-folded #alakazam-hud-body { display: none; }
-#alakazam-hud .az-warn { color: #e0894f; }
+#alakazam-hud .az-warn { color: #d98a4a; }
 #alakazam-hud.az-dragging {
-    opacity: 0.88; box-shadow: 0 12px 34px rgba(0,0,0,0.7); transform: scale(1.02);
+    opacity: 0.9; box-shadow: 0 12px 34px rgba(0,0,0,0.75); transform: scale(1.02);
 }
-#alakazam-hud.az-dragging #alakazam-hud-head { cursor: grabbing; background: rgba(143,116,78,0.55); }
+#alakazam-hud.az-dragging #alakazam-hud-head {
+    cursor: grabbing;
+    background: linear-gradient(180deg, rgba(158,128,86,0.6) 0%, rgba(104,82,54,0.6) 100%);
+}
 `
 
     //! Building the panel
