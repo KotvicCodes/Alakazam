@@ -34,8 +34,7 @@
         pantheon: true,
         garden: true,
         achievements: true,
-        // the market module only advises unless this is turned on by hand
-        marketTrading: false,
+        marketTrading: true,
         hud: true
     }
 

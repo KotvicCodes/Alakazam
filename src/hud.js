@@ -14,6 +14,7 @@
     // selectors can never pick its panel up as part of the game.
 
     const { store, scheduler, registry, live, catalog, save, act } = window.Alakazam
+    const { formatNumber, formatDuration } = window.Alakazam.parse
 
     const INTERVAL_MS = 1000
     const STATUS_WRITE_MS = 5000
@@ -37,41 +38,82 @@
     let body = null
     let lastStatusAt = 0
 
+    // The panel sits on top of the game, so it is styled to look like part of it:
+    // dark roasted brown, cream text outlined in black, and gold on anything that
+    // is a number, which is how Cookie Clicker draws its own furniture. The same
+    // palette is in popup.css, which cannot be shared with this file because this
+    // stylesheet is injected into the game's document rather than linked. Change a
+    // colour in one and change it in the other.
+    //
+    // Every id and class is prefixed so the extension's own selectors, which scan
+    // the game's DOM, can never mistake the panel for part of the store.
     const CSS = `
 #alakazam-hud {
     position: fixed; top: 12px; right: 12px; width: 268px; z-index: 2147483000;
     font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace;
-    color: #e9e2d0; background: rgba(24,18,12,0.94);
-    border: 1px solid #6b563a; border-radius: 6px;
-    box-shadow: 0 6px 22px rgba(0,0,0,0.55); user-select: none;
+    color: #e9e2d0;
+    background: linear-gradient(180deg, rgba(43,31,20,0.97) 0%, rgba(28,20,13,0.97) 55%, rgba(20,13,8,0.97) 100%);
+    border: 1px solid #6b563a; border-radius: 5px;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,240,214,0.09);
+    user-select: none;
 }
 #alakazam-hud-head {
     display: flex; align-items: center; justify-content: space-between; gap: 6px;
-    padding: 6px 8px; cursor: move; background: rgba(107,86,58,0.35);
-    border-bottom: 1px solid #6b563a; border-radius: 5px 5px 0 0;
+    padding: 5px 8px; cursor: move;
+    background: linear-gradient(180deg, rgba(122,98,66,0.5) 0%, rgba(74,58,38,0.5) 100%);
+    border-bottom: 1px solid #6b563a; border-radius: 4px 4px 0 0;
+    box-shadow: inset 0 1px 0 rgba(255,240,214,0.12);
 }
-#alakazam-hud-title { font-weight: 700; letter-spacing: 0.04em; }
+#alakazam-hud-title {
+    font-family: Georgia, 'Times New Roman', serif; font-size: 12px; font-weight: 700;
+    letter-spacing: 0.03em; color: #f2c98a;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.85), 0 0 10px rgba(232,178,58,0.25);
+}
 #alakazam-hud-fold {
-    cursor: pointer; padding: 0 5px; border: 1px solid #6b563a; border-radius: 3px;
-    background: rgba(0,0,0,0.25);
+    cursor: pointer; padding: 0 5px; border: 1px solid #6b563a; border-radius: 2px;
+    background: rgba(0,0,0,0.28); color: #a5906c;
 }
+#alakazam-hud-fold:hover { color: #e9e2d0; background: rgba(0,0,0,0.4); }
 #alakazam-hud-body { padding: 7px 8px 9px; max-height: 62vh; overflow-y: auto; }
 #alakazam-hud .az-row { display: flex; justify-content: space-between; gap: 8px; }
-#alakazam-hud .az-row span:last-child { color: #f2c98a; text-align: right; word-break: break-word; }
+#alakazam-hud .az-row span:first-child { color: #a5906c; }
+#alakazam-hud .az-row span:last-child {
+    color: #f2c98a; text-align: right; word-break: break-word;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.75);
+}
 #alakazam-hud .az-sec {
     margin: 7px 0 3px; padding-top: 5px; border-top: 1px solid rgba(107,86,58,0.5);
-    color: #a5906c; text-transform: uppercase; font-size: 9px; letter-spacing: 0.09em;
+    color: #8a7355; text-transform: uppercase; font-size: 9px; letter-spacing: 0.09em;
 }
 #alakazam-hud .az-toggles { display: flex; flex-wrap: wrap; gap: 3px; }
 #alakazam-hud .az-tog {
-    cursor: pointer; padding: 2px 5px; border-radius: 3px; font-size: 10px;
-    border: 1px solid #6b563a; background: rgba(0,0,0,0.3); color: #8a7c62;
+    cursor: pointer; padding: 2px 5px; border-radius: 2px; font-size: 10px;
+    border: 1px solid #5a4830; background: rgba(0,0,0,0.32); color: #7d6f57;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.75);
 }
-#alakazam-hud .az-tog.on { background: #4f7d3a; border-color: #6fa653; color: #f0f7e8; }
-#alakazam-hud .az-tog.master { flex: 1 0 100%; text-align: center; padding: 3px; }
+#alakazam-hud .az-tog:hover { color: #e9e2d0; }
+/* an enabled module is the same brown lit from within rather than a second
+   colour, so a dozen of them on at once does not turn the panel into a paint box */
+#alakazam-hud .az-tog.on {
+    background: rgba(232,178,58,0.11); border-color: #8a7048; color: #e9e2d0;
+}
+#alakazam-hud .az-tog.on:hover { background: rgba(232,178,58,0.18); }
+/* the master switch is the exception: it is the control that turns everything
+   back on, so it is the one thing worth reading across the room */
+#alakazam-hud .az-tog.master {
+    flex: 1 0 100%; text-align: center; padding: 3px; font-weight: 700;
+    letter-spacing: 0.08em; background: #4f7d3a; border-color: #6fa653; color: #f0f7e8;
+}
 #alakazam-hud .az-tog.master.off { background: #7d3a3a; border-color: #a65353; color: #f7e8e8; }
 #alakazam-hud.az-folded #alakazam-hud-body { display: none; }
-#alakazam-hud .az-warn { color: #e0894f; }
+#alakazam-hud .az-warn { color: #d98a4a; }
+#alakazam-hud.az-dragging {
+    opacity: 0.9; box-shadow: 0 12px 34px rgba(0,0,0,0.75); transform: scale(1.02);
+}
+#alakazam-hud.az-dragging #alakazam-hud-head {
+    cursor: grabbing;
+    background: linear-gradient(180deg, rgba(158,128,86,0.6) 0%, rgba(104,82,54,0.6) 100%);
+}
 `
 
     //! Building the panel
@@ -88,7 +130,16 @@
 
         root = el('div', { id: 'alakazam-hud' })
         const head = el('div', { id: 'alakazam-hud-head' })
-        const title = el('div', { id: 'alakazam-hud-title', textContent: 'ALAKAZAM' })
+        // the loaded version, straight from the manifest. worth showing: knowing
+        // which build is actually running in the tab is otherwise guesswork.
+        const version =
+            typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest
+                ? chrome.runtime.getManifest().version
+                : ''
+        const title = el('div', {
+            id: 'alakazam-hud-title',
+            textContent: version ? `ALAKAZAM v${version}` : 'ALAKAZAM'
+        })
         const fold = el('div', { id: 'alakazam-hud-fold', textContent: '-' })
         head.appendChild(title)
         head.appendChild(fold)
@@ -100,6 +151,14 @@
 
         if (store.get('hudFolded', false)) root.classList.add('az-folded')
 
+        // put the panel back where it was left last time
+        const position = store.get('hudPosition', null)
+        if (position && position.left) {
+            root.style.left = position.left
+            root.style.top = position.top
+            root.style.right = 'auto'
+        }
+
         fold.addEventListener('click', event => {
             event.stopPropagation()
             const folded = root.classList.toggle('az-folded')
@@ -108,33 +167,90 @@
         })
         fold.textContent = root.classList.contains('az-folded') ? '+' : '-'
 
-        makeDraggable(head)
+        // the fold button lives inside the drag handle, so the drag has to be told
+        // to leave it alone: see the note in makeDraggable
+        makeDraggable(head, fold)
     }
 
     //* makeDraggable
-    // real listeners on real events: this is our own UI, not the game, so there is
-    // nothing to simulate here
-    function makeDraggable(handle) {
-        let dragging = false
-        let offsetX = 0
-        let offsetY = 0
+    // Real listeners on real events: this is our own UI, not the game, so there is
+    // nothing to simulate here.
+    //
+    // The isTrusted checks are load bearing, not defensive. The autoclicker fires
+    // around fifty synthetic mousemove events every frame at the big cookie, and
+    // those bubble all the way to the document. Without this the panel followed
+    // them and snapped to the cookie the instant you grabbed it, which looked like
+    // it was jumping to wherever you had clicked.
+    //
+    // `ignore` is what makes the minimize button work. Pointer capture retargets
+    // every later pointer event, and the click, at the capturing element. The fold
+    // button sits inside the header, so grabbing it started a drag on the header,
+    // the header swallowed the click, and the button did nothing at all: it moved
+    // the panel instead. A pointerdown that starts on the button is left alone.
+    function makeDraggable(handle, ignore) {
+        let pointer = null
 
-        handle.addEventListener('mousedown', event => {
-            dragging = true
-            const rect = root.getBoundingClientRect()
-            offsetX = event.clientX - rect.left
-            offsetY = event.clientY - rect.top
+        handle.addEventListener('pointerdown', event => {
+            // real input only. the autoclicker fires a stream of synthetic pointer
+            // events at the big cookie and they bubble everywhere.
+            if (!event.isTrusted || event.button !== 0) return
+            if (ignore && (event.target === ignore || ignore.contains(event.target))) return
+            pointer = event.pointerId
+
+            // Pointer capture is the reason this works at all. Listening on the
+            // document meant competing with everything else on the page for the
+            // move events; capturing routes them straight here for the whole drag,
+            // whatever the cursor happens to be over.
+            if (handle.setPointerCapture) handle.setPointerCapture(pointer)
+
+            root.classList.add('az-dragging')
+            // snap the panel under the cursor rather than preserving the grab
+            // offset. this is deliberate: it is the bit that felt good to grab.
+            moveTo(event.clientX, event.clientY)
             event.preventDefault()
         })
-        document.addEventListener('mousemove', event => {
-            if (!dragging) return
-            root.style.left = `${event.clientX - offsetX}px`
-            root.style.top = `${event.clientY - offsetY}px`
-            root.style.right = 'auto'
+
+        handle.addEventListener('pointermove', event => {
+            if (pointer === null || event.pointerId !== pointer || !event.isTrusted) return
+            moveTo(event.clientX, event.clientY)
         })
-        document.addEventListener('mouseup', () => {
-            dragging = false
-        })
+
+        const release = event => {
+            if (pointer === null || (event && event.pointerId !== pointer)) return
+            if (handle.releasePointerCapture && handle.hasPointerCapture(pointer)) {
+                handle.releasePointerCapture(pointer)
+            }
+            pointer = null
+            root.classList.remove('az-dragging')
+            remember()
+        }
+        handle.addEventListener('pointerup', release)
+        handle.addEventListener('pointercancel', release)
+    }
+
+    //* moveTo
+    // centre the panel's header on a point, clamped so it can never be dragged
+    // somewhere it cannot be grabbed again
+    function moveTo(x, y) {
+        const width = root.offsetWidth || 268
+        const header = root.firstChild ? root.firstChild.offsetHeight || 26 : 26
+        const left = clamp(x - width / 2, 4, window.innerWidth - width - 4)
+        const top = clamp(y - header / 2, 4, window.innerHeight - header - 4)
+        root.style.left = `${left}px`
+        root.style.top = `${top}px`
+        root.style.right = 'auto'
+    }
+
+    //* remember
+    // the panel stays where you put it, across reloads
+    function remember() {
+        store.set('hudPosition', { left: root.style.left, top: root.style.top })
+    }
+
+    // low wins over high, so a viewport too small for the panel pins it to the
+    // top left rather than collapsing to a negative position
+    function clamp(value, low, high) {
+        return Math.max(low, Math.min(value, Math.max(low, high)))
     }
 
     //! Rendering
@@ -145,6 +261,15 @@
 
     function section(name) {
         return `<div class="az-sec">${name}</div>`
+    }
+
+    //* paybackText
+    // An upgrade whose tooltip could not be parsed is still bought, so its row
+    // says why there is no number rather than showing a blank or a misleading
+    // "never".
+    function paybackText(decision) {
+        if (Number.isFinite(decision.payback)) return formatDuration(decision.payback)
+        return decision.action === 'buyUpgrade' ? 'effect not readable' : '-'
     }
 
     function escape(value) {
@@ -177,10 +302,26 @@
         html += section('game')
         html += row('cookies', format(globals.cookies))
         html += row('per second', format(globals.cps))
+        const click = window.Alakazam.clicks.stats()
+        if (click.clickCps > 0) {
+            html += row('from clicking', format(click.clickCps))
+            html += row('effective', format(globals.cps + click.clickCps))
+        }
+        // how many clicks the game acts on. what we dispatch used to be shown
+        // alongside it and was only ever noise: it is not a number anyone can do
+        // anything with, and it made the real one look broken by comparison.
         html += row(
-            'decision',
-            debug.decision ? `${debug.decision.action}: ${debug.decision.reason}` : 'starting up'
+            'clicks',
+            click.measured ? `${click.registeredPerSecond}/s` : `~${click.registeredPerSecond}/s`
         )
+        // the action is dropped: every reason already says what it is, and the
+        // panel spent nearly all its time showing the word "wait"
+        html += row('decision', debug.decision ? debug.decision.reason : 'starting up')
+        // payback on its own row. it used to be inside the reason, which made a
+        // sentence long enough to wrap over three lines of the panel
+        if (debug.decision) {
+            html += row('payback', paybackText(debug.decision))
+        }
 
         const cat = catalog.stats()
         html += row('catalog', `${cat.buildings} bldg / ${cat.upgrades} upg`)
@@ -194,7 +335,13 @@
             saveStats.ok ? `${saveStats.secondsSinceChange}s ago` : 'failed',
             !saveStats.ok
         )
-        if (saveStats.stale) html += row('warning', saveStats.reason, true)
+        // the reason names the step that failed, so it is worth showing whenever
+        // there is one, not only when the parse came out stale
+        if (saveStats.reason) html += row(saveStats.ok ? 'note' : 'why', saveStats.reason, true)
+        // only when it is not where it should be, which is the interesting case
+        if (saveStats.key && saveStats.key !== 'CookieClickerGame') {
+            html += row('found in', saveStats.key)
+        }
         if (debug.identity) html += row('save id', debug.identity.legacyId)
 
         if (debug.lumps) {
@@ -246,22 +393,10 @@
         return html
     }
 
-    function format(n) {
-        if (!Number.isFinite(n)) return '-'
-        if (n < 1000) return String(Math.round(n))
-        const units = [
-            [1e24, 'Sp'],
-            [1e21, 'Sx'],
-            [1e18, 'Qi'],
-            [1e15, 'Qa'],
-            [1e12, 'T'],
-            [1e9, 'B'],
-            [1e6, 'M'],
-            [1e3, 'k']
-        ]
-        for (const [v, s] of units) if (n >= v) return `${(n / v).toFixed(2)}${s}`
-        return String(Math.round(n))
-    }
+    // the panel used to carry its own magnitude table, which stopped at 10^24 and
+    // rendered anything past that as seventeen digits and a wrong suffix. the
+    // shared one in parse.js is the game's own, all the way up.
+    const format = formatNumber
 
     function render() {
         if (!body) return

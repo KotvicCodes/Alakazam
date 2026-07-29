@@ -1,117 +1,193 @@
+/* Cookie Clicker's own palette. The game is dark roasted brown with cream text,
+   hard black text shadows and warm gold on anything that is a number. The popup
+   used to be a blue-to-purple gradient with saturated material greens and reds,
+   which looked like a different product bolted onto the game.
+
+   These names are shared with the in-page panel in src/hud.js, which cannot use
+   this file because it injects its own stylesheet into the game's document.
+   Change a colour here and change it there. */
+:root {
+    --az-bg: #221810;
+    --az-bg-deep: #180f09;
+    --az-panel: rgba(0, 0, 0, 0.26);
+    --az-raised: rgba(255, 240, 214, 0.06);
+    --az-edge: #6b563a;
+    --az-edge-soft: rgba(107, 86, 58, 0.5);
+    --az-text: #e9e2d0;
+    --az-dim: #a5906c;
+    --az-gold: #e8b23a;
+    --az-gold-soft: #f2c98a;
+    --az-on: #4f7d3a;
+    --az-on-edge: #6fa653;
+    --az-off: #7d3a3a;
+    --az-off-edge: #a65353;
+    --az-shadow: 0 1px 0 rgba(0, 0, 0, 0.75);
+}
+
 body {
     width: 320px;
     margin: 0;
     padding: 0;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    /* the game's background is a dark wood panel lit from the top */
+    background:
+        linear-gradient(180deg, #2b1f14 0%, var(--az-bg) 42%, var(--az-bg-deep) 100%), var(--az-bg);
+    color: var(--az-text);
 }
 
 .container {
-    padding: 16px;
-    color: white;
+    padding: 14px;
 }
 
 h1 {
-    margin: 0 0 16px 0;
-    font-size: 20px;
+    margin: 0 0 12px 0;
+    /* Cookie Clicker sets its headings in a serif and outlines everything in
+       black. Georgia is the closest thing that is always installed. */
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
     text-align: center;
+    color: var(--az-gold-soft);
+    text-shadow:
+        0 2px 0 rgba(0, 0, 0, 0.85),
+        0 0 14px rgba(232, 178, 58, 0.22);
 }
 
 h2 {
-    font-size: 16px;
-    margin: 12px 0 8px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.3);
-    padding-bottom: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    margin: 0 0 7px 0;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--az-edge-soft);
+    color: var(--az-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
 }
 
 .status {
-    background: rgba(255, 255, 255, 0.1);
-    padding: 12px;
-    border-radius: 8px;
-    margin-bottom: 12px;
+    background: var(--az-panel);
+    border: 1px solid var(--az-edge-soft);
+    padding: 9px 10px;
+    border-radius: 4px;
+    margin-bottom: 10px;
     text-align: center;
 }
 
 .status p {
     margin: 0;
-    font-size: 14px;
+    font-size: 12px;
+    color: var(--az-text);
+    text-shadow: var(--az-shadow);
 }
 
 .data-section {
-    background: rgba(255, 255, 255, 0.1);
-    padding: 12px;
-    border-radius: 8px;
-    margin-bottom: 12px;
+    background: var(--az-panel);
+    border: 1px solid var(--az-edge-soft);
+    padding: 9px 10px 7px;
+    border-radius: 4px;
+    margin-bottom: 10px;
 }
 
 .data-item {
     display: flex;
     justify-content: space-between;
-    padding: 6px 0;
-    font-size: 14px;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12px;
 }
 
 .label {
-    font-weight: 600;
+    color: var(--az-dim);
 }
 
 .value {
-    font-family: 'Courier New', monospace;
+    font-family: ui-monospace, Menlo, Consolas, 'Courier New', monospace;
+    /* every number the game shows is gold */
+    color: var(--az-gold-soft);
+    text-shadow: var(--az-shadow);
 }
 
 .btn {
     width: 100%;
-    padding: 10px;
-    background: rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 6px;
-    color: white;
-    font-size: 14px;
-    font-weight: 600;
+    padding: 6px 8px;
+    background: var(--az-raised);
+    border: 1px solid var(--az-edge);
+    border-radius: 3px;
+    color: var(--az-dim);
+    font-family: inherit;
+    font-size: 12px;
+    text-align: left;
+    text-shadow: var(--az-shadow);
     cursor: pointer;
-    transition: all 0.2s;
+    transition:
+        background 0.12s,
+        color 0.12s;
 }
 
 .btn:hover {
-    background: rgba(255, 255, 255, 0.3);
-    transform: translateY(-1px);
+    background: rgba(255, 240, 214, 0.12);
+    color: var(--az-text);
 }
 
 .btn:active {
-    transform: translateY(0);
+    background: rgba(0, 0, 0, 0.3);
 }
 
+/* an enabled module reads as lit rather than as a second colour: same brown,
+   brighter text and a gold edge */
+.btn.on {
+    color: var(--az-text);
+    border-color: #8a7048;
+    background: rgba(232, 178, 58, 0.09);
+}
+
+.btn.on:hover {
+    background: rgba(232, 178, 58, 0.16);
+}
+
+/* the toggles stack, so they need to sit against each other rather than float */
 .controls {
-    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 10px;
 }
 
 .btn-primary {
-    background: rgba(76, 175, 80, 0.3);
-    border: 2px solid rgba(76, 175, 80, 0.6);
+    background: var(--az-on);
+    border-color: var(--az-on-edge);
+    color: #f0f7e8;
+    font-weight: 700;
+    text-align: center;
 }
 
 .btn-primary:hover {
-    background: rgba(76, 175, 80, 0.4);
+    background: #5c8f44;
+    color: #f0f7e8;
 }
 
+/* `active` is the paused state: the master switch is the one button whose
+   colour has to read across the room */
 .btn-primary.active {
-    background: rgba(244, 67, 54, 0.3);
-    border-color: rgba(244, 67, 54, 0.6);
-    animation: pulse 2s infinite;
+    background: var(--az-off);
+    border-color: var(--az-off-edge);
+    color: #f7e8e8;
 }
 
-@keyframes pulse {
-    0%,
-    100% {
-        opacity: 1;
-    }
-    50% {
-        opacity: 0.7;
-    }
+.btn-primary.active:hover {
+    background: #8f4444;
+    color: #f7e8e8;
+}
+
+#refreshBtn {
+    text-align: center;
 }
 
 .footer {
     text-align: center;
-    margin-top: 12px;
-    opacity: 0.7;
+    margin-top: 10px;
+    font-size: 10px;
+    color: var(--az-dim);
+    opacity: 0.75;
 }
