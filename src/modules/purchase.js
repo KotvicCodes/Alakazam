@@ -22,7 +22,7 @@
 
     const { simulateClick } = window.Alakazam.input
     const { decide, sumPrice } = window.Alakazam.strategy
-    const { live, catalog, save, registry, act } = window.Alakazam
+    const { live, catalog, save, registry, act, clicks } = window.Alakazam
     const { BASE_PRODUCTION } = window.Alakazam.data.buildings
 
     const INTERVAL_MS = 250
@@ -76,7 +76,19 @@
             })
         }
 
-        return { timestamp: Date.now(), ...globals, cookies: balance, buildings, upgrades }
+        return {
+            timestamp: Date.now(),
+            ...globals,
+            cookies: balance,
+            // passive production is what the game shows; clicking is measured on
+            // top of it, and click upgrades are scored against that
+            clickCps: clicks.clickCps(),
+            // the rate the game registers, not the rate we dispatch
+            clicksPerSecond: clicks.clicksPerSecond(),
+            effectiveCps: clicks.effectiveCps(globals.cps),
+            buildings,
+            upgrades
+        }
     }
 
     function wait(ms) {

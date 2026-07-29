@@ -129,16 +129,17 @@ the store faces, which are already on screen, so a decision costs nothing and
 purchases run in a drain loop: buy, re-evaluate, buy again, until nothing is worth
 buying or the tick's click budget runs out.
 
-Everything competes on one scale, payback in seconds:
-1. **Upgrades** are scored by the CpS delta parsed out of their tooltip. An
-   upgrade whose effect cannot be read gets a deliberately pessimistic estimate,
-   so it has to be genuinely cheap to win. Toggles, pledges and season switchers
-   are classified and skipped.
-2. **Buildings** are scored by price over per-unit production, with a discount for
-   a purchase that crosses 10, 25, 50, 100 and so on, because those unlock the
-   next tiered upgrade.
-3. If the best thing is not affordable, **wait** rather than settling for a worse
-   one.
+1. **Upgrades are bought as soon as they are affordable**, cheapest first. In
+   Cookie Clicker they are cheap relative to their effect and mostly permanent
+   multipliers, so buying them all is very close to optimal and far more
+   predictable than trying to price them. Toggles, pledges and season switchers
+   are classified and skipped. Their effects are still parsed out of the tooltip
+   where possible, and reported, but nothing hinges on whether that worked.
+2. **Buildings** are scored by payback, price over per-unit production, with a
+   discount for a purchase that crosses 10, 25, 50, 100 and so on, because those
+   unlock the next tiered upgrade.
+3. If the best building is not affordable, **wait** rather than settling for a
+   worse one.
 
 **How many to buy** is its own decision, and the largest of three rules wins:
 buying one at a time is always the most efficient, so the batch size is however
@@ -164,8 +165,8 @@ protects.
 - **Golden cookies** — clicked immediately. Wrath cookies are held off while a
   buff is running, so a Clot or a Ruin cannot end a combo.
 - **Stock market** — the save records each good's hidden trend outright, so
-  Alakazam can tell you which way every stock is going. Trading on that is
-  switched off by default; it advises unless you turn it on.
+  Alakazam trades on that. Switch trading off and it keeps reporting the signals
+  without touching your money.
 
 ## Future Improvements
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the full list, including ascension
