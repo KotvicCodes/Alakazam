@@ -30,48 +30,66 @@ everything before ascending, because the hoard is otherwise lost.
 `modules/wrinklers.js` already reads the count and hoard from the save and tells
 you when it is worth doing by hand.
 
----
-
-## 2. Ascension
-
-**Prestige.** `prestige = (totalCookiesBakedAllTime / 1e12) ^ (1/3)`. Heavenly
-chips earned are the difference between the new prestige level and the current
-one. Every prestige level is +1% CpS, additive.
-
-**When.** The rule of thumb is to ascend when you can roughly double your current
-prestige level. Because prestige is a cube root, that means about eight times the
-cookies. Two commonly cited milestones: the first ascension at 365 chips, and a
-second around 2185.
-
-**What Alakazam already has.** `cookiesEarned`, `cookiesReset`, `prestige`,
-`heavenlyChips` and `resets` are all parsed out of the save, so the "should I
-ascend" calculation is arithmetic on data already in hand. `runId` changes on
-ascension, which is the signal to reset per-run state.
-
-**What it needs.** A decision on when, the click path through the ascension screen
-(legacy button, the confirmation, then the heavenly upgrade tree), and a purchase
-order for heavenly upgrades. A sensible first-ascension order: Legacy, How to Bake
-Your Dragon, Heavenly cookies, the four cookie boxes, Heralds, Heavenly luck, then
-a permanent upgrade slot holding the best kitten.
-
-**Risk.** Ascending is irreversible and throws away the run. This should be
-off by default and confirmed, not silent.
+**Now blocking something.** The ascension planner is built, so this is no longer
+only advice. Every ascension with wrinklers on the cookie throws their hoard away,
+and all `modules/ascend.js` can do about it is warn before it pulls the lever. This
+is the largest thing left that is purely a matter of building it.
 
 ---
 
-## 3. Loans before ascending
+## ~~2. Ascension~~ (built, v1.2.0–1.2.3)
 
-Bank office levels unlock loan slots. A loan is a large immediate production
-multiplier paid for with a worse penalty afterwards.
+Built as `strategy/ascend.js` (the arithmetic), `act/ascend.js` (the clicks),
+`data/heavenly.js` (the plan) and `modules/ascend.js` (the phase machine). On by
+default.
 
-The trick is that the penalty is tied to the run, and ascending ends the run. So
-taking every available loan immediately before ascending buys a large final burst
-of production and the debt is simply never paid. Combined with a combo, this is
-where a lot of the cookies in a fast ascension come from.
+**Prestige.** `prestige = floor((totalCookiesBakedAllTime / 1e12) ^ (1/3))`, the
+game's own formula. Heavenly chips earned are the difference between the new
+prestige level and the current one. Every prestige level is +1% CpS, additive.
 
-**What it needs.** Ascension first, since the whole point is the ordering. Then
-`#bankLoan1`, `#bankLoan2` and `#bankLoan3`, taken in sequence as the last thing
-before the combo that precedes the ascension.
+**When.** The targets come from the wiki's
+[ascension guide](https://cookieclicker.wiki.gg/wiki/Ascension_guide), one per
+ascension, 365 chips for the first and 2185 for the second. Past the end of that
+table it falls back to the guide's own rule of thumb: ascend when the run would
+roughly double the prestige level already banked, which because prestige is a cube
+root is about eight times the cookies.
+
+**What it clicks.** `#legacyButton`, then the confirmation, then the heavenly tree
+(`.crate.upgrade.heavenly` in `#ascendUpgrades`, keyed on `data-id`, with `ghosted`
+marking the ones whose prerequisites are not met), then `#ascendButton`.
+
+Two details are worth keeping written down. Every prompt the game raises confirms
+through `#promptOption0`, including "Really wipe save", so `act/ascend.js` refuses
+to confirm anything unless the prompt names itself: `Game.Prompt` wraps content
+beginning `<id Ascend>` in a `#promptContentAscend` div, and that is the check. And
+the save lags up to a minute, so the reset count from before an ascension is
+remembered and nothing starts again until the save reports a higher one; otherwise
+the stale save reads as a finished run and it ascends an empty one immediately.
+
+**Still open.** Permanent slots are filled from a fixed preference list and never
+reconsidered; challenge modes are not chosen; see below.
+
+---
+
+## ~~3. Loans before ascending~~ (built, v1.2.3)
+
+Built as `data/loans.js`, `act/loans.js` and the `loans` and `harvest` phases of
+`modules/ascend.js`. The game's own achievement for it is "Debt evasion".
+
+The three slots are `#bankLoan1`, `#bankLoan2` and `#bankLoan3`, revealed past bank
+office levels 1, 3 and 4 and carrying `bankButtonOff` while already running.
+
+| | boost | for | then | for | downpayment |
+|---|---|---|---|---|---|
+| 1 modest | ×1.5 | 120 min | ×0.25 | 240 min | 20% of bank |
+| 2 pawnshop | ×2 | 40 s | ×0.1 | 40 min | 40% of bank |
+| 3 retirement | ×1.2 | 48 h | ×0.8 | 5 days | 50% of bank |
+
+They are taken 1, 3, 2 rather than in order: the pawnshop loan is the strongest and
+by far the shortest, so going last makes the window the ascension has to fit inside
+as wide as it can be. The downpayment is a share of a bank that is about to be
+discarded, and spending does not reduce `cookiesEarned`, so it costs nothing that
+counts toward prestige.
 
 ---
 
@@ -182,7 +200,52 @@ enough with the result to pay for the production penalty.
 
 ---
 
-## 10. Smaller pieces
+## 10. Redeeming gift codes
+
+`modules/gifts.js` does half of "No time like the present": once Wrapping paper is
+owned it wraps a gift, keeps the code, and shows it in the panel. Redeeming it is
+still yours to do, from Options then Redeem, after the next ascension clears the
+one hour `Gifted out` buff.
+
+**Why it stops there.** Redeeming means putting a code into `#giftCode`, and
+everything Alakazam does is a pointer event on something already on screen.
+Writing into a text field is a different kind of act, and it deserves a decision
+rather than being slipped in. The mechanics are otherwise known: set the value,
+dispatch `keyup` so the game's own listener re-validates and enables
+`#promptOption0`, then click it.
+
+The same question governs the Import button in the clone customizer and the
+bakery name field, so answering it once would settle three things.
+
+---
+
+## 11. Ascension challenge modes
+
+The ascend screen has a mode selector, `#challengeModeSelector<i>`, next to the
+Reincarnate button. Picking one starts the next run as Born Again or one of the
+other challenge runs, which carry their own achievements.
+
+Cheap now that `act/ascend.js` drives that screen: it is one more click in the
+`shopping` phase. What it needs is a policy for which challenge to take and when,
+and the run afterwards has to know it is in one, since a challenge run mostly means
+Alakazam deliberately *not* doing things.
+
+---
+
+## 12. Re-picking permanent upgrade slots
+
+A permanent slot can be reassigned at any ascension, and what belongs in it changes
+as the run gets deeper: the best kitten this run is not the best kitten in ten
+runs' time. `modules/ascend.js` fills an empty slot from a fixed preference list in
+`data/heavenly.js` and never revisits a filled one.
+
+Doing better means reading what is already in each slot (`permanentUpgrade0..4` are
+parsed from the save) and comparing it against what the picker is offering, which
+is a hover per candidate.
+
+---
+
+## 13. Smaller pieces
 
 - **Cookie chains.** A chain of golden cookies paying out increasing amounts,
   needing rapid successive clicks. The shimmer module already clicks fast enough;
@@ -197,11 +260,11 @@ enough with the result to pay for the production penalty.
 - **Milk and kittens.** Kitten upgrades scale with milk, which scales with
   achievements. Currently handled by a fixed estimate in the upgrade scorer; a
   real model would read the milk level and compute the actual delta.
-- **Permanent upgrade slots.** Chosen at ascension; the save carries five slots in
-  its scalar list, already parsed.
-- **Challenge runs.** Born again, Neverclick, Trigger finger, Hardcore and the
-  rest need Alakazam to deliberately *not* do things, which the module toggles
-  already make possible but nothing coordinates.
+- **Buff totals.** `measure/buffs.js` reads how much of a buff has elapsed out of
+  its pie timer, which is a fraction, so turning it into seconds needs the buff's
+  total length from the caller. The tooltip states it in prose ("Cookie production
+  x2 for 40 seconds!"); parsing `Game.sayTime` output would remove the need for a
+  table.
 - **Cookie-dunker.** Needs the big cookie to physically overlap the milk, which is
   a matter of window size rather than anything clickable.
 - **Garden maturity thresholds.** Each species matures at its own age, and those
