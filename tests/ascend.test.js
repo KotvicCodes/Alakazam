@@ -714,3 +714,19 @@ test('the panel reports the wrinkler hoard the ascension is about to lose', asyn
     await h.A.registry.get('ascend').tick()
     assert.equal(h.debug().ascend.wrinklerHoard, 5e15)
 })
+
+test('a buff that has not been identified yet also holds the sequence back', async () => {
+    // naming costs a hover and happens one buff per tick, so for a moment a live
+    // frenzy is on screen with no name on it. Reading that as "nothing running"
+    // is how the sequence would start half a second into a frenzy.
+    const h = banker()
+    await h.A.store.ready('t')
+    const planner = h.A.registry.get('ascend')
+    await planner.setup()
+    h.game.gainBuff('Frenzy', 0.1)
+
+    // planner ticks only: the buffs module never gets a chance to name it
+    for (let i = 0; i < 6; i++) await planner.tick()
+    assert.equal(h.game.state.loansTaken.length, 0, 'acted on a buff it could not name')
+    assert.equal(h.A.ascend.state().phase, 'ready')
+})

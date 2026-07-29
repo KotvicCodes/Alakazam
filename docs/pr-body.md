@@ -1,4 +1,4 @@
-# Ascension, pre-ascension loans, and two achievements (v1.2.6)
+# Ascension, pre-ascension loans, and two achievements (v1.2.7)
 
 Alakazam played a run competently and had never finished one. This branch builds
 the ascension loop end to end, following the wiki's
@@ -90,7 +90,7 @@ being slipped in. It is written up as roadmap item 10.
 
 ## Verification
 
-`npm test` — 182 tests under `node --test`, green. New coverage: the prestige
+`npm test` — 183 tests under `node --test`, green. New coverage: the prestige
 formula against the guide's milestones, target selection and the doubling fallback,
 buying in plan order, never touching a ghosted or off-plan crate, refusing an
 unnamed prompt, the stale-save guard, loan ordering, ascending inside the loan

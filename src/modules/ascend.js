@@ -415,6 +415,13 @@
             // and it is a few minutes at most.
             if (buffs.hasProductionBuff()) return
 
+            // A buff is named from its tooltip, one per tick, so for up to a second
+            // after one appears it is on screen but not yet identified. Treating
+            // that as "nothing running" is how the sequence would start half a
+            // second into a frenzy and throw the rest of it away. An unidentified
+            // buff is a reason to wait, not a reason to go.
+            if (buffs.active().some(b => !b.name)) return
+
             taken = []
             harvestFrom = 0
             setPhase('loans')
