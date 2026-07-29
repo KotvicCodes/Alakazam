@@ -157,9 +157,27 @@
         return s + (remainder === 2 ? '==' : '=')
     }
 
+    //* unescapeStored
+    // The game does not put its base64 into localStorage directly. Game.WriteSave
+    // stores `escape(base64 + '!END!')`, and Game.LoadSave calls `unescape` on the
+    // way back in, before it goes looking for the marker. Exported save codes are
+    // escaped the same way.
+    //
+    // escape() leaves most of the base64 alphabet alone but writes '=' as %3D, and
+    // it turns the marker's exclamation marks into %21. So skipping this step
+    // finds no marker to strip, hands a string full of percent signs to atob, and
+    // reports a perfectly good save as "save is not base64". Which is exactly what
+    // it did, on every save, in every real browser.
+    //
+    // Safe on input that was never escaped: base64 and the marker contain no
+    // percent sign, so there is nothing here for it to change.
+    function unescapeStored(raw) {
+        return typeof unescape === 'function' ? unescape(raw) : raw
+    }
+
     //* decodeDetailed
-    // undoes Game.WriteSave: strip the !END! marker, base64 decode, then undo the
-    // utf8 escaping the game applies before encoding.
+    // undoes Game.WriteSave: unescape, strip the !END! marker, base64 decode, then
+    // undo the utf8 escaping the game applies before encoding.
     //
     // This reports which step failed rather than a single null. Every failure used
     // to collapse into "could not decode save", which said nothing about whether
@@ -173,7 +191,7 @@
     // failure the raw bytes are used and the worst case is a mangled name.
     function decodeDetailed(raw) {
         if (!raw || typeof raw !== 'string') return { text: null, reason: 'no save found' }
-        const body = normalizeBase64(raw.split(END_MARKER)[0] || '')
+        const body = normalizeBase64(unescapeStored(raw).split(END_MARKER)[0] || '')
         if (!body) return { text: null, reason: 'save is not base64' }
 
         let binary = null

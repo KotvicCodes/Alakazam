@@ -32,10 +32,12 @@ downpayment is a share of a bank about to be discarded, and spending never reduc
 ## When, and what it buys
 
 `prestige = floor((lifetime cookies / 1e12) ^ (1/3))`, the game's own formula, kept
-pure and unit tested in `strategy/ascend.js`. Targets come from the guide, one per
-ascension: 365 chips for the first, 2185 for the second, all 23 entries in
-`data/heavenly.js`. Past the table it falls back to the guide's own rule, ascend
-when the run would double the prestige already banked.
+pure and unit tested in `strategy/ascend.js`. Targets come from the guide, all 23
+entries in `data/heavenly.js`: 365 chips, then 2185, then 12301. The one it aims
+at is the first rung above where the save already stands, so a save that has
+ascended more times than it has worked through the table still gets a target it
+can reach. Past the table it falls back to the guide's own rule, ascend when the
+run would double the prestige already banked.
 
 The shopping list is the guide's, flattened into one order. Anything not on it is
 never bought, because chips spent off-plan are chips the next tier's centrepiece
@@ -78,9 +80,9 @@ tenths of a second of resolution on a forty second loan.
 checks for it inside `offsetGene`, the arrow handler, and only on a non-zero step,
 so importing the right appearance wins nothing. `modules/clones.js` walks the
 arrows, then deliberately steps a gene the achievement does not care about so the
-check actually runs, then leaves the clones on a preset. It runs once, the first
-time a You is owned, and never touches them again; a look you chose yourself is
-left alone entirely.
+check actually runs, then puts the clones straight back the way it found them. It
+runs once, the first time a You is owned, in a single pass, and never touches
+them again; clones still on the game's default are left on a preset.
 
 **"No time like the present"** needs a gift code redeemed. Alakazam wraps the gift
 and keeps the code, and the panel shows it with what to do. **Redeeming is not
@@ -90,17 +92,31 @@ being slipped in. It is written up as roadmap item 10.
 
 ## What playing it turned up
 
-Three things went wrong in a real game, and the first two were the same bug.
+**The save was never being read at all.** `Game.WriteSave` does not put its
+base64 into localStorage: it stores `escape(base64 + '!END!')`, and `Game.LoadSave`
+calls `unescape` on the way back in before it goes looking for the marker.
+escape() writes '=' as `%3D` and the marker as `%21END%21`, so skipping that step
+finds no marker to strip, hands a string full of percent signs to `atob`, and
+reports a perfectly good save as **"save is not base64"**. On every save, in
+every real browser, since the reader was written. Everything downstream of it —
+the ascension planner, the lump planner, the garden, the market, the pantheon —
+was working from a save that had failed to decode.
 
-**The save was being read two fields out.** `Game.WriteSave` puts the shiny
+The fixtures were the reason this survived a test suite. They stored the base64
+directly, which is the one place a Cookie Clicker save is never stored that way,
+so the reader was only ever tested against a form it would never meet. They
+escape now, and 77 tests fail without the fix.
+
+Everything below is what was waiting behind it.
+
+**The save was also being read two fields out.** `Game.WriteSave` puts the shiny
 wrinkler count and hoard between `volume` and `lumps`, and the parser did not
 know they were there. So `lumps` held the shiny wrinkler count, `lumpT` held the
 lump count and `lumpCurrentType` held a millisecond timestamp. The layout checks
-did their job and refused to trust any of it, which is why the panel said **save
-not trustworthy** and the ascension planner would not plan: ascending on a
-misread `cookiesReset` is not undoable. The sugar lump planner went quiet for the
-same reason, and had nothing to spend besides, because it thought it had as many
-lumps as it had shiny wrinklers.
+do their job and refuse to trust any of that, so the ascension planner would
+still not have planned once decoding worked: ascending on a misread
+`cookiesReset` is not undoable. The sugar lump planner would have had nothing to
+spend either, thinking it had as many lumps as it had shiny wrinklers.
 
 The version whitelist went with it. An unrecognised version used to mark a save
 untrusted outright, which means every game patch silently switches off everything
@@ -135,13 +151,14 @@ now the first rung above where the save actually stands.
 
 ## Verification
 
-`npm test` — 198 tests under `node --test`, green. New coverage: the prestige
+`npm test` — 200 tests under `node --test`, green. New coverage: the prestige
 formula against the guide's milestones, target selection and the doubling fallback,
 buying in plan order, never touching a ghosted or off-plan crate, refusing an
 unnamed prompt, the stale-save guard, loan ordering, ascending inside the loan
 window, a frenzy holding the sequence back, buff naming and pie-timer decoding, the
-likeness condition and the deliberate final step, every gift gate, the real 55
-field scalar layout against a drifted one, measuring a shortened lump lifespan and
+likeness condition and the deliberate final step, every gift gate, the save in the escaped
+form localStorage really holds it in, the real 55 field scalar layout against a
+drifted one, measuring a shortened lump lifespan and
 harvesting inside it, spending a lump on the row badge, and answering only the
 prompt that names itself.
 
