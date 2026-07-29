@@ -122,11 +122,29 @@
 
     //! Upgrades
 
+    //* GRANDMAPOCALYPSE
+    // The three research upgrades that advance the Grandmapocalypse. They are
+    // ordinary-looking production upgrades, and each one is a one-way door into a
+    // different game: wrinklers on the cookie, wrath cookies instead of golden
+    // ones, and a production penalty until it is farmed properly.
+    //
+    // Now that research is read at all, these would otherwise be bought the moment
+    // they became affordable, and the run would change mode without anyone asking
+    // for it. Held back by name until there is a policy worth calling a policy.
+    // Everything else in the research tree is a plain multiplier and is bought.
+    const GRANDMAPOCALYPSE = ['one mind', 'communal brainsweep', 'elder pact']
+
     //* classifyUpgrade
     // 'skip'  -> toggles, pledges, season switchers: never auto-buy
     // 'buy'   -> ordinary production/click upgrades: safe to auto-buy
-    function classifyUpgrade(text) {
+    //
+    // The name is matched separately from the tooltip body where it is known,
+    // because a phrase common enough to appear in flavour text is too blunt to
+    // screen a whole upgrade on.
+    function classifyUpgrade(text, name) {
         const t = (text || '').toLowerCase()
+        const n = (name || '').toLowerCase().trim()
+        if (n && GRANDMAPOCALYPSE.indexOf(n) !== -1) return 'skip'
         if (/switch|toggle|pledge|covenant|\bpact\b|turn all|vault|elder/.test(t)) return 'skip'
         return 'buy'
     }
@@ -136,11 +154,12 @@
         if (!tip) return
         const price = !Number.isNaN(tip.price) ? tip.price : firstNumberIn(tip.text)
         if (Number.isNaN(price)) return
+        const name = tip.name || (tip.text || '').split('\n')[0].trim()
         upgradeCache.set(crate.key, {
-            name: tip.name || (tip.text || '').split('\n')[0].trim(),
+            name,
             price,
             description: tip.text,
-            kind: classifyUpgrade(tip.text),
+            kind: classifyUpgrade(tip.text, name),
             at: Date.now()
         })
     }

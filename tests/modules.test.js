@@ -1,6 +1,6 @@
 const { test } = require('node:test')
 const assert = require('node:assert')
-const { boot, sleep } = require('./harness')
+const { boot, sleep, waitFor } = require('./harness')
 const fx = require('./fixtures')
 const { El } = require('./dom')
 
@@ -260,10 +260,12 @@ test('the hidden trend mode drives the signal', () => {
     assert.equal(s.goods[2].signal, 'hold', 'chaotic has no usable bias')
 })
 
-test('trading is off by default', () => {
+test('trading is on by default and can be switched off', () => {
     const h = boot({
         save: fx.save({ levels: { 5: 10 }, amounts: { 5: 20 }, minigames: { 5: fx.market({}) } }).raw
     })
+    assert.equal(h.A.market.state().trading, true)
+    h.A.store.setSetting('marketTrading', false)
     assert.equal(h.A.market.state().trading, false)
 })
 
@@ -319,4 +321,536 @@ test('the master switch stops modules but never the HUD', async () => {
     assert.equal(ranCount('purchase'), current, 'purchase stays stopped once settled')
     assert.ok(ranCount('hud') > hudBefore, 'the HUD is how you turn everything back on')
     h.A.scheduler.stop()
+})
+
+//! The store's upgrade sections
+
+const SECTIONED_CRATES = [
+    { name: 'Reinforced index finger', price: 100, body: 'clicking gains +1% of your CpS' },
+    {
+        name: 'Specialized chocolate chips',
+        price: 200,
+        body: 'cookie production multiplier +1%',
+        section: 'techUpgrades'
+    },
+    {
+        name: 'Elder Pledge',
+        price: 300,
+        body: 'pledge to the elders, ends the grandmapocalypse',
+        section: 'toggleUpgrades'
+    },
+    {
+        name: 'Vaulted thing',
+        price: 400,
+        body: 'the player put this one away on purpose',
+        section: 'vaultUpgrades'
+    }
+]
+
+test('research upgrades are part of the store, toggles and the vault are not', () => {
+    // #techUpgrades was never read, so research was invisible: not catalogued,
+    // not scored, never bought, however long a run went on
+    const h = boot({ game: { crates: SECTIONED_CRATES } })
+    const crates = h.A.live.readUpgradeCrates()
+
+    const ids = crates.map(c => c.key).sort()
+    assert.deepEqual(ids, ['id:0', 'id:1'], 'the buyable sections are #upgrades and #techUpgrades')
+})
+
+test('crates are keyed by the game id, which is unique across sections', () => {
+    // element ids restart at upgrade0 in every section, so #upgrades and
+    // #techUpgrades each contain one. keying on that would collapse the two into
+    // a single catalog entry and price one of them wrong.
+    const h = boot({ game: { crates: SECTIONED_CRATES } })
+    const crates = h.A.live.readUpgradeCrates()
+
+    assert.equal(crates.length, 2)
+    assert.equal(crates[0].element.id, 'upgrade0')
+    assert.equal(crates[1].element.id, 'upgrade0', 'both sections number their crates from zero')
+    assert.notEqual(crates[0].key, crates[1].key, 'but they must not share a catalog key')
+})
+
+test('the grandmapocalypse is never started by accident', () => {
+    const c = boot({}).A.catalog
+    // a plain research multiplier
+    assert.equal(
+        c.classifyUpgrade('cookie production multiplier +1%', 'Specialized chocolate chips'),
+        'buy'
+    )
+    // the three that change what game is being played
+    for (const name of ['One mind', 'Communal brainsweep', 'Elder Pact']) {
+        assert.equal(
+            c.classifyUpgrade('grandmas are twice as efficient', name),
+            'skip',
+            `${name} must not be bought on its own`
+        )
+    }
+})
+
+test('a research upgrade gets catalogued and bought like any other', async () => {
+    const h = boot({ game: { bank: 1e5, crates: SECTIONED_CRATES } })
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+
+    const bought = () => h.game.state.log.filter(l => l.indexOf('buy upgrade') === 0)
+    await waitFor(() => bought().some(l => l.indexOf('Specialized chocolate chips') !== -1))
+    h.A.scheduler.stop()
+
+    const log = bought()
+    assert.ok(
+        log.some(l => l.indexOf('Specialized chocolate chips') !== -1),
+        `research should have been bought, log was ${JSON.stringify(log)}`
+    )
+    assert.equal(
+        log.some(l => l.indexOf('Elder Pledge') !== -1 || l.indexOf('Vaulted thing') !== -1),
+        false,
+        'neither a toggle nor a vaulted upgrade may ever be bought'
+    )
+})
+
+//! HUD
+
+test('dragging the panel ignores the autoclicker synthetic events', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(120)
+
+    const panel = h.game.doc.getElementById('alakazam-hud')
+    const head = h.game.doc.getElementById('alakazam-hud-head')
+    assert.ok(panel && head, 'the panel should have been built')
+
+    const trusted = (type, x, y) => {
+        const e = {
+            type,
+            pointerId: 1,
+            button: 0,
+            isTrusted: true,
+            clientX: x,
+            clientY: y,
+            preventDefault() {}
+        }
+        head.dispatchEvent(e)
+        return e
+    }
+
+    trusted('pointerdown', 700, 400)
+    trusted('pointermove', 720, 420)
+    const placed = panel.style.left
+
+    // the autoclicker fires untrusted pointer events constantly; they must not move it
+    head.dispatchEvent({
+        type: 'pointermove',
+        pointerId: 1,
+        button: 0,
+        isTrusted: false,
+        clientX: 5,
+        clientY: 5
+    })
+    assert.equal(panel.style.left, placed, 'synthetic moves must not drag the panel')
+
+    trusted('pointerup', 720, 420)
+    await h.A.store.flush()
+    assert.ok(h.disk['legacy:t'].hudPosition, 'the position should stick')
+    h.A.scheduler.stop()
+})
+
+test('the minimize button folds the panel instead of dragging it', async () => {
+    // pointer capture retargets the click at whatever element captured the
+    // pointer, so a drag started on the header swallowed the fold button's click
+    // entirely: pressing minimize moved the panel and did nothing else
+    const h = boot({})
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(120)
+
+    const panel = h.game.doc.getElementById('alakazam-hud')
+    const head = h.game.doc.getElementById('alakazam-hud-head')
+    const fold = h.game.doc.getElementById('alakazam-hud-fold')
+    assert.ok(panel && head && fold, 'the panel should have been built')
+
+    try {
+        const before = panel.style.left
+        assert.equal(panel.classList.contains('az-folded'), false, 'starts unfolded')
+
+        // pressing the fold button bubbles to the header, exactly as in a browser
+        fold.dispatchEvent({
+            type: 'pointerdown',
+            pointerId: 1,
+            button: 0,
+            isTrusted: true,
+            clientX: 700,
+            clientY: 12,
+            preventDefault() {}
+        })
+        assert.equal(panel.style.left, before, 'grabbing the fold button must not move the panel')
+        assert.equal(head.captured, undefined, 'and must not start a drag')
+
+        fold.dispatchEvent({ type: 'click', isTrusted: true, stopPropagation() {} })
+        assert.equal(panel.classList.contains('az-folded'), true, 'the panel should be folded')
+        assert.equal(fold.textContent, '+')
+
+        fold.dispatchEvent({ type: 'click', isTrusted: true, stopPropagation() {} })
+        assert.equal(panel.classList.contains('az-folded'), false, 'and unfolded again')
+    } finally {
+        h.A.scheduler.stop()
+    }
+})
+
+test('numbers are rendered with the suffixes the game itself uses', () => {
+    const { formatNumber } = boot({}).A.parse
+    assert.equal(formatNumber(543), '543')
+    assert.equal(formatNumber(1234), '1.234k')
+    assert.equal(formatNumber(1.5e6), '1.5M')
+    assert.equal(formatNumber(3.2e9), '3.2B')
+    // the panel's own table stopped at 10^24, so this rendered as
+    // "54566999999999992.00Sp": seventeen digits of noise
+    assert.equal(formatNumber(5.4567e40), '54.567DoD')
+    assert.equal(formatNumber(2.2895e28), '22.895Oc')
+    // past the biggest suffix the game has there is nothing to do but exponent
+    assert.equal(formatNumber(1e300), '1.00e+300')
+    assert.equal(formatNumber(Infinity), '-')
+})
+
+test('the popup renders numbers identically to the panel', () => {
+    // the popup is a separate document with no access to the content scripts, so
+    // it carries its own copy of the table. this is what keeps the two in step.
+    const fs = require('fs')
+    const path = require('path')
+    const source = fs.readFileSync(path.join(__dirname, '..', 'popup.js'), 'utf8')
+    const table = source.match(/const MAGNITUDES = \(\(\) => \{[\s\S]*?\}\)\(\)/)
+    assert.ok(table, 'the popup should build a magnitude table')
+
+    const popupMagnitudes = eval(table[0].replace('const MAGNITUDES =', ''))
+    assert.deepEqual(popupMagnitudes, boot({}).A.parse.MAGNITUDES)
+})
+
+test('durations are rendered in units a person can act on', () => {
+    const { formatDuration } = boot({}).A.parse
+    assert.equal(formatDuration(0.4), '<1s')
+    assert.equal(formatDuration(42), '42s')
+    assert.equal(formatDuration(90), '1.5m')
+    assert.equal(formatDuration(3600 * 5), '5h')
+    assert.equal(formatDuration(86400 * 3), '3d')
+    assert.equal(formatDuration(604800 * 9), '9w')
+    assert.equal(formatDuration(31557600 * 4), '4y')
+    // the panel showed this one as "263949956031657248.0s"
+    assert.equal(formatDuration(2.639e17), '8.362B years')
+    assert.equal(formatDuration(Infinity), 'never')
+})
+
+test('a decision reads as a sentence, with no action prefix and no raw seconds', () => {
+    const h = boot({ game: { bank: 0, cps: 1 } })
+    const view = h.A.purchase.buildView(0)
+    const decision = h.A.strategy.decide(view)
+    assert.equal(decision.action, 'wait')
+    assert.match(decision.reason, /^saving for /)
+    assert.equal(/\d+\.\ds\b/.test(decision.reason), false, `raw seconds in "${decision.reason}"`)
+    // and the payback rides alongside it rather than inside it, so the panel can
+    // put the two on separate rows
+    assert.ok(Number.isFinite(decision.payback))
+})
+
+//! Achievement hunt
+
+function achievementUI(h, { stats = true, log = true, bakery = true, tiny = true, slot = true } = {}) {
+    const d = h.game.doc
+    const mk = (id, cls) => {
+        const e = new El('div', { id, class: cls || '' })
+        d.body.append(e)
+        return e
+    }
+    if (stats) {
+        const b = mk('statsButton')
+        b.append(new El('div'))
+        const general = mk('statsGeneral')
+        if (tiny) {
+            const listing = new El('div', { class: 'listing' })
+            const price = new El('div', { class: 'price' })
+            price.append(new El('div', { class: 'tinyCookie' }))
+            listing.append(price)
+            general.append(listing)
+        }
+        if (slot) {
+            const s = new El('div', { class: 'achievement' })
+            s.setAttribute('data-id', '204')
+            d.body.append(s)
+        }
+    }
+    if (log) {
+        const b = mk('logButton')
+        b.append(new El('div'))
+        const olden = mk('oldenDays')
+        olden.append(new El('div', { class: 'icon' }))
+    }
+    if (bakery) {
+        mk('bakeryName')
+        mk('bakeryNameInput')
+        mk('promptOption0')
+    }
+    mk('commentsText1')
+}
+
+test('a routine that finds nothing does not reopen the menu every tick', async () => {
+    const disk = {}
+    // the stats menu is there but has neither the tiny cookie nor the slot
+    const h = boot({ disk })
+    achievementUI(h, { tiny: false, slot: false })
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(4000)
+    h.A.scheduler.stop()
+
+    // it ran, so it counts, but the cooldown means it ran once rather than
+    // once every three seconds
+    assert.equal(h.A.achievements.attempts('statsPanel'), 1)
+})
+
+test('a routine that finds its target is retired immediately', async () => {
+    const h = boot({})
+    achievementUI(h)
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(3000)
+    h.A.scheduler.stop()
+    assert.equal(h.A.achievements.giveUp('statsPanel'), true, 'no reason to ever run it again')
+})
+
+test('a routine whose menu is not drawn yet costs nothing and is retried', async () => {
+    const disk = {}
+    let h = boot({ disk })
+    achievementUI(h, { stats: false })
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(1500)
+    assert.equal(h.A.achievements.attempts('statsPanel'), 0, 'never opened, so never attempted')
+    h.A.scheduler.stop()
+    await h.A.store.flush()
+
+    h = boot({ disk })
+    achievementUI(h)
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(3000)
+    assert.ok(h.A.achievements.attempts('statsPanel') > 0, 'runs once the menu exists')
+    h.A.scheduler.stop()
+})
+
+test('a routine is given up on after a few real attempts', async () => {
+    const disk = { 'legacy:t': { 'attempts:statsPanel': 4 } }
+    const h = boot({ disk })
+    achievementUI(h)
+    await h.A.store.ready('t')
+    assert.equal(h.A.achievements.giveUp('statsPanel'), true)
+    await h.A.scheduler.start()
+    await sleep(300)
+    assert.ok(!h.debug().achievements || !h.debug().achievements.waiting.includes('statsPanel'))
+    h.A.scheduler.stop()
+})
+
+test('ticker clicks are only counted when the news actually changes', async () => {
+    const h = boot({})
+    const d = h.game.doc
+    const comments = new El('div', { id: 'comments' })
+    const text = new El('div', { id: 'commentsText' })
+    const layer1 = new El('div', { id: 'commentsText1', class: 'commentsText', text: 'news 0' })
+    text.append(layer1)
+    comments.append(text)
+    d.body.append(comments)
+
+    // the game advances the news on a registered click, and only one per item
+    let item = 0
+    let lastAt = 0
+    comments.addEventListener('click', () => {
+        const now = Date.now()
+        if (now - lastAt < 100) return // a second click on the same item does nothing
+        lastAt = now
+        item++
+        layer1.text = 'news ' + item
+    })
+
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(3000)
+    h.A.scheduler.stop()
+
+    const counted = h.A.store.get('tickerClicks', 0)
+    assert.ok(counted > 0, 'should have registered some clicks')
+    assert.equal(counted, item, `counted ${counted} but the game advanced ${item} times`)
+})
+
+test('the ticker gives up if no click ever registers', async () => {
+    const h = boot({ disk: { 'legacy:t': { tickerTries: 500, tickerClicks: 0 } } })
+    const comments = new El('div', { id: 'comments', text: 'static' })
+    h.game.doc.body.append(comments)
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(1200)
+    h.A.scheduler.stop()
+    assert.equal(comments.events.filter(e => e === 'click').length, 0, 'should have stopped poking it')
+})
+
+//! Version reporting
+
+test('no version number is hardcoded into the popup markup', () => {
+    const fs = require('fs')
+    const path = require('path')
+    const root = path.join(__dirname, '..')
+    const html = fs.readFileSync(path.join(root, 'popup.html'), 'utf8')
+    // it used to say "v1.0" forever, ten releases after that stopped being true
+    assert.equal(/v\d+\.\d+/.test(html), false, 'the popup must read its version from the manifest')
+    assert.match(fs.readFileSync(path.join(root, 'popup.js'), 'utf8'), /getManifest\(\)/)
+})
+
+test('the manifest and package versions stay in step', () => {
+    const fs = require('fs')
+    const path = require('path')
+    const root = path.join(__dirname, '..')
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'))
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+    assert.equal(manifest.version, pkg.version)
+})
+
+//! Click measurement
+
+test('every module survives the manifest load order', async () => {
+    // the clicks module once read the parsed save but was listed before the file
+    // that defines it, so it threw on every tick and the scheduler switched it
+    // off. Nothing surfaced except a zero in the panel.
+    const h = boot({})
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(1200)
+    const broken = h.A.scheduler.stats().filter(m => m.disabled || m.failures > 0)
+    assert.deepEqual(
+        broken.map(m => `${m.name}: ${m.lastError}`),
+        [],
+        'no module may fail on a clean boot'
+    )
+    h.A.scheduler.stop()
+})
+
+test('click income comes from the game totals, not from guessing at the bank', async () => {
+    // two saves a minute apart: 600 clicks earning 6000 cookies
+    const first = fx.save({ cookieClicks: 1000, handmadeCookies: 10000 }).raw
+    const second = fx.save({ cookieClicks: 1600, handmadeCookies: 16000 }).raw
+
+    let current = first
+    const h = boot({})
+    h.ctx.localStorage.getItem = key => (key === 'CookieClickerGame' ? current : null)
+
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(1200)
+    assert.equal(h.A.clicks.measured(), false, 'one reading is not a rate')
+
+    current = second
+    const measured = await waitFor(() => h.A.clicks.measured())
+    h.A.scheduler.stop()
+
+    assert.equal(measured, true, 'the second save should have produced a sample')
+    // 6000 cookies over roughly three seconds of wall clock in the test
+    assert.ok(h.A.clicks.clickCps() > 0, 'income should be measured')
+    // 6000 cookies across 600 clicks, whatever the elapsed time was
+    assert.ok(
+        Math.abs(h.A.clicks.cookiesPerClick() - 10) < 0.001,
+        `cookies per click was ${h.A.clicks.cookiesPerClick()}`
+    )
+})
+
+test('an unmeasured click rate falls back to a floor, never to zero', async () => {
+    // measurement needs two autosaves, so there is a window at the start of every
+    // session with nothing to go on. valuing clicking upgrades at zero clicks a
+    // second through that window is how they came to be skipped entirely, and it
+    // is exactly the window in which they matter most.
+    const h = boot({})
+    assert.equal(h.A.clicks.measured(), false)
+    assert.equal(h.A.clicks.clicksPerSecond(), 3)
+    assert.equal(h.A.clicks.stats().registeredPerSecond, 3)
+
+    // and a real measurement takes over from it
+    let current = fx.save({ cookieClicks: 1000, handmadeCookies: 10000 }).raw
+    h.ctx.localStorage.getItem = key => (key === 'CookieClickerGame' ? current : null)
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    try {
+        await sleep(300)
+        current = fx.save({ cookieClicks: 100000, handmadeCookies: 1000000 }).raw
+        await waitFor(() => h.A.clicks.measured())
+        assert.ok(h.A.clicks.clicksPerSecond() > 3, 'the measurement should replace the floor')
+    } finally {
+        h.A.scheduler.stop()
+    }
+})
+
+test('the autoclicker paces itself in time, not per frame', async () => {
+    // it used to fire a burst every animation frame, which worked out at about
+    // 240 events a second on a 60Hz display and rather more on a 144Hz one. the
+    // game registers around three.
+    const h = boot({})
+    assert.equal(h.A.autoclick.CLICKS_PER_SECOND, 15)
+
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    try {
+        const cookie = h.game.doc.getElementById('bigCookie')
+        const clicks = () => cookie.events.filter(e => e === 'click').length
+        const before = clicks()
+        // sixty frames is a second of display time, delivered in an instant. a
+        // per-frame burst would send sixty clicks or more; pacing sends one.
+        for (let i = 0; i < 60; i++) h.frame()
+        const sent = clicks() - before
+        assert.ok(sent > 0, 'the autoclicker should be clicking at all')
+        assert.ok(sent <= 2, `sixty frames in an instant sent ${sent} clicks`)
+    } finally {
+        h.A.scheduler.stop()
+    }
+})
+
+test('a failed save read is retried, a successful one is not re-parsed', async () => {
+    // The watcher skips any tick whose fingerprint matches the last one, which is
+    // what keeps it from decoding twenty kilobytes twice a second. That is right
+    // for a successful read and wrong for a failed one: a failure has no state
+    // worth preserving, and latching on it means the next attempt waits for the
+    // game to write its save, up to a minute away.
+    const h = boot({ save: 'not a save at all !!' })
+    let reads = 0
+    const real = h.A.savefile.read
+    h.A.savefile.read = () => {
+        reads++
+        return real()
+    }
+
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    try {
+        const failing = await waitFor(() => reads >= 3)
+        assert.equal(failing, true, `a failed read should be retried, saw ${reads}`)
+        assert.equal(h.A.save.get().ok, false)
+
+        // once it succeeds, the unchanged save must stop being re-read
+        h.ctx.localStorage.getItem = () => fx.save({}).raw
+        await waitFor(() => h.A.save.get().ok)
+        const settled = reads
+        await sleep(600)
+        assert.equal(reads, settled, 'an unchanged save must not be decoded again')
+    } finally {
+        h.A.scheduler.stop()
+    }
+})
+
+test('clicking upgrades are valued off the registered rate, not the dispatched one', () => {
+    const S = boot({}).A.strategy
+    const base = {
+        cps: 1000,
+        cookies: 1e6,
+        buildings: [{ name: 'Cursor', owned: 10, price: 100, perUnitCps: 1, baseCps: 1 }],
+        upgrades: []
+    }
+    const upgrade = { description: 'Clicking gains +1% of your CpS.' }
+
+    // three registered clicks a second: 3 x 1000 x 1%
+    assert.equal(S.upgradeDeltaCps(upgrade, { ...base, clicksPerSecond: 3 }), 30)
+    // the dispatched figure would have valued the same upgrade a thousand times higher
+    assert.equal(S.upgradeDeltaCps(upgrade, { ...base, clicksPerSecond: 3000 }), 30000)
 })

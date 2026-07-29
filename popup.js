@@ -43,21 +43,39 @@ function latestStatus(all) {
     return best
 }
 
+//* format
+// Cookie Clicker's own magnitude suffixes, at every third power from a thousand
+// up to 10^276, after which the game itself switches to an exponent.
+//
+// This is deliberately a copy of formatNumber in src/parse.js rather than a
+// shared import. The popup is a separate document in a separate context with no
+// access to the content scripts, and a two-file duplicate beats a build step for
+// one function. Change one, change the other.
+const MAGNITUDES = (() => {
+    const bases = ['', 'Un', 'Do', 'Tr', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No']
+    const tiers = ['', 'D', 'V', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No']
+    const names = ['k', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc']
+    for (let tier = 1; tier < tiers.length; tier++) {
+        for (let base = 1; base < bases.length; base++) names.push(bases[base] + tiers[tier])
+    }
+    return names.map((suffix, i) => [Math.pow(10, 3 * (i + 1)), suffix]).reverse()
+})()
+
 function format(n) {
     if (!Number.isFinite(n)) return '-'
-    if (n < 1000) return String(Math.round(n))
-    const units = [
-        [1e24, 'Sp'],
-        [1e21, 'Sx'],
-        [1e18, 'Qi'],
-        [1e15, 'Qa'],
-        [1e12, 'T'],
-        [1e9, 'B'],
-        [1e6, 'M'],
-        [1e3, 'k']
-    ]
-    for (const [v, s] of units) if (n >= v) return `${(n / v).toFixed(2)}${s}`
-    return String(Math.round(n))
+    if (n < 0) return '-' + format(-n)
+    if (n < 1000) return n < 100 && n % 1 !== 0 ? trimZeros(n.toFixed(1)) : String(Math.round(n))
+    for (const [value, suffix] of MAGNITUDES) {
+        if (n < value) continue
+        const scaled = n / value
+        if (scaled >= 1000) break
+        return trimZeros(scaled.toFixed(3)) + suffix
+    }
+    return n.toExponential(2)
+}
+
+function trimZeros(text) {
+    return text.indexOf('.') === -1 ? text : text.replace(/\.?0+$/, '')
 }
 
 async function render() {
@@ -89,8 +107,18 @@ async function render() {
     for (const key of Object.keys(LABELS)) {
         const on = settings[key] !== false
         const button = document.createElement('button')
-        button.className = 'btn ' + (key === 'enabled' ? 'btn-primary' : '')
-        button.textContent = `${LABELS[key]}: ${on ? 'on' : 'off'}`
+        // the master switch is the one that has to read at a glance, so it gets
+        // the loud treatment: green running, red paused. the rest just light up.
+        const classes = ['btn']
+        if (key === 'enabled') {
+            classes.push('btn-primary')
+            if (!on) classes.push('active')
+        } else if (on) {
+            classes.push('on')
+        }
+        button.className = classes.join(' ')
+        button.textContent =
+            key === 'enabled' ? (on ? 'RUNNING' : 'PAUSED') : `${LABELS[key]}: ${on ? 'on' : 'off'}`
         button.addEventListener('click', async () => {
             const current = (await get([SETTINGS_KEY]))[SETTINGS_KEY] || {}
             current[key] = !on
@@ -101,7 +129,19 @@ async function render() {
     }
 }
 
+//* showVersion
+// read from the manifest rather than written into the markup. it was hardcoded,
+// so it still claimed v1.0 ten releases later. deriving it means there is one
+// version number in the project and no ritual to forget.
+function showVersion() {
+    const el = document.getElementById('version')
+    if (!el) return
+    const manifest = chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest() : null
+    el.textContent = manifest ? `v${manifest.version}` : ''
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    showVersion()
     render()
     // the page keeps writing status, so refresh while the popup is open
     setInterval(render, 2000)

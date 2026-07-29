@@ -67,8 +67,24 @@ function boot(opts = {}) {
         MouseEvent: FakeEvent,
         PointerEvent: FakeEvent,
         Event: FakeEvent,
-        atob: s => Buffer.from(s, 'base64').toString('binary'),
-        localStorage: { getItem: k => (opts.save && k === 'CookieClickerGame' ? opts.save : null) }
+        // Buffer's base64 decoder silently discards anything outside the
+        // alphabet, where a browser throws. Validating first is what makes this
+        // stand in for the real one: without it, "not a save at all" decodes to
+        // bytes instead of failing, and the code under test never sees the branch
+        // it takes in a browser.
+        atob: s => {
+            if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s)) {
+                const err = new Error('invalid character')
+                err.name = 'InvalidCharacterError'
+                throw err
+            }
+            return Buffer.from(s, 'base64').toString('binary')
+        },
+        innerWidth: 1440,
+        innerHeight: 900,
+        localStorage: opts.localStorage || {
+            getItem: k => (opts.save && k === 'CookieClickerGame' ? opts.save : null)
+        }
     }
     ctx.window = ctx
     ctx.PointerEvent = FakeEvent
@@ -95,4 +111,19 @@ function boot(opts = {}) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
-module.exports = { boot, sleep, ROOT }
+//* waitFor
+// poll a condition instead of sleeping for however long the thing under test is
+// expected to take. Modules run on their own intervals, so a fixed sleep has to
+// be long enough for the slowest tick under load, and any sleep short enough to
+// keep the suite quick is one that fails on a busy machine. Returns whether the
+// condition ever held, so callers can assert on it.
+const waitFor = async (condition, timeout = 10000, step = 50) => {
+    const until = Date.now() + timeout
+    while (Date.now() < until) {
+        if (condition()) return true
+        await sleep(step)
+    }
+    return condition()
+}
+
+module.exports = { boot, sleep, waitFor, ROOT }
