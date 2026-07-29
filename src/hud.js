@@ -394,6 +394,9 @@
                     html += row('still needs', format(debug.ascend.cookiesToTarget))
                 }
                 html += row('phase', debug.ascend.phase)
+                if (debug.ascend.bought && debug.ascend.bought.length > 0) {
+                    html += row('bought', debug.ascend.bought.length)
+                }
             }
         }
 

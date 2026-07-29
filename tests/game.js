@@ -30,6 +30,10 @@ function build(opts = {}) {
         log: []
     }
 
+    // #game carries the mode classes the real game keys its stylesheet off, which
+    // is also how the extension tells the ascension screen from ordinary play
+    const gameEl = new El('div', { id: 'game' })
+    doc.body.append(gameEl)
     doc.body.append(new El('div', { id: 'bigCookie' }))
     const cookies = new El('div', { id: 'cookies' })
     const cpsEl = new El('div', { id: 'cookiesPerSecond' })
@@ -199,6 +203,150 @@ function build(opts = {}) {
         new El('div', { id: 'wrinklers' })
     )
 
+    // ---- ascension ----
+    // The real sequence is Legacy button -> a named prompt -> five seconds of
+    // animation -> the heavenly tree -> Reincarnate -> another named prompt. Every
+    // one of those steps is modelled, because the extension's safety rule is that
+    // it only ever confirms a prompt it can name, and that rule is only worth
+    // anything if a test can put the wrong prompt up.
+    const HEAVENLY = opts.heavenly || []
+    state.chips = opts.chips != null ? opts.chips : 0
+    state.heavenlyBought = []
+    state.permanent = null
+
+    const legacy = new El('div', { id: 'legacyButton' })
+    const promptAnchor = new El('div', { id: 'promptAnchor' })
+    const promptContent = new El('div', { id: 'promptContent' })
+    promptAnchor.append(promptContent)
+    const ascendUpgrades = new El('div', { id: 'ascendUpgrades' })
+    const ascendHCs = new El('div', { id: 'ascendHCs' })
+    const ascendPrestige = new El('div', { id: 'ascendPrestige' })
+    const ascendButton = new El('a', { id: 'ascendButton' })
+    doc.body.append(legacy, promptAnchor, ascendUpgrades, ascendHCs, ascendPrestige, ascendButton)
+
+    //* prompt
+    // mirrors Game.Prompt: the content is wrapped in a div named after the prompt,
+    // and the options become #promptOption0, #promptOption1 and so on
+    function prompt(name, options, extra) {
+        promptContent.children = []
+        const inner = new El('div', { id: 'promptContent' + name })
+        if (extra) extra(inner)
+        promptContent.append(inner)
+        options.forEach(([label, onClick], i) => {
+            const opt = new El('a', { id: 'promptOption' + i, class: 'option', text: label })
+            opt.addEventListener('click', () => {
+                closePrompt()
+                onClick && onClick()
+            })
+            promptContent.append(opt)
+        })
+        state.log.push(`prompt ${name}`)
+    }
+    function closePrompt() {
+        promptContent.children = []
+    }
+
+    function setMode(cls) {
+        gameEl.classes = new Set(cls ? [cls] : [])
+    }
+
+    function drawTree() {
+        ascendHCs.children = []
+        ascendHCs.append(new El('span', { class: 'price', text: fmt(state.chips) }))
+        ascendPrestige.innerText = String(opts.prestige || 0)
+        ascendUpgrades.children = []
+        // the tree draws one decorative crate with no data-id behind the real ones
+        ascendUpgrades.append(new El('div', { class: 'crate upgrade heavenly' }))
+        HEAVENLY.forEach(u => {
+            if (state.heavenlyBought.indexOf(u.name) !== -1) return
+            const locked = u.needs && state.heavenlyBought.indexOf(u.needs) === -1
+            const crate = new El('div', {
+                id: 'heavenlyUpgrade' + u.id,
+                class: locked ? 'crate upgrade heavenly ghosted' : 'crate upgrade heavenly'
+            })
+            crate.setAttribute('data-id', String(u.id))
+            crate.addEventListener('mouseover', () => setTooltip(u.name, fmt(u.cost), u.name))
+            if (!locked) {
+                crate.addEventListener('click', () => {
+                    if (u.slot) return openSlotPicker(u)
+                    // the game checks affordability inside its own handler, so a
+                    // crate can look buyable and quietly refuse
+                    if (state.chips < u.cost) {
+                        state.log.push(`REJECT heavenly ${u.name}`)
+                        return
+                    }
+                    state.chips -= u.cost
+                    state.heavenlyBought.push(u.name)
+                    state.log.push(`heavenly ${u.name}`)
+                    drawTree()
+                })
+            }
+            ascendUpgrades.append(crate)
+        })
+    }
+
+    function openSlotPicker(slot) {
+        if (state.chips < slot.cost) return
+        state.chips -= slot.cost
+        state.heavenlyBought.push(slot.name)
+        state.log.push(`heavenly ${slot.name}`)
+        let chosen = null
+        prompt(
+            'PickPermaUpgrade',
+            [
+                [
+                    'Confirm',
+                    () => {
+                        state.permanent = chosen
+                        state.log.push(`permanent ${chosen}`)
+                        drawTree()
+                    }
+                ],
+                ['Cancel', () => drawTree()]
+            ],
+            inner => {
+                ;(opts.permanentChoices || []).forEach(c => {
+                    const crate = new El('div', {
+                        id: 'upgradeForPermanent' + c.id,
+                        class: 'crate upgrade'
+                    })
+                    crate.setAttribute('data-id', String(c.id))
+                    crate.addEventListener('mouseover', () => setTooltip(c.name, '0', c.name))
+                    crate.addEventListener('click', () => {
+                        chosen = c.name
+                    })
+                    inner.append(crate)
+                })
+            }
+        )
+    }
+
+    legacy.addEventListener('click', () => {
+        prompt('Ascend', [
+            [
+                'Ascend',
+                () => {
+                    setMode('ascending')
+                    drawTree()
+                }
+            ],
+            ['Cancel']
+        ])
+    })
+
+    ascendButton.addEventListener('click', () => {
+        prompt('Reincarnate', [
+            [
+                'Yes',
+                () => {
+                    setMode('')
+                    state.log.push('reincarnated')
+                }
+            ],
+            ['No']
+        ])
+    })
+
     function refresh() {
         cookies.innerText = `${fmt(state.bank)}\ncookies\nper second : ${state.cps}`
         cpsEl.innerText = `per second: ${state.cps}`
@@ -210,7 +358,21 @@ function build(opts = {}) {
     }
     refresh()
 
-    return { doc, state, refresh, tooltip, bulk, BUILDINGS, unitPrice, sumPrice, selectAmount }
+    return {
+        doc,
+        state,
+        refresh,
+        tooltip,
+        bulk,
+        BUILDINGS,
+        unitPrice,
+        sumPrice,
+        selectAmount,
+        prompt,
+        closePrompt,
+        setMode,
+        drawTree
+    }
 }
 
 function fmt(n) {

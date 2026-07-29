@@ -280,12 +280,13 @@ test('an unreadable save is reported rather than guessed around', async () => {
     assert.equal(h.debug().ascend.prestige, undefined)
 })
 
-test('the phase starts at watching and follows the verdict', async () => {
+test('the phase starts at watching and commits once the target is met', async () => {
     const h = boot({ save: ascendSave({ earned: S.cookiesFor(365) }) })
     await h.A.store.ready('t')
     assert.equal(h.A.ascend.state().phase, 'watching')
     await run(h)
-    assert.equal(h.A.ascend.state().phase, 'ready')
+    // ready is passed through within the same tick: there is nothing to wait for
+    assert.equal(h.A.ascend.state().phase, 'ascending')
 })
 
 test('a run short of the target stays in watching', async () => {
@@ -306,7 +307,7 @@ test('the phase is remembered across a reload', async () => {
     const second = boot({ save: ascendSave({ earned: S.cookiesFor(365) }), disk })
     await second.A.store.ready('t')
     await second.A.registry.get('ascend').setup()
-    assert.equal(second.A.ascend.state().phase, 'ready')
+    assert.equal(second.A.ascend.state().phase, 'ascending')
 })
 
 test('ascension is a module the master switch can stop', () => {
@@ -316,4 +317,203 @@ test('ascension is a module the master switch can stop', () => {
     assert.equal(mod.setting, 'ascend')
     assert.equal(mod.always, false)
     assert.equal(h.A.store.DEFAULTS.ascend, true)
+})
+
+//! The click path
+
+//* TREE
+// a small heavenly tree: two on-plan upgrades, one gated behind the first, one
+// off-plan, and a permanent slot. `needs` mirrors the game's own prerequisites,
+// which render as a ghosted crate with no click handler until they are met.
+const TREE = [
+    { id: 1, name: 'Legacy', cost: 1 },
+    { id: 2, name: 'Heavenly cookies', cost: 3, needs: 'Legacy' },
+    { id: 3, name: 'How to bake your dragon', cost: 9, needs: 'Legacy' },
+    { id: 4, name: 'Chocolate egg', cost: 2 },
+    { id: 5, name: 'Permanent upgrade slot I', cost: 100, needs: 'Legacy', slot: true }
+]
+
+function ascender(opts = {}) {
+    const h = boot({
+        save: ascendSave({ earned: S.cookiesFor(opts.prestige || 365) }),
+        game: {
+            chips: opts.chips != null ? opts.chips : 13,
+            heavenly: opts.heavenly || TREE,
+            permanentChoices: opts.permanentChoices
+        }
+    })
+    return h
+}
+
+//* pump
+// run ticks until the phase settles or the budget runs out. The sequence is a
+// state machine that advances at most one step per tick on purpose, so a test
+// that wants the end of it has to turn the handle.
+async function pump(h, ticks = 40) {
+    await h.A.store.ready('t')
+    const mod = h.A.registry.get('ascend')
+    await mod.setup()
+    for (let i = 0; i < ticks; i++) await mod.tick()
+    return h.game.state
+}
+
+test('the sequence runs from the legacy button to reincarnating', async () => {
+    const h = ascender()
+    const state = await pump(h)
+    assert.ok(state.log.indexOf('prompt Ascend') !== -1, 'opened the ascend prompt')
+    assert.ok(state.log.indexOf('reincarnated') !== -1, 'reincarnated at the end')
+    // the prompt comes before the reincarnation, and each happens exactly once
+    assert.ok(state.log.indexOf('prompt Ascend') < state.log.indexOf('reincarnated'))
+    assert.equal(state.log.filter(l => l === 'reincarnated').length, 1)
+})
+
+test('a stale save is not mistaken for a fresh run worth ascending', async () => {
+    // the save still describes the run that just ended: same reset count, still a
+    // lifetime of cookies in it. Acting on that would ascend an empty run at once.
+    const h = ascender()
+    const state = await pump(h, 60)
+    assert.equal(state.log.filter(l => l === 'reincarnated').length, 1)
+    assert.equal(h.debug().ascend.waitingForSave, true)
+})
+
+test('heavenly upgrades are bought in the guide order', async () => {
+    const state = await pump(ascender())
+    const order = state.log.filter(l => l.indexOf('heavenly ') === 0).map(l => l.slice(9))
+    assert.deepEqual(order.slice(0, 3), ['Legacy', 'Heavenly cookies', 'How to bake your dragon'])
+})
+
+test('an upgrade that is not on the plan is never bought', async () => {
+    const state = await pump(ascender({ chips: 1000 }))
+    assert.equal(state.heavenlyBought.indexOf('Chocolate egg'), -1)
+    // and its chips went to the plan instead
+    assert.ok(state.heavenlyBought.indexOf('Permanent upgrade slot I') !== -1)
+})
+
+test('a ghosted crate is never clicked, and unlocks once its parent is bought', async () => {
+    // Heavenly cookies is gated behind Legacy, so on the first pass it is a plain
+    // div with no handler at all. It still ends up bought.
+    const state = await pump(ascender())
+    assert.ok(state.heavenlyBought.indexOf('Heavenly cookies') !== -1)
+    assert.ok(
+        state.log.indexOf('heavenly Legacy') < state.log.indexOf('heavenly Heavenly cookies'),
+        'the parent was bought first'
+    )
+})
+
+test('shopping stops at what the chips can actually buy', async () => {
+    // 4 chips buys Legacy and Heavenly cookies and nothing else
+    const state = await pump(ascender({ chips: 4 }))
+    assert.deepEqual(state.heavenlyBought, ['Legacy', 'Heavenly cookies'])
+    assert.equal(state.chips, 0)
+    assert.ok(state.log.indexOf('reincarnated') !== -1)
+})
+
+test('a crate that refuses the purchase is dropped rather than clicked forever', async () => {
+    // the tree offers something affordable on paper that the game will refuse
+    const h = ascender({ chips: 2, heavenly: [{ id: 1, name: 'Legacy', cost: 1 }] })
+    // make the game reject it: the crate is drawn, but the handler checks again
+    const state = await pump(h)
+    assert.deepEqual(state.heavenlyBought, ['Legacy'])
+    const rejects = state.log.filter(l => l.indexOf('REJECT heavenly') === 0)
+    assert.ok(rejects.length <= 1, `clicked a refusing crate ${rejects.length} times`)
+})
+
+test('a permanent slot is filled from the preference list', async () => {
+    const state = await pump(
+        ascender({
+            chips: 1000,
+            permanentChoices: [
+                { id: 90, name: 'Forwards from grandma' },
+                { id: 91, name: 'Kitten helpers' },
+                { id: 92, name: 'Plastic mouse' }
+            ]
+        })
+    )
+    // kittens outrank the mouse, and the grandma upgrade is not a candidate at all
+    assert.equal(state.permanent, 'Kitten helpers')
+})
+
+test('a permanent slot with nothing worth taking is left empty', async () => {
+    const state = await pump(
+        ascender({ chips: 1000, permanentChoices: [{ id: 90, name: 'Forwards from grandma' }] })
+    )
+    assert.equal(state.permanent, null)
+    // and the run still finishes
+    assert.ok(state.log.indexOf('reincarnated') !== -1)
+})
+
+test('crate names are cached so a second ascension costs no hovers', async () => {
+    const disk = {}
+    const first = boot({
+        save: ascendSave({ earned: S.cookiesFor(365) }),
+        game: { chips: 13, heavenly: TREE },
+        disk
+    })
+    await pump(first)
+    await first.A.store.flush()
+
+    const cached = disk['legacy:t'].heavenlyNames
+    assert.equal(cached.version, '2.052')
+    assert.equal(cached.names['1'], 'legacy')
+
+    const second = boot({
+        save: ascendSave({ earned: S.cookiesFor(365) }),
+        game: { chips: 13, heavenly: TREE },
+        disk
+    })
+    await second.A.store.ready('t')
+    const before = second.A.catalog.stats().hovers
+    await pump(second)
+    assert.equal(second.A.catalog.stats().hovers, before, 'named every crate from the cache')
+})
+
+//! Confirming the wrong prompt
+
+test('a prompt we did not open is never confirmed', async () => {
+    const h = ascender()
+    await h.A.store.ready('t')
+    const mod = h.A.registry.get('ascend')
+    await mod.setup()
+
+    // get as far as waiting on the ascend prompt, then put a different one up
+    await mod.tick()
+    assert.equal(h.A.ascend.state().phase, 'ascending')
+    h.game.prompt('ReallyWipeSave', [['Delete', () => h.game.state.log.push('WIPED')]])
+
+    await mod.tick()
+    await mod.tick()
+    assert.equal(h.game.state.log.indexOf('WIPED'), -1, 'confirmed a prompt it did not open')
+})
+
+test('the confirm helper refuses a prompt it cannot name', () => {
+    const h = ascender()
+    h.game.prompt('ReallyWipeSave', [['Delete', () => h.game.state.log.push('WIPED')]])
+    assert.equal(h.A.act.ascend.promptIs('ascend'), false)
+    assert.equal(h.A.act.ascend.confirmPrompt('ascend'), false)
+    assert.equal(h.game.state.log.indexOf('WIPED'), -1)
+})
+
+test('the ascension screen is recognised from the game class list', () => {
+    const h = ascender()
+    assert.equal(h.A.act.ascend.screen(), 'playing')
+    h.game.setMode('ascendIntro')
+    assert.equal(h.A.act.ascend.animating(), true)
+    assert.equal(h.A.act.ascend.onAscendScreen(), false)
+    h.game.setMode('ascending')
+    assert.equal(h.A.act.ascend.onAscendScreen(), true)
+    assert.equal(h.A.act.ascend.animating(), false)
+})
+
+test('nothing is clicked while the ascend animation is running', async () => {
+    const h = ascender()
+    await h.A.store.ready('t')
+    const mod = h.A.registry.get('ascend')
+    await mod.setup()
+    await mod.tick()
+    h.game.closePrompt()
+    h.game.setMode('ascendIntro')
+    const before = h.game.state.log.length
+    await mod.tick()
+    await mod.tick()
+    assert.equal(h.game.state.log.length, before, 'acted during the animation')
 })
