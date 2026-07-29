@@ -1,6 +1,6 @@
 const { test } = require('node:test')
 const assert = require('node:assert')
-const { boot } = require('./harness')
+const { boot, sleep } = require('./harness')
 const fx = require('./fixtures')
 
 const { A } = boot({})
@@ -284,8 +284,11 @@ test('the phase starts at watching and commits once the target is met', async ()
     const h = boot({ save: ascendSave({ earned: S.cookiesFor(365) }) })
     await h.A.store.ready('t')
     assert.equal(h.A.ascend.state().phase, 'watching')
+    // ready is passed through within the same tick: there is nothing running to
+    // wait out. The loan phase is next, and with no bank it falls straight through.
     await run(h)
-    // ready is passed through within the same tick: there is nothing to wait for
+    assert.equal(h.A.ascend.state().phase, 'loans')
+    await h.A.registry.get('ascend').tick()
     assert.equal(h.A.ascend.state().phase, 'ascending')
 })
 
@@ -307,7 +310,7 @@ test('the phase is remembered across a reload', async () => {
     const second = boot({ save: ascendSave({ earned: S.cookiesFor(365) }), disk })
     await second.A.store.ready('t')
     await second.A.registry.get('ascend').setup()
-    assert.equal(second.A.ascend.state().phase, 'ascending')
+    assert.equal(second.A.ascend.state().phase, 'loans')
 })
 
 test('ascension is a module the master switch can stop', () => {
@@ -477,7 +480,9 @@ test('a prompt we did not open is never confirmed', async () => {
 
     // get as far as waiting on the ascend prompt, then put a different one up
     await mod.tick()
+    await mod.tick()
     assert.equal(h.A.ascend.state().phase, 'ascending')
+    h.game.closePrompt()
     h.game.prompt('ReallyWipeSave', [['Delete', () => h.game.state.log.push('WIPED')]])
 
     await mod.tick()
@@ -516,4 +521,196 @@ test('nothing is clicked while the ascend animation is running', async () => {
     await mod.tick()
     await mod.tick()
     assert.equal(h.game.state.log.length, before, 'acted during the animation')
+})
+
+//! Buff measurement
+
+test('a buff is identified from its tooltip, since it renders no text', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    h.game.gainBuff('Frenzy', 0)
+    // nothing readable without the hover: this is the bug this file exists for
+    assert.equal(h.A.buffs.active()[0].name, null)
+    assert.equal(h.A.buffs.hasProductionBuff(), false)
+
+    await h.A.registry.get('buffs').tick()
+    assert.equal(h.A.buffs.active()[0].name, 'Frenzy')
+    assert.equal(h.A.buffs.hasProductionBuff(), true)
+    // and the old entry point now answers correctly too
+    assert.equal(h.A.live.hasProductionBuff(), true)
+})
+
+test('time left comes out of the pie timer sprite offset', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    h.game.gainBuff('Loan 2', 0)
+    await h.A.registry.get('buffs').tick()
+
+    const window = /^loan 2$/i
+    // a forty second buff, freshly taken
+    assert.ok(Math.abs(h.A.buffs.remaining(window, 40) - 40) < 0.5)
+
+    h.game.progressBuff('Loan 2', 0.5)
+    assert.ok(Math.abs(h.A.buffs.remaining(window, 40) - 20) < 0.5)
+
+    h.game.progressBuff('Loan 2', 0.9)
+    assert.ok(Math.abs(h.A.buffs.remaining(window, 40) - 4) < 0.5)
+})
+
+test('a buff that is not running reads as unknown, not as zero', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    assert.ok(Number.isNaN(h.A.buffs.remaining(/^loan 2$/i, 40)))
+})
+
+test('a loan and its interest are told apart', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    const L = h.A.data.loans
+    h.game.gainBuff('Loan 2 (interest)', 0)
+    await h.A.registry.get('buffs').tick()
+    assert.equal(h.A.buffs.named(L.buffPattern(2)).length, 0)
+    assert.equal(h.A.buffs.named(L.interestPattern(2)).length, 1)
+})
+
+//! Loans before ascending
+
+function banker(opts = {}) {
+    return boot({
+        save: ascendSave({ earned: S.cookiesFor(365) }),
+        game: {
+            chips: 13,
+            heavenly: TREE,
+            officeLevel: opts.officeLevel != null ? opts.officeLevel : 5,
+            loanProgress: opts.loanProgress != null ? opts.loanProgress : 0
+        }
+    })
+}
+
+//* turn
+// tick the planner n times, naming any new buffs in between, which is what the
+// buffs module does on its own schedule in a real page
+async function turn(h, n) {
+    const planner = h.A.registry.get('ascend')
+    const namer = h.A.registry.get('buffs')
+    for (let i = 0; i < n; i++) {
+        await namer.tick()
+        await planner.tick()
+    }
+}
+
+test('a running production buff holds the ascension back', async () => {
+    const h = banker()
+    await h.A.store.ready('t')
+    await h.A.registry.get('ascend').setup()
+    h.game.gainBuff('Frenzy', 0.1)
+
+    await turn(h, 6)
+    assert.equal(h.A.ascend.state().phase, 'ready', 'left in the middle of a frenzy')
+    assert.equal(h.game.state.loansTaken.length, 0)
+
+    // once it is gone the sequence starts
+    h.game.loseBuff('Frenzy')
+    await turn(h, 6)
+    assert.ok(h.game.state.loansTaken.length > 0)
+})
+
+test('every loan slot on offer is taken, shortest window last', async () => {
+    const h = banker()
+    await h.A.store.ready('t')
+    await h.A.registry.get('ascend').setup()
+    await turn(h, 8)
+    // 1 and 3 run for hours, 2 for forty seconds: it goes last so the window the
+    // ascension has to fit inside is as wide as possible
+    assert.deepEqual(h.game.state.loansTaken, [1, 3, 2])
+})
+
+test('a bank too small for loan slots ascends without them', async () => {
+    const h = banker({ officeLevel: 1 })
+    await h.A.store.ready('t')
+    await h.A.registry.get('ascend').setup()
+    await turn(h, 6)
+    assert.deepEqual(h.game.state.loansTaken, [])
+    assert.ok(h.game.state.log.indexOf('prompt Ascend') !== -1)
+})
+
+test('the ascension waits while the loan window is still wide', async () => {
+    const h = banker()
+    await h.A.store.ready('t')
+    await h.A.registry.get('ascend').setup()
+    await turn(h, 8)
+    assert.equal(h.A.ascend.state().phase, 'harvest')
+    // forty seconds of x2 production is the whole reason for taking it
+    await turn(h, 10)
+    assert.equal(h.A.ascend.state().phase, 'harvest', 'left before collecting the boost')
+    assert.equal(h.game.state.log.indexOf('prompt Ascend'), -1)
+})
+
+test('the ascension happens inside the loan window, before the interest', async () => {
+    const h = banker()
+    await h.A.store.ready('t')
+    await h.A.registry.get('ascend').setup()
+    await turn(h, 8)
+    assert.equal(h.A.ascend.state().phase, 'harvest')
+
+    // walk the forty second window down to its last few seconds
+    h.game.progressBuff('Loan 2', 0.8)
+    await turn(h, 3)
+    assert.ok(h.game.state.log.indexOf('prompt Ascend') !== -1, 'missed the window')
+    // and it left while the boost was still running
+    assert.equal(h.A.buffs.named(/^loan 2$/i).length, 1)
+})
+
+test('an interest phase that has already started is left immediately', async () => {
+    const h = banker()
+    await h.A.store.ready('t')
+    await h.A.registry.get('ascend').setup()
+    await turn(h, 8)
+    assert.equal(h.A.ascend.state().phase, 'harvest')
+
+    // the boost expired and the penalty began before we got out
+    h.game.loseBuff('Loan 2')
+    h.game.gainBuff('Loan 2 (interest)', 0)
+    await turn(h, 3)
+    assert.ok(h.game.state.log.indexOf('prompt Ascend') !== -1, 'sat under the penalty')
+})
+
+test('loans are only ever taken by the ascension sequence', async () => {
+    // a run nowhere near its target must never touch a loan slot, because outside
+    // the pre-ascension window the penalty is bigger than the boost
+    const h = boot({
+        save: ascendSave({ earned: S.cookiesFor(10) }),
+        game: { officeLevel: 5 }
+    })
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(300)
+    h.A.scheduler.stop()
+    assert.deepEqual(h.game.state.loansTaken, [])
+})
+
+test('the loan table matches the game', () => {
+    const L = boot({}).A.data.loans
+    assert.equal(L.byId(2).boostSeconds, 0.67 * 60)
+    assert.equal(L.byId(2).multiplier, 2)
+    assert.equal(L.SHORTEST, 2)
+    assert.deepEqual(L.ORDER, [1, 3, 2])
+    // taking all three at once triples production and a bit
+    assert.ok(Math.abs(L.stackedMultiplier([1, 2, 3]) - 3.6) < 1e-9)
+})
+
+test('the panel reports the wrinkler hoard the ascension is about to lose', async () => {
+    const h = boot({
+        save: fx.save({
+            cookiesEarned: S.cookiesFor(365),
+            wrinklers: 8,
+            wrinklerHoard: 5e15
+        }).raw,
+        game: { chips: 1, heavenly: TREE }
+    })
+    await h.A.store.ready('t')
+    await h.A.registry.get('wrinklers').tick()
+    await h.A.registry.get('ascend').setup()
+    await h.A.registry.get('ascend').tick()
+    assert.equal(h.debug().ascend.wrinklerHoard, 5e15)
 })

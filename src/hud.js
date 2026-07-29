@@ -394,8 +394,18 @@
                     html += row('still needs', format(debug.ascend.cookiesToTarget))
                 }
                 html += row('phase', debug.ascend.phase)
+                if (debug.ascend.loans && debug.ascend.loans.length > 0) {
+                    html += row('loans taken', debug.ascend.loans.join(', '))
+                }
+                if (debug.ascend.loanWindow !== null && debug.ascend.loanWindow !== undefined) {
+                    html += row('window closes', `${debug.ascend.loanWindow}s`)
+                }
                 if (debug.ascend.bought && debug.ascend.bought.length > 0) {
                     html += row('bought', debug.ascend.bought.length)
+                }
+                // the hoard is only at risk once the run is actually ending
+                if (debug.ascend.wrinklerHoard > 0 && debug.ascend.phase !== 'watching') {
+                    html += row('hoard at risk', format(debug.ascend.wrinklerHoard), true)
                 }
             }
         }
