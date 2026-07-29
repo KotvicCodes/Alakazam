@@ -206,12 +206,13 @@ test('permanent slot picks put kittens first', () => {
 //* ascendSave
 // a save at a given lifetime total and reset count. cookiesEarned carries the
 // current run, cookiesReset everything banked before it.
-function ascendSave({ earned = 0, reset = 0, resets = 0, chips = 0, version } = {}) {
+function ascendSave({ earned = 0, reset = 0, resets = 0, chips = 0, version, drifted } = {}) {
     return fx.save({
         cookiesEarned: earned,
         cookiesReset: reset,
         resets,
         heavenlyChips: chips,
+        driftedScalars: drifted,
         version
     }).raw
 }
@@ -247,10 +248,19 @@ test('a met target leaves nothing still to bake', () => {
 })
 
 test('an untrusted save refuses to plan an ascension at all', () => {
-    // an unrecognised game version means the positional scalar layout cannot be
-    // believed, and ascending on a misread cookiesReset is unrecoverable
-    const h = boot({ save: ascendSave({ earned: S.cookiesFor(999), version: '1.0466' }) })
+    // a scalar section whose layout does not match means the positional offsets
+    // cannot be believed, and ascending on a misread cookiesReset is unrecoverable
+    const h = boot({ save: ascendSave({ earned: S.cookiesFor(999), drifted: true }) })
     assert.equal(h.A.ascend.state(), null)
+})
+
+test('a game version we have not read the layout from still plans', () => {
+    // the version list is a note, not a gate. It used to be a gate, and every
+    // game patch quietly switched ascension off until somebody updated it.
+    const h = boot({ save: ascendSave({ earned: S.cookiesFor(999), version: '9.999' }) })
+    const s = h.A.ascend.state()
+    assert.ok(s)
+    assert.equal(s.ready, true)
 })
 
 //* run
@@ -273,7 +283,7 @@ test('the planner publishes to the debug handle', async () => {
 })
 
 test('an unreadable save is reported rather than guessed around', async () => {
-    const h = boot({ save: ascendSave({ earned: 8e12, version: '1.0466' }) })
+    const h = boot({ save: ascendSave({ earned: 8e12, drifted: true }) })
     await h.A.store.ready('t')
     await run(h)
     assert.match(h.debug().ascend.blocked, /trustworthy/)

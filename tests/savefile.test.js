@@ -27,13 +27,43 @@ test('rejects anything that is not a save, without throwing', () => {
     assert.equal(savefile.parse('a|b|c').ok, false)
 })
 
-test('flags an unknown game version as stale but still parses the structure', () => {
+test('notes an unfamiliar game version without distrusting the save', () => {
     const { raw } = fx.save({ version: '9.999', minigames: { 2: fx.garden({ unlocked: [0, 1, 2] }) } })
     const parsed = savefile.parse(savefile.decode(raw))
-    assert.equal(parsed.stale, true)
-    assert.match(parsed.reason, /unknown game version/)
+    // the layout is what matters, and it checks out. Refusing to trust a save
+    // purely because the game shipped a patch is how ascension went quiet.
+    assert.equal(parsed.stale, false)
+    assert.match(parsed.reason, /newer than this parser/)
     // bitfields and minigame saves are self delimiting, so they stay usable
     assert.equal(parsed.buildings[2].minigame.unlocked.filter(Boolean).length, 3)
+})
+
+test('distrusts a save whose scalar layout is two fields short', () => {
+    // the real bug: the parser did not know about the shiny wrinkler pair, so
+    // every field from the lumps onward was read two places out
+    const { raw } = fx.save({ driftedScalars: true, lumps: 4, lumpType: 2 })
+    const parsed = savefile.parse(savefile.decode(raw))
+    assert.equal(parsed.stale, true)
+    assert.match(parsed.reason, /scalar layout/)
+})
+
+test('reads the lump fields from the other side of the shiny wrinklers', () => {
+    const at = Date.now() - 60000
+    const { raw } = fx.save({
+        shinyWrinklers: 3,
+        shinyWrinklerHoard: 1e9,
+        lumps: 7,
+        lumpsTotal: 40,
+        lumpT: at,
+        lumpType: 2
+    })
+    const parsed = savefile.parse(savefile.decode(raw))
+    assert.equal(parsed.stale, false)
+    assert.equal(parsed.scalars.wrinklersShiny, 3)
+    assert.equal(parsed.scalars.lumps, 7)
+    assert.equal(parsed.scalars.lumpsTotal, 40)
+    assert.equal(parsed.scalars.lumpT, at)
+    assert.equal(parsed.scalars.lumpCurrentType, 2)
 })
 
 test('flags a drifted scalar layout as stale', () => {
