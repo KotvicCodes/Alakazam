@@ -287,20 +287,31 @@
         const nextUpgrade = upgrades.find(u => u.affordable) || null
         const bestBuilding = buildings.length > 0 ? buildings[0] : null
 
+        // `payback` is carried as a number rather than written into the reason.
+        // The two say different things and change on different timescales: what
+        // is being bought, and how good a deal it is. Folding them into one
+        // sentence made a long line that wrapped over three rows in the panel and
+        // left the reader picking the number back out of it.
         if (nextUpgrade) {
-            const how = nextUpgrade.measured
-                ? `${formatDuration(nextUpgrade.payback)} payback`
-                : 'effect not readable'
             return {
                 action: 'buyUpgrade',
                 target: nextUpgrade,
                 amount: 1,
-                reason: `upgrade ${nextUpgrade.name} (${how})`
+                payback: nextUpgrade.measured ? nextUpgrade.payback : Infinity,
+                measured: nextUpgrade.measured,
+                reason: `upgrade ${nextUpgrade.name}`
             }
         }
 
         if (!bestBuilding) {
-            return { action: 'none', target: null, amount: 0, reason: 'nothing scorable yet' }
+            return {
+                action: 'none',
+                target: null,
+                amount: 0,
+                payback: Infinity,
+                measured: false,
+                reason: 'nothing scorable yet'
+            }
         }
 
         if (bestBuilding.affordable) {
@@ -311,7 +322,9 @@
                 action: 'buyBuilding',
                 target: bestBuilding,
                 amount,
-                reason: `${bestBuilding.name} x${amount} (${formatDuration(bestBuilding.payback)}${tier})`
+                payback: bestBuilding.payback,
+                measured: true,
+                reason: `${bestBuilding.name} x${amount}${tier}`
             }
         }
 
@@ -320,7 +333,9 @@
             action: 'wait',
             target: bestBuilding,
             amount: 0,
-            reason: `saving for ${bestBuilding.name}, pays back in ${formatDuration(bestBuilding.payback)}`
+            payback: bestBuilding.payback,
+            measured: true,
+            reason: `saving for ${bestBuilding.name}`
         }
     }
 

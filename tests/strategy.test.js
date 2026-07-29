@@ -132,7 +132,22 @@ test('an affordable upgrade is always taken ahead of a building', () => {
         })
     )
     assert.equal(decision.action, 'buyUpgrade')
-    assert.match(decision.reason, /not readable/)
+    assert.match(decision.reason, /Unreadable/)
+    // the reason names what is being bought; how good a deal it is rides on its
+    // own field, so the panel can give each of them a row
+    assert.equal(decision.measured, false)
+    assert.equal(decision.payback, Infinity)
+})
+
+test('a decision carries its payback as a number, not inside the sentence', () => {
+    const decision = S.decide(view({}))
+    assert.equal(decision.action, 'buyBuilding')
+    assert.ok(Number.isFinite(decision.payback), 'payback should be a number')
+    assert.equal(
+        /\d/.test(decision.reason.replace(/x\d+/, '')),
+        false,
+        `the reason should hold no figures: "${decision.reason}"`
+    )
 })
 
 test('an upgrade Alakazam cannot afford does not block a building', () => {

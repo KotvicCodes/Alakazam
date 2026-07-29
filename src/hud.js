@@ -14,7 +14,7 @@
     // selectors can never pick its panel up as part of the game.
 
     const { store, scheduler, registry, live, catalog, save, act } = window.Alakazam
-    const { formatNumber } = window.Alakazam.parse
+    const { formatNumber, formatDuration } = window.Alakazam.parse
 
     const INTERVAL_MS = 1000
     const STATUS_WRITE_MS = 5000
@@ -263,6 +263,15 @@
         return `<div class="az-sec">${name}</div>`
     }
 
+    //* paybackText
+    // An upgrade whose tooltip could not be parsed is still bought, so its row
+    // says why there is no number rather than showing a blank or a misleading
+    // "never".
+    function paybackText(decision) {
+        if (Number.isFinite(decision.payback)) return formatDuration(decision.payback)
+        return decision.action === 'buyUpgrade' ? 'effect not readable' : '-'
+    }
+
     function escape(value) {
         return String(value === undefined || value === null ? '-' : value)
             .replace(/&/g, '&amp;')
@@ -308,6 +317,11 @@
         // the action is dropped: every reason already says what it is, and the
         // panel spent nearly all its time showing the word "wait"
         html += row('decision', debug.decision ? debug.decision.reason : 'starting up')
+        // payback on its own row. it used to be inside the reason, which made a
+        // sentence long enough to wrap over three lines of the panel
+        if (debug.decision) {
+            html += row('payback', paybackText(debug.decision))
+        }
 
         const cat = catalog.stats()
         html += row('catalog', `${cat.buildings} bldg / ${cat.upgrades} upg`)
