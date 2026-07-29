@@ -125,20 +125,70 @@
 
     //! Decoding
 
-    //* decode
+    //* normalizeBase64
+    // The game's own loader strips whitespace before decoding, so anything that
+    // has been through a text field, a clipboard or a file has spaces and newlines
+    // in it and is still a valid save. Beyond that this repairs the two things
+    // that stop atob accepting an otherwise fine string: the URL-safe alphabet,
+    // and padding that has been trimmed off the end.
+    //
+    // Returns null when the length is one more than a multiple of four, which no
+    // amount of padding can make into valid base64.
+    function normalizeBase64(body) {
+        const s = body.replace(/\s/g, '').replace(/-/g, '+').replace(/_/g, '/')
+        const remainder = s.length % 4
+        if (remainder === 1) return null
+        if (remainder === 0) return s
+        return s + (remainder === 2 ? '==' : '=')
+    }
+
+    //* decodeDetailed
     // undoes Game.WriteSave: strip the !END! marker, base64 decode, then undo the
-    // utf8 escaping the game applies before encoding. returns null on anything
-    // that does not look like a save rather than throwing at the caller.
-    function decode(raw) {
-        if (!raw || typeof raw !== 'string') return null
-        const body = raw.split(END_MARKER)[0]
-        if (!body) return null
+    // utf8 escaping the game applies before encoding.
+    //
+    // This reports which step failed rather than a single null. Every failure used
+    // to collapse into "could not decode save", which said nothing about whether
+    // the save was missing, not base64, or not text, and left no way to tell those
+    // apart from a panel.
+    //
+    // The utf-8 step gets a fallback. One field in the save is free text, the
+    // bakery name, and everything else is ASCII. Throwing away an entire save,
+    // with the garden, the pantheon, every achievement and the click totals in it,
+    // because one byte in a name is not valid utf-8, is a bad trade. On that
+    // failure the raw bytes are used and the worst case is a mangled name.
+    function decodeDetailed(raw) {
+        if (!raw || typeof raw !== 'string') return { text: null, reason: 'no save found' }
+        const body = normalizeBase64(raw.split(END_MARKER)[0] || '')
+        if (!body) return { text: null, reason: 'save is not base64' }
+
+        let binary = null
+        try {
+            binary = atob(body)
+        } catch (err) {
+            return { text: null, reason: 'save is not base64' }
+        }
+        if (!binary) return { text: null, reason: 'save decoded to nothing' }
+
         try {
             // b64_to_utf8: decodeURIComponent(escape(atob(str)))
-            return decodeURIComponent(escape(atob(body)))
+            return { text: decodeURIComponent(escape(binary)), reason: '' }
         } catch (err) {
-            return null
+            // only worth falling back for something that is recognisably a save.
+            // base64 will happily decode arbitrary input into bytes, and handing
+            // those on as text would turn "this is not a save" into a parse
+            // failure further down, where it is much harder to read.
+            if (binary.split('|').length <= S_BUFFS) {
+                return { text: null, reason: 'save is not base64' }
+            }
+            return { text: binary, reason: 'save text was not valid utf-8' }
         }
+    }
+
+    //* decode
+    // the plain form: decoded text, or null on anything that does not look like a
+    // save. read() uses decodeDetailed so it can say which step failed.
+    function decode(raw) {
+        return decodeDetailed(raw).text
     }
 
     //! Section parsers
@@ -429,19 +479,69 @@
         }
     }
 
+    //! saveKeys
+    // CookieClickerGame is where the live game keeps its save, and it is tried
+    // first. It is not the only possibility though: the beta writes elsewhere, and
+    // the game has used a suffixed key before now. Rather than hard-code a list of
+    // names that has already changed once, anything on this origin whose key
+    // starts with CookieClickerGame is a candidate, best-known first.
+    //
+    // Only key names are read here. No value is inspected until it is decoded, and
+    // no value is ever logged.
+    function saveKeys() {
+        const keys = [SAVE_KEY]
+        try {
+            for (let i = 0; i < window.localStorage.length; i++) {
+                const key = window.localStorage.key(i)
+                if (key && key !== SAVE_KEY && key.indexOf(SAVE_KEY) === 0) keys.push(key)
+            }
+        } catch (err) {
+            // a locked-down localStorage still lets the primary key be attempted
+        }
+        return keys
+    }
+
     //! read
     // the one impure entry point. content scripts share the page's origin, so
     // localStorage here is the game's own localStorage.
+    //
+    // Every candidate key is tried and the first one that parses wins. A key that
+    // exists but does not decode is not fatal: the reason from the most promising
+    // failure is kept, so the panel can say which step actually went wrong instead
+    // of the flat "could not decode save" that covered four different problems.
     function read() {
-        let raw = null
-        try {
-            raw = window.localStorage.getItem(SAVE_KEY)
-        } catch (err) {
-            return { ok: false, stale: true, reason: 'localStorage unavailable' }
+        let failure = 'no save found'
+        let found = false
+
+        for (const key of saveKeys()) {
+            let raw = null
+            try {
+                raw = window.localStorage.getItem(key)
+            } catch (err) {
+                return { ok: false, stale: true, reason: 'localStorage unavailable' }
+            }
+            if (!raw) continue
+            found = true
+
+            const decoded = decodeDetailed(raw)
+            if (!decoded.text) {
+                failure = decoded.reason
+                continue
+            }
+
+            const parsed = parse(decoded.text)
+            if (!parsed.ok) {
+                failure = parsed.reason
+                continue
+            }
+            // a mangled bakery name is worth mentioning but is not a parse problem,
+            // so it only surfaces when there is nothing more important to say
+            if (decoded.reason && !parsed.reason) parsed.reason = decoded.reason
+            parsed.key = key
+            return parsed
         }
-        const text = decode(raw)
-        if (!text) return { ok: false, stale: true, reason: 'could not decode save' }
-        return parse(text)
+
+        return { ok: false, stale: true, reason: found ? failure : 'no save found' }
     }
 
     //* rawFingerprint
@@ -479,6 +579,8 @@
         read,
         rawFingerprint,
         decode,
+        decodeDetailed,
+        normalizeBase64,
         parse,
         SAVE_KEY,
         BUILDINGS,
