@@ -169,10 +169,16 @@ Progressing through the Grandmapocalypse stages unlocks wrinklers, wrath cookies
 and a set of achievements, at the cost of a production penalty and hostile golden
 cookies. `elderWrath` and `pledges` are in the save.
 
-Worth doing deliberately rather than by accident: research is started from an
-upgrade, the pledge holds it back, and the Elder Covenant ends it. All three are
-currently classified as `skip`, which is the safe default and the right one until
-there is a policy.
+Worth doing deliberately rather than by accident: it is started from a research
+upgrade, the pledge holds it back, and the Elder Covenant ends it.
+
+The research tree is bought now, so this needed a named exception rather than an
+accident of what the store scanner could see. `One mind`, `Communal brainsweep`
+and `Elder Pact` are classified `skip` by name in `measure/catalog.js`, alongside
+the pledge and the covenant. Every other research upgrade is an ordinary
+multiplier and is bought. Lifting the exception is a one-line change, and what it
+needs first is a policy: when to enter, and whether the wrinkler module is doing
+enough with the result to pay for the production penalty.
 
 ---
 

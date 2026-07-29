@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Alakazam",
-    "version": "1.1.0",
+    "version": "1.1.20",
     "description": "Analyzes and optimizes Cookie Clicker strategy",
     "permissions": ["activeTab", "storage"],
     "host_permissions": ["https://orteil.dashnet.org/*"],
@@ -32,6 +32,7 @@
                 "src/measure/live.js",
                 "src/measure/catalog.js",
                 "src/measure/save.js",
+                "src/measure/clicks.js",
                 "src/strategy/score.js",
                 "src/modules/autoclick.js",
                 "src/modules/shimmers.js",

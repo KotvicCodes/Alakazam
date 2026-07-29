@@ -23,13 +23,24 @@
     let lastChangeAt = Date.now()
     let generation = 0
 
+    //* tick
+    // The fingerprint check exists to skip the decode when nothing has changed.
+    // It must not be allowed to skip a retry: a read that failed has no state to
+    // preserve, and if the reason it failed was transient then waiting for the
+    // save to change means waiting for the next autosave to try again. A failed
+    // read is retried every tick until it works.
     function tick() {
         const next = savefile.rawFingerprint()
-        if (next === fingerprint) return
+        if (next === fingerprint && current.ok) return
         fingerprint = next
+        const previouslyOk = current.ok
         current = savefile.read()
-        lastChangeAt = Date.now()
-        generation++
+        // a retry that fails again is not a change, and must not keep resetting
+        // the age shown in the panel
+        if (current.ok !== previouslyOk || current.ok) {
+            lastChangeAt = Date.now()
+            generation++
+        }
         window.__alakazam.save = current
     }
 
@@ -85,6 +96,9 @@
             stale: current.stale,
             reason: current.reason,
             version: current.version,
+            // which localStorage key the save was actually found under. worth
+            // showing: if it is not CookieClickerGame, that alone explains a lot.
+            key: current.key || '',
             generation,
             secondsSinceChange: Math.round((Date.now() - lastChangeAt) / 1000)
         }

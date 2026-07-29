@@ -73,6 +73,37 @@ class El {
 
     preventDefault() {}
 
+    //* contains
+    // Node.contains: true for the node itself and for any descendant. used by the
+    // panel to tell a grab on the fold button from a grab on the header.
+    contains(node) {
+        if (!node) return false
+        if (node === this) return true
+        return this.children.some(kid => kid.contains && kid.contains(node))
+    }
+
+    get firstChild() {
+        return this.children[0] || null
+    }
+
+    // enough layout for code that positions itself
+    get offsetWidth() {
+        return 268
+    }
+    get offsetHeight() {
+        return 200
+    }
+
+    setPointerCapture(id) {
+        this.captured = id
+    }
+    releasePointerCapture() {
+        this.captured = null
+    }
+    hasPointerCapture(id) {
+        return this.captured === id
+    }
+
     get innerText() {
         if (this.text) return this.text
         return this.children
@@ -102,7 +133,11 @@ class El {
     }
 
     dispatchEvent(ev) {
-        ev.target = this
+        // the target is the node the event was dispatched on and stays fixed as it
+        // bubbles, which is the whole point of target: a handler on an ancestor
+        // has to be able to tell which descendant was actually hit. a caller that
+        // sets one explicitly is simulating exactly that, so it is left alone.
+        if (!ev.target) ev.target = this
         this.events.push(ev.type)
         let node = this
         while (node) {
@@ -125,8 +160,21 @@ class El {
     }
 
     matches(sel) {
+        // pull attribute selectors out first, since they contain characters the
+        // simple tokeniser below would mistake for tag names
+        const attrs = []
+        const rest = sel.replace(/\[([\w-]+)(?:=["']?([^\]"']*)["']?)?\]/g, (m, name, value) => {
+            attrs.push([name, value])
+            return ''
+        })
+        for (const [name, value] of attrs) {
+            const actual = this.getAttribute(name)
+            if (actual === undefined || actual === null) return false
+            if (value !== undefined && String(actual) !== value) return false
+        }
+
         // one compound term: tag / #id / .class, concatenated
-        const parts = sel.match(/[#.]?[\w-]+/g) || []
+        const parts = rest.match(/[#.]?[\w-]+/g) || []
         for (const p of parts) {
             if (p[0] === '#') {
                 if (this.id !== p.slice(1)) return false

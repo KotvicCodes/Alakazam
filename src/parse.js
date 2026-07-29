@@ -262,8 +262,104 @@
         return match ? parseGameNumber(match[0]) : NaN
     }
 
+    //! Rendering numbers back out
+
+    //* MAGNITUDES
+    // SHORT_SUFFIXES inverted: value first, largest first, with the game's own
+    // capitalisation restored.
+    //
+    // Every suffix past the single letters is built from a prefix (un, do, tr, qa,
+    // qi, sx, sp, oc, no) followed by a base, and the game capitalises each part:
+    // un + d is UnD, qa + qi is QaQi. Deriving that beats writing ninety more
+    // lines out by hand and getting one of them wrong.
+    const MAGNITUDE_PREFIXES = ['un', 'do', 'tr', 'qa', 'qi', 'sx', 'sp', 'oc', 'no']
+
+    function displaySuffix(key) {
+        // the game leaves thousands lowercase and everything else capitalised
+        if (key === 'k') return 'k'
+        const prefix = MAGNITUDE_PREFIXES.find(p => key.length > p.length && key.indexOf(p) === 0)
+        const capitalise = s => s.charAt(0).toUpperCase() + s.slice(1)
+        return prefix ? capitalise(prefix) + capitalise(key.slice(prefix.length)) : capitalise(key)
+    }
+
+    const MAGNITUDES = Object.keys(SHORT_SUFFIXES)
+        .map(key => [SHORT_SUFFIXES[key], displaySuffix(key)])
+        .sort((a, b) => b[0] - a[0])
+
+    //* formatNumber
+    // A Cookie Clicker number the way Cookie Clicker would write it.
+    //
+    // The panel used to carry its own eight-entry table that stopped at 10^24, so
+    // any real save eventually rendered as "54566999999999992.00Sp": seventeen
+    // digits of noise where the game itself says 54.567 duodecillion. The table
+    // here is the game's own, all the way to 10^276, and past that there is
+    // nothing left to do but use an exponent.
+    function formatNumber(n) {
+        if (!Number.isFinite(n)) return '-'
+        if (n < 0) return '-' + formatNumber(-n)
+        if (n < 1000) return n < 100 && n % 1 !== 0 ? trimZeros(n.toFixed(1)) : String(Math.round(n))
+
+        for (const [value, suffix] of MAGNITUDES) {
+            if (n >= value) {
+                const scaled = n / value
+                // past the biggest suffix the game has, fall back to an exponent
+                // rather than printing the pile of digits that made this a bug
+                if (scaled >= 1000) break
+                return trimZeros(scaled.toFixed(3)) + suffix
+            }
+        }
+        return n.toExponential(2)
+    }
+
+    function trimZeros(text) {
+        return text.indexOf('.') === -1 ? text : text.replace(/\.?0+$/, '')
+    }
+
+    //* DURATIONS
+    // largest first, so the first unit the value clears is the one used
+    const DURATIONS = [
+        [31557600, 'y'], // julian year, the same one the game's own stats use
+        [604800, 'w'],
+        [86400, 'd'],
+        [3600, 'h'],
+        [60, 'm'],
+        [1, 's']
+    ]
+
+    //* formatDuration
+    // seconds as something readable. A payback shown as "263949956031657248.0s"
+    // is a number nobody can read and nobody can compare; the same figure is 8.36
+    // billion years, which anyone can act on immediately.
+    //
+    // Years are the last real unit. Beyond that the count of years goes through
+    // formatNumber, because a payback measured in billions of years only has to
+    // communicate one thing, and it is not precision.
+    function formatDuration(seconds) {
+        if (!Number.isFinite(seconds)) return 'never'
+        if (seconds < 0) return 'never'
+        if (seconds < 1) return '<1s'
+
+        for (const [size, unit] of DURATIONS) {
+            if (seconds < size) continue
+            const value = seconds / size
+            if (unit === 'y' && value >= 1000) return `${formatNumber(value)} years`
+            // one decimal while the number is small enough for it to mean
+            // something, none once it is not
+            return value < 10 ? `${trimZeros(value.toFixed(1))}${unit}` : `${Math.round(value)}${unit}`
+        }
+        return '<1s'
+    }
+
     // expose on window so the other content-script files can use these (content
     // scripts share one global scope but are separate files)
     window.Alakazam = window.Alakazam || {}
-    window.Alakazam.parse = { SUFFIXES, SHORT_SUFFIXES, parseGameNumber, firstNumberIn }
+    window.Alakazam.parse = {
+        SUFFIXES,
+        SHORT_SUFFIXES,
+        MAGNITUDES,
+        parseGameNumber,
+        firstNumberIn,
+        formatNumber,
+        formatDuration
+    }
 })()
