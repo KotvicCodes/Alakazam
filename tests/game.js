@@ -154,28 +154,43 @@ function build(opts = {}) {
     }
 
     // ---- upgrades ----
-    const upgrades = new El('div', { id: 'upgrades' })
-    doc.body.append(upgrades)
-    const CRATES = opts.crates || [
+    // the real store splits crates across four sections, and the element ids
+    // restart at upgrade0 in every one of them
+    const sections = {}
+    for (const id of ['upgrades', 'techUpgrades', 'toggleUpgrades', 'vaultUpgrades']) {
+        sections[id] = new El('div', { id, class: 'storeSection upgradeBox' })
+        doc.body.append(sections[id])
+    }
+    const DEFAULT_CRATES = [
         { name: 'Reinforced index finger', price: 100, body: 'clicking gains +1% of your CpS' },
         { name: 'Forwards from grandma', price: 1000, body: 'grandmas are twice as efficient' },
         { name: 'Elder Pledge', price: 500, body: 'pledge to the elders, ends the grandmapocalypse' }
     ]
-    CRATES.forEach((c, i) => {
+    const CRATES = opts.crates || DEFAULT_CRATES
+    let nextUpgradeId = 0
+    const perSection = {}
+
+    CRATES.forEach(c => {
+        const where = c.section || 'upgrades'
+        const box = sections[where]
+        perSection[where] = perSection[where] || 0
+        const id = nextUpgradeId++
         const el = new El('div', {
             class: 'crate upgrade',
-            id: 'upgrade' + i,
-            style: { backgroundPosition: `${-48 * i}px 0px` }
+            // positional within the section, exactly as the game numbers them
+            id: 'upgrade' + perSection[where]++,
+            style: { backgroundPosition: `${-48 * id}px 0px` }
         })
+        el.setAttribute('data-id', String(id))
         el.addEventListener('mouseover', () => setTooltip(c.name, fmt(c.price), c.body))
         el.addEventListener('click', () => {
             if (state.bank < c.price) return
             state.bank -= c.price
             state.log.push(`buy upgrade ${c.name}`)
-            upgrades.children = upgrades.children.filter(x => x !== el)
+            box.children = box.children.filter(x => x !== el)
             refresh()
         })
-        upgrades.append(el)
+        box.append(el)
     })
 
     doc.body.append(
