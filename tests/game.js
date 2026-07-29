@@ -456,6 +456,59 @@ function build(opts = {}) {
         drawMenu()
     })
 
+    // ---- sugar lumps ----
+    // The lump itself, the two stacked sprites it is drawn with, and the level
+    // badge on each building's row. The badge is deliberately not inside the
+    // store product: in the real game it lives in the row over on the other side
+    // of the page, which is the whole reason levelling never worked.
+    //
+    // `lumpLife` is how long a lump lives on this save, in hours, and the sprites
+    // are drawn from it exactly the way Game.DrawLumps does.
+    const lumpLife = (opts.lumpLife != null ? opts.lumpLife : 24) * 3600000
+    const lumpsEl = new El('div', { id: 'lumps' })
+    const lumpsIcon = new El('div', { id: 'lumpsIcon' })
+    const lumpsIcon2 = new El('div', { id: 'lumpsIcon2' })
+    lumpsEl.append(lumpsIcon, lumpsIcon2)
+    doc.body.append(lumpsEl)
+
+    function drawLumps(ageMs) {
+        const sevenths = (ageMs / lumpLife) * 7
+        const phase = Math.min(6, Math.floor(sevenths))
+        const phase2 = Math.min(6, Math.floor(sevenths) + 1)
+        let opacity = Math.min(6, sevenths) % 1
+        if (phase >= 6) opacity = 1
+        lumpsIcon.style.backgroundPosition = `${-(23 + Math.min(phase, 5)) * 48}px ${-14 * 48}px`
+        lumpsIcon2.style.backgroundPosition = `${-(23 + phase2) * 48}px ${-14 * 48}px`
+        lumpsIcon2.style.opacity = String(opacity)
+    }
+    state.lumpAge = opts.lumpAge != null ? opts.lumpAge : 0
+    drawLumps(state.lumpAge)
+
+    lumpsEl.addEventListener('click', () => {
+        // the game harvests silently, and never asks first. A lump clicked before
+        // it is ripe yields nothing half the time, which is what the two entries
+        // in the log are there to tell apart.
+        if (state.lumpAge >= lumpLife - 3600000) state.log.push('harvested a ripe lump')
+        else if (state.lumpAge >= lumpLife - 4 * 3600000) state.log.push('harvested an unripe lump')
+    })
+
+    const levelBadges = []
+    BUILDINGS.forEach((b, i) => {
+        const row = new El('div', { class: 'row', id: 'row' + i })
+        const badge = new El('div', { id: 'productLevel' + i, class: 'productButton productLevel' })
+        badge.addEventListener('click', () => {
+            // the game only asks when the "confirm lump spends" preference is on
+            if (!opts.askLumps) {
+                state.log.push('levelled ' + BUILDINGS[i][0])
+                return
+            }
+            prompt('SpendLump', [['Yes', () => state.log.push('levelled ' + BUILDINGS[i][0])], ['No']])
+        })
+        row.append(badge)
+        levelBadges.push(badge)
+        doc.body.append(row)
+    })
+
     // ---- the You building's clone customizer ----
     // Seven genes, each a wrapping list stepped with a pair of arrows. The arrows
     // print the current index plus one, and the achievement check lives inside the
@@ -542,7 +595,10 @@ function build(opts = {}) {
         setBuffProgress,
         loanEls,
         openCustomizer,
-        GENE_IDS
+        GENE_IDS,
+        drawLumps,
+        lumpsEl,
+        levelBadges
     }
 }
 
