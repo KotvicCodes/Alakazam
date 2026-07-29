@@ -11,15 +11,34 @@
     // and unit tested. This module is the part that has to live in a real game: it
     // watches the save, keeps the verdict fresh, and owns the phase the run is in.
     //
-    // The pre-ascension loans and the timing rule that keeps it from ascending in
-    // the middle of a boost land in the next commit, in front of `ascending`.
+    //! When, not just whether
+    // Meeting the target is only half the decision. Ascending in the middle of a
+    // boost throws the boost away: a frenzy is three or four minutes of multiplied
+    // production and the cookies it would have made count toward prestige, so
+    // pulling the lever mid-frenzy is strictly worse than pulling it four minutes
+    // later. So a met target waits for a clean moment.
+    //
+    // Loans invert that rule, and the inversion is the point. A loan is a boost now
+    // paid for with a penalty later, and the penalty belongs to the run, so ending
+    // the run before it lands is how the trade is won rather than lost. The
+    // sequence therefore is: wait out anything that is already running, take every
+    // loan on offer, earn under the stacked multiplier, and ascend in the last
+    // seconds before the shortest loan expires and its interest begins.
+    //
+    // That last step is also the game's "Debt evasion" achievement.
 
-    const { save, store, registry, catalog } = window.Alakazam
+    const { save, store, registry, catalog, buffs } = window.Alakazam
     const { worthAscending, cookiesFor } = window.Alakazam.strategy.ascend
     const { priority, COST, PERMANENT_PICKS, normalise } = window.Alakazam.data.heavenly
+    const loanData = window.Alakazam.data.loans
     const act = window.Alakazam.act.ascend
+    const loanAct = window.Alakazam.act.loans
 
-    const INTERVAL_MS = 5000
+    // Once the target is met this module is timing an ascension against a forty
+    // second loan window, so it cannot be a slow poller. A tick is a save read and
+    // a couple of DOM reads except during the sequence itself, so a second costs
+    // nothing worth measuring.
+    const INTERVAL_MS = 1000
 
     // the ascend screen redraws its whole tree after every purchase, so a click has
     // to be given time to land before the next scan
@@ -29,20 +48,42 @@
     // turn a shopping pass into a frozen page
     const SLICE_MS = 2000
 
+    //* ASCEND_MARGIN_S
+    // How much of the shortest loan window to leave unspent.
+    //
+    // Ascending takes a few real seconds: a click, a prompt, and a five second
+    // animation before the ascension screen even appears. The buff has to still be
+    // alive when the run actually ends, not when the button is pressed, so the
+    // margin covers the animation with room to spare. Cutting it finer risks the
+    // interest phase starting mid-ascension, which is the one outcome the whole
+    // sequence exists to avoid.
+    const ASCEND_MARGIN_S = 12
+
+    //* HARVEST_FLOOR_S
+    // and how little of it is worth waiting for. Below this the remaining boost is
+    // worth less than the risk of missing the window, so it leaves immediately.
+    const HARVEST_FLOOR_S = 15
+
+    // if the loan buffs cannot be read at all, do not sit in the harvest phase
+    // forever waiting for a signal that is not coming
+    const HARVEST_TIMEOUT_MS = 45000
+
     //* Phases
     // The run's position in the ascension sequence. It is a single value rather
     // than a set of booleans because these are genuinely exclusive: the sequence
     // ends the run, so there is never more than one of them in flight.
     //
     //   watching   nothing to do; the target is not met yet
-    //   ready      the target is met, waiting for a clean moment to start
+    //   ready      the target is met, waiting out any boost already running
+    //   loans      taking every loan slot the bank offers, cheapest window last
+    //   harvest    earning under the stacked loans until the window nearly closes
     //   ascending  committed: clicking through the Legacy prompt
     //   shopping   on the ascension screen, spending chips on the plan
     //   returning  shopping is done, clicking Reincarnate
     //
     // It is persisted per save so that a page reload part way through resumes
     // rather than leaving the game parked on the ascension screen.
-    const PHASES = ['watching', 'ready', 'ascending', 'shopping', 'returning']
+    const PHASES = ['watching', 'ready', 'loans', 'harvest', 'ascending', 'shopping', 'returning']
 
     let phase = 'watching'
     let announced = false
@@ -65,6 +106,10 @@
     // count moving. either way there is no point going back to them this visit.
     let skipped = new Set()
     let bought = []
+
+    // loans taken during this pre-ascension sequence, and when the harvest started
+    let taken = []
+    let harvestFrom = 0
 
     //* state
     // the whole verdict, or null when the save cannot be trusted. Ascension is
@@ -283,7 +328,74 @@
         return any ? 'bought' : 'busy'
     }
 
+    //! Loans
+
+    //* loanWindow
+    // seconds left before the shortest loan taken this sequence expires and its
+    // interest phase begins. NaN when that loan is not running, which happens both
+    // before it is taken and if the buff cannot be identified.
+    function loanWindow() {
+        if (taken.indexOf(loanData.SHORTEST) === -1) return NaN
+        const loan = loanData.byId(loanData.SHORTEST)
+        return buffs.remaining(loanData.buffPattern(loan.id), loan.boostSeconds)
+    }
+
+    //* interestStarted
+    // whether any loan has already flipped into its penalty half. If this is ever
+    // true the sequence was too slow, and it is worth saying so out loud rather
+    // than carrying on as if the plan had worked.
+    function interestStarted() {
+        return taken.some(id => buffs.named(loanData.interestPattern(id)).length > 0)
+    }
+
+    //* takeLoans
+    // One loan per tick, in the order src/data/loans.js sets out, which is not
+    // their numbering: the forty second one goes last so the window it opens is as
+    // wide as possible. Returns whether there is still one to take.
+    function takeLoans() {
+        for (const id of loanData.ORDER) {
+            if (taken.indexOf(id) !== -1) continue
+            if (!loanAct.offered(id)) continue
+            if (loanAct.take(id)) {
+                taken.push(id)
+                const loan = loanData.byId(id)
+                console.log(
+                    `Alakazam: took ${loan.name} for x${loan.multiplier} production, ` +
+                        'and will ascend before the interest lands.'
+                )
+                return true
+            }
+        }
+        return loanData.ORDER.some(id => taken.indexOf(id) === -1 && loanAct.offered(id))
+    }
+
     //! The sequence
+
+    //* hoardAtRisk
+    // Wrinklers hold cookies that are returned when they are popped and lost when
+    // the run ends. Alakazam cannot pop them, because they are drawn onto a canvas
+    // rather than built as elements: see docs/ROADMAP.md item 1. Until that is
+    // solved the only honest thing to do is say what is about to be lost.
+    function hoardAtRisk() {
+        const w = window.Alakazam.wrinklers ? window.Alakazam.wrinklers.state() : null
+        return w && w.active > 0 ? w.hoard : 0
+    }
+
+    function commit(s, why) {
+        const hoard = hoardAtRisk()
+        if (hoard > 0) {
+            console.warn(
+                `Alakazam: ascending with wrinklers still on the cookie. Their hoard is lost. ` +
+                    'Popping them is not something Alakazam can do yet (they are drawn on a ' +
+                    'canvas, not clickable elements), so pop them by hand to keep it.'
+            )
+        }
+        console.log(`Alakazam: ascending for ${Math.round(s.chipsGained)} heavenly chip(s). ${why}.`)
+        // the last moment the save is certain to describe the run being left
+        awaitReset(s.ascensions)
+        setPhase('ascending')
+        act.openLegacy()
+    }
 
     async function drive(s) {
         // the animations are dead time in both directions
@@ -297,13 +409,57 @@
                 setPhase('shopping')
                 return
             }
-            console.log(
-                `Alakazam: ascending for ${Math.round(s.chipsGained)} heavenly chip(s). ${s.why}.`
-            )
-            // the last moment the save is certain to describe the run being left
-            awaitReset(s.ascensions)
-            setPhase('ascending')
-            act.openLegacy()
+
+            // Do not leave in the middle of something good. Anything already
+            // running is production that has been paid for and not yet collected,
+            // and it is a few minutes at most.
+            if (buffs.hasProductionBuff()) return
+
+            taken = []
+            harvestFrom = 0
+            setPhase('loans')
+            return
+        }
+
+        if (phase === 'loans') {
+            if (takeLoans()) return
+            if (taken.length === 0) {
+                // no bank, or every slot already spent. nothing to wait for.
+                commit(s, s.why)
+                return
+            }
+            harvestFrom = Date.now()
+            setPhase('harvest')
+            return
+        }
+
+        if (phase === 'harvest') {
+            // Something has gone wrong if this is true: the run is now being
+            // punished by a loan it was supposed to outrun. Leave immediately, and
+            // say so, rather than sitting under the penalty.
+            if (interestStarted()) {
+                console.warn(
+                    'Alakazam: a loan reached its interest phase before the ascension did. ' +
+                        'Leaving now; the penalty dies with the run either way.'
+                )
+                commit(s, 'loan window missed')
+                return
+            }
+
+            const left = loanWindow()
+            if (Number.isFinite(left)) {
+                // everything above the margin is production still worth collecting
+                if (left > Math.max(ASCEND_MARGIN_S, HARVEST_FLOOR_S)) return
+                commit(s, `${Math.round(left)}s left on the loan window`)
+                return
+            }
+
+            // the loan buff could not be identified. Buffs are named from their
+            // tooltips and that can be blocked by the player using the mouse, so
+            // rather than wait for a signal that may never come, leave on a timer.
+            if (Date.now() - harvestFrom > HARVEST_TIMEOUT_MS) {
+                commit(s, 'loan window could not be read')
+            }
             return
         }
 
@@ -386,7 +542,17 @@
         }
         if (!s.ready) announced = false
 
-        window.__alakazam.ascend = { ...s, phase, bought: bought.slice() }
+        const window_ = loanWindow()
+        window.__alakazam.ascend = {
+            ...s,
+            phase,
+            bought: bought.slice(),
+            loans: taken.slice(),
+            loanWindow: Number.isFinite(window_) ? Math.round(window_) : null,
+            // popping is not built yet, so this is the honest half: say what is
+            // about to be thrown away rather than quietly throwing it away
+            wrinklerHoard: hoardAtRisk()
+        }
 
         // Once committed, the sequence runs on its own: the save is up to a minute
         // stale and stops describing the run at all the moment the ascension starts,
@@ -404,5 +570,5 @@
 
     registry.register({ name: 'ascend', interval: INTERVAL_MS, setup, tick })
 
-    window.Alakazam.ascend = { state, shop, nameOf, PHASES }
+    window.Alakazam.ascend = { state, shop, nameOf, loanWindow, takeLoans, PHASES }
 })()

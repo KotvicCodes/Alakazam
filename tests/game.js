@@ -197,11 +197,77 @@ function build(opts = {}) {
         box.append(el)
     })
 
-    doc.body.append(
-        new El('div', { id: 'shimmers' }),
-        new El('div', { id: 'buffs' }),
-        new El('div', { id: 'wrinklers' })
-    )
+    const buffsEl = new El('div', { id: 'buffs' })
+    doc.body.append(new El('div', { id: 'shimmers' }), buffsEl, new El('div', { id: 'wrinklers' }))
+
+    // ---- buffs ----
+    // A real buff is an icon crate with a pie timer inside it and no text at all:
+    // the name is only in the tooltip and the time left is only in the pie timer's
+    // sprite offset. Both are modelled here, because both are the only way to read
+    // one, and a fake that rendered a helpful label would test nothing.
+    let nextBuffId = 0
+    const buffsByName = new Map()
+
+    //* gainBuff
+    // `progress` is how much of the buff has elapsed, 0 to 1, matching the game's
+    // own T = (1 - time/maxTime) encoding
+    function gainBuff(name, progress = 0) {
+        const id = 'buff' + nextBuffId++
+        const el = new El('div', { id, class: 'crate enabled buff' })
+        buffsByName.set(name, el)
+        const step = Math.floor(Math.min(143, Math.max(0, progress * 144)))
+        const timer = new El('div', {
+            id: 'buffPieTimer' + id,
+            class: 'pieTimer',
+            style: {
+                backgroundPosition: `${-(step % 18) * 48}px ${-Math.floor(step / 18) * 48}px`
+            }
+        })
+        el.append(timer)
+        el.addEventListener('mouseover', () => setTooltip(name, '', `${name} is running`))
+        buffsEl.append(el)
+        return { id, element: el, setProgress: p => setBuffProgress(el, p) }
+    }
+
+    function setBuffProgress(el, progress) {
+        const timer = el.querySelector('.pieTimer')
+        const step = Math.floor(Math.min(143, Math.max(0, progress * 144)))
+        timer.style.backgroundPosition = `${-(step % 18) * 48}px ${-Math.floor(step / 18) * 48}px`
+    }
+
+    function loseBuff(name) {
+        const el = buffsByName.get(name)
+        if (!el) return
+        buffsByName.delete(name)
+        buffsEl.children = buffsEl.children.filter(x => x !== el)
+    }
+
+    //* progressBuff
+    // move a named buff along its timer, which is how a test walks a loan window
+    // down toward the moment the ascension has to happen
+    function progressBuff(name, progress) {
+        const el = buffsByName.get(name)
+        if (el) setBuffProgress(el, progress)
+    }
+
+    // ---- bank loans ----
+    // three slots, revealed by office level and switched off while already running
+    const loanEls = {}
+    state.loansTaken = []
+    for (const id of [1, 2, 3]) {
+        const needs = { 1: 2, 2: 4, 3: 5 }[id]
+        const el = new El('div', { id: 'bankLoan' + id, class: 'bankButton bankButtonSell' })
+        if ((opts.officeLevel || 0) < needs) el.style.display = 'none'
+        el.addEventListener('click', () => {
+            if (el.classList.contains('bankButtonOff')) return
+            el.classList.add('bankButtonOff')
+            state.loansTaken.push(id)
+            state.log.push(`loan ${id}`)
+            gainBuff('Loan ' + id, opts.loanProgress != null ? opts.loanProgress : 0)
+        })
+        loanEls[id] = el
+        doc.body.append(el)
+    }
 
     // ---- ascension ----
     // The real sequence is Legacy button -> a named prompt -> five seconds of
@@ -371,7 +437,12 @@ function build(opts = {}) {
         prompt,
         closePrompt,
         setMode,
-        drawTree
+        drawTree,
+        gainBuff,
+        loseBuff,
+        progressBuff,
+        setBuffProgress,
+        loanEls
     }
 }
 
