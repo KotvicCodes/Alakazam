@@ -1,74 +1,107 @@
-# Save-aware autoplayer (v1.1.0)
+# Ascension, pre-ascension loans, and two achievements (v1.2.6)
 
-Alakazam used to make **one purchase every few seconds**, because measuring the
-store meant hovering every building and every upgrade with a 90ms wait each. It
-also had no memory, no settings, and no way to see what it was doing.
+Alakazam played a run competently and had never finished one. This branch builds
+the ascension loop end to end, following the wiki's
+[ascension guide](https://cookieclicker.wiki.gg/wiki/Ascension_guide), and closes
+roadmap items 2 and 3.
 
-This branch fixes the cadence, adds bulk buying and selling, and teaches it to
-play the sugar lump, garden, grimoire, pantheon and stock market systems.
+## The rule that shapes it
 
-## The headline change
+**Never leave in the middle of a boost.** A frenzy is minutes of multiplied
+production, and those cookies count toward prestige, so ascending mid-frenzy
+throws them away. A met target waits.
 
-Building prices are already on screen. Only per-unit production and upgrade
-effects need a tooltip, and those change slowly. Splitting those apart means a
-purchase decision now costs under a millisecond, so buying runs in a **drain
-loop**: buy, re-evaluate, buy again, bounded by a click budget, a time slice and a
-locally tracked balance.
+**Loans invert that, which is the whole trick.** A bank loan is a big multiplier
+now paid for with a worse one later, and the penalty belongs to the run. Ending
+the run before it lands is how the trade is won rather than lost, and it is the
+game's own "Debt evasion" achievement. So the sequence is: wait out whatever is
+running, take every loan, earn under the stack, and ascend in the last seconds
+before the shortest window closes.
 
-Measured against a simulated store: ~5 purchases per 250ms tick, where the old
-loop managed roughly one per 5–8 seconds.
+| | boost | for | then | for | downpayment |
+|---|---|---|---|---|---|
+| 1 modest | ×1.5 | 120 min | ×0.25 | 240 min | 20% of bank |
+| 2 pawnshop | ×2 | **40 s** | ×0.1 | 40 min | 40% of bank |
+| 3 retirement | ×1.2 | 48 h | ×0.8 | 5 days | 50% of bank |
 
-## Buying
+They are taken **1, 3, 2**, not in order: the pawnshop loan is the strongest and
+much the shortest, so going last leaves the widest window to ascend inside. The
+downpayment is a share of a bank about to be discarded, and spending never reduces
+`cookiesEarned`, so it costs nothing that counts.
 
-- **Buy 1 / 10 / 100 and sell**, through a `withBulk()` primitive that always
-  restores the store's shared mode in a `finally`, even when the body throws.
-  Leaving the store in Sell would be a genuinely destructive bug.
-- Bulk totals are derived as a geometric series over the 15% price growth, then
-  **confirmed against the game's own rendered bulk price** before committing.
-- Batch size is the largest of three rules: payback overtake, reaching a tier
-  boundary (10/25/50/100…, which unlock tiered upgrades), or the batch costing
-  under a twentieth of the bank.
-- Upgrades are scored by a CpS delta parsed from their tooltip instead of "buy
-  the cheapest", with a pessimistic prior when the effect cannot be read.
+## When, and what it buys
 
-## Reading the save
+`prestige = floor((lifetime cookies / 1e12) ^ (1/3))`, the game's own formula, kept
+pure and unit tested in `strategy/ascend.js`. Targets come from the guide, one per
+ascension: 365 chips for the first, 2185 for the second, all 23 entries in
+`data/heavenly.js`. Past the table it falls back to the guide's own rule, ascend
+when the run would double the prestige already banked.
 
-`localStorage` carries what the page never renders: garden plots and seed log,
-each stock's hidden trend mode, pantheon swap timers, grimoire magic, the
-achievement and upgrade bitfields, sugar lump timers, and a per-save `seed`.
+The shopping list is the guide's, flattened into one order. Anything not on it is
+never bought, because chips spent off-plan are chips the next tier's centrepiece
+does not get. Permanent slots are filled from a preference list, kittens first,
+and cancelled out of rather than filled blindly.
 
-The Fair-Play Contract in the README has been **rewritten to disclose this
-honestly** rather than quietly widened. Acting is unchanged: still only dispatched
-pointer events, still never the `Game` object. The raw save is never logged,
-stored verbatim, or sent anywhere.
+## Two things that had to be got right
 
-## New systems
+**Confirming the wrong prompt.** Every confirmation in Cookie Clicker is
+`#promptOption0`. So is "Really wipe save". `Game.Prompt` also stamps the prompt's
+name into the DOM (`<id Ascend>` becomes `#promptContentAscend`), so `act/ascend.js`
+refuses to confirm anything unless the prompt on screen names itself. There is a
+test that puts a wipe prompt up mid-sequence and checks it is not clicked.
 
-Sugar lumps (harvest on ripe, minigame unlocks first), garden (seed hunting from
-the save, 34 plants and 36 recipes), grimoire (magic modelled from the game's own
-formulas), pantheon (drag slotting, respects the swap budget), stock market
-(trend-based signals, **trading off by default**), plus an in-page HUD and a
-working popup.
+**The save is stale.** It lags up to a minute. The instant a run ends, the last
+save still describes the run that just finished, still holding a lifetime of
+cookies and still saying the target is met. Acting on that ascends a brand new
+empty run immediately and loops. The reset count from before the ascension is
+remembered and nothing starts again until the save reports a higher one.
 
-## Bugs found and fixed along the way
+## A bug this turned up
 
-- `.wrinkler` **never matched anything** — wrinklers are canvas-drawn and the
-  game's stylesheet has no such rule. Replaced with save-based reporting.
-- Golden cookies use `.goldenCookie`, not `.golden`, so shimmer typing was wrong.
-- Wrath cookies were clicked during buffs, where a Clot or Ruin ends a combo.
-- `godComplex` renamed your bakery to "Alakazam" and **never put it back**.
-- Achievement routines re-ran on every page load. Now recorded per save.
-- The unused `scripting` permission is dropped; `storage` is added.
+`live.readBuffs()` was reading `innerText` off buff elements and matching it
+against a list of names. **A buff has no text.** The game builds it as an icon
+crate containing a pie timer, nothing else, so the match was always against the
+empty string and `hasProductionBuff()` has always returned false. Every decision
+resting on it was running blind: the grimoire never actually timed a Force the Hand
+of Fate against a frenzy, and the shimmer module's "do not click a wrath cookie
+mid-buff" guard never fired.
+
+`measure/buffs.js` reads them the way they are really rendered. The name comes from
+the tooltip and is cached per element, because "Loan 1" and "Loan 1 (interest)"
+share an icon and mean opposite things. The time left is decoded from the pie
+timer's sprite offset, which encodes elapsed fraction in 144 steps: under three
+tenths of a second of resolution on a forty second loan.
+
+## Two achievements
+
+**"In her likeness"** dresses the clones as a grandma. The catch is that the game
+checks for it inside `offsetGene`, the arrow handler, and only on a non-zero step,
+so importing the right appearance wins nothing. `modules/clones.js` walks the
+arrows, then deliberately steps a gene the achievement does not care about so the
+check actually runs, then leaves the clones on a preset. It runs once, the first
+time a You is owned, and never touches them again; a look you chose yourself is
+left alone entirely.
+
+**"No time like the present"** needs a gift code redeemed. Alakazam wraps the gift
+and keeps the code, and the panel shows it with what to do. **Redeeming is not
+automated**: it means typing into the game's own text field, which is a different
+kind of act from clicking on something, and it deserves a decision rather than
+being slipped in. It is written up as roadmap item 10.
 
 ## Verification
 
-`npm test` — 59 tests under `node --test`, no browser, run green three times in a
-row. Covers save decoding and all four minigame sub-saves, stale detection,
-payback and bulk pricing, upgrade parsing, tier thresholds, store mode restore
-under a throw, the missing-controls fallback, grimoire formulas, lump ripeness,
-garden goals, market signals, module failure isolation, and that the master switch
-cannot freeze the HUD that unpauses it.
+`npm test` — 182 tests under `node --test`, green. New coverage: the prestige
+formula against the guide's milestones, target selection and the doubling fallback,
+buying in plan order, never touching a ghosted or off-plan crate, refusing an
+unnamed prompt, the stale-save guard, loan ordering, ascending inside the loan
+window, a frenzy holding the sequence back, buff naming and pie-timer decoding, the
+likeness condition and the deliberate final step, and every gift gate.
 
-Not yet verified in a real browser: the `#storeBulk*` selectors and `.productLevel`
-are inferred from the game's stylesheet rather than confirmed live. Both fail soft
-— missing bulk controls warn once and fall back to buying one at a time.
+The fake Cookie Clicker grew an ascension screen, a heavenly tree with
+prerequisites and refusals, a permanent slot picker, named prompts, buffs with real
+pie timers, the three loan slots, the clone customizer with the game's own check,
+and the options menu with gift prompts.
+
+Not verified in a real browser: the selectors are read from the shipped `main.js`
+and `minigameMarket.js` rather than confirmed live. Everything fails soft — a
+missing element is a skipped step, not a throw.
