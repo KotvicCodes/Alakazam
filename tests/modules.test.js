@@ -323,6 +323,91 @@ test('the master switch stops modules but never the HUD', async () => {
     h.A.scheduler.stop()
 })
 
+//! The store's upgrade sections
+
+const SECTIONED_CRATES = [
+    { name: 'Reinforced index finger', price: 100, body: 'clicking gains +1% of your CpS' },
+    {
+        name: 'Specialized chocolate chips',
+        price: 200,
+        body: 'cookie production multiplier +1%',
+        section: 'techUpgrades'
+    },
+    {
+        name: 'Elder Pledge',
+        price: 300,
+        body: 'pledge to the elders, ends the grandmapocalypse',
+        section: 'toggleUpgrades'
+    },
+    {
+        name: 'Vaulted thing',
+        price: 400,
+        body: 'the player put this one away on purpose',
+        section: 'vaultUpgrades'
+    }
+]
+
+test('research upgrades are part of the store, toggles and the vault are not', () => {
+    // #techUpgrades was never read, so research was invisible: not catalogued,
+    // not scored, never bought, however long a run went on
+    const h = boot({ game: { crates: SECTIONED_CRATES } })
+    const crates = h.A.live.readUpgradeCrates()
+
+    const ids = crates.map(c => c.key).sort()
+    assert.deepEqual(ids, ['id:0', 'id:1'], 'the buyable sections are #upgrades and #techUpgrades')
+})
+
+test('crates are keyed by the game id, which is unique across sections', () => {
+    // element ids restart at upgrade0 in every section, so #upgrades and
+    // #techUpgrades each contain one. keying on that would collapse the two into
+    // a single catalog entry and price one of them wrong.
+    const h = boot({ game: { crates: SECTIONED_CRATES } })
+    const crates = h.A.live.readUpgradeCrates()
+
+    assert.equal(crates.length, 2)
+    assert.equal(crates[0].element.id, 'upgrade0')
+    assert.equal(crates[1].element.id, 'upgrade0', 'both sections number their crates from zero')
+    assert.notEqual(crates[0].key, crates[1].key, 'but they must not share a catalog key')
+})
+
+test('the grandmapocalypse is never started by accident', () => {
+    const c = boot({}).A.catalog
+    // a plain research multiplier
+    assert.equal(
+        c.classifyUpgrade('cookie production multiplier +1%', 'Specialized chocolate chips'),
+        'buy'
+    )
+    // the three that change what game is being played
+    for (const name of ['One mind', 'Communal brainsweep', 'Elder Pact']) {
+        assert.equal(
+            c.classifyUpgrade('grandmas are twice as efficient', name),
+            'skip',
+            `${name} must not be bought on its own`
+        )
+    }
+})
+
+test('a research upgrade gets catalogued and bought like any other', async () => {
+    const h = boot({ game: { bank: 1e5, crates: SECTIONED_CRATES } })
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+
+    const bought = () => h.game.state.log.filter(l => l.indexOf('buy upgrade') === 0)
+    await waitFor(() => bought().some(l => l.indexOf('Specialized chocolate chips') !== -1))
+    h.A.scheduler.stop()
+
+    const log = bought()
+    assert.ok(
+        log.some(l => l.indexOf('Specialized chocolate chips') !== -1),
+        `research should have been bought, log was ${JSON.stringify(log)}`
+    )
+    assert.equal(
+        log.some(l => l.indexOf('Elder Pledge') !== -1 || l.indexOf('Vaulted thing') !== -1),
+        false,
+        'neither a toggle nor a vaulted upgrade may ever be bought'
+    )
+})
+
 //! HUD
 
 test('dragging the panel ignores the autoclicker synthetic events', async () => {

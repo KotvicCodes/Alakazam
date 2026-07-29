@@ -86,20 +86,45 @@
     //! Upgrades in the store
     // crates carry no price or name on their face, so all that comes from the
     // catalog. what is readable live is which crates exist and what they look
-    // like, and the icon position is a stable per-upgrade identity.
+    // like.
+    //
+    // The store splits its crates across four sections, and only one of them was
+    // ever being read:
+    //
+    //   #upgrades       ordinary upgrades
+    //   #techUpgrades   research, unlocked by the Bingo center
+    //   #toggleUpgrades switches: seasons, pledges, things that are not purchases
+    //   #vaultUpgrades  upgrades the player has explicitly vaulted
+    //
+    // Research was invisible: never catalogued, never scored, never bought. It is
+    // read now. The two remaining sections are left alone deliberately. A vaulted
+    // upgrade is the player saying do not buy this, which outranks anything the
+    // strategy engine has to say, and the toggles are state changes dressed up as
+    // purchases. classifyUpgrade in measure/catalog.js screens for both by name as
+    // well, so a section moving between game versions cannot make us buy one.
+    const BUYABLE_SECTIONS = ['#upgrades', '#techUpgrades']
 
     function readUpgradeCrates() {
         const crates = []
-        for (const el of document.querySelectorAll('#upgrades .crate.upgrade')) {
-            crates.push({ key: crateKey(el), element: el })
+        for (const section of BUYABLE_SECTIONS) {
+            for (const el of document.querySelectorAll(`${section} .crate.upgrade`)) {
+                crates.push({ key: crateKey(el), element: el })
+            }
         }
         return crates
     }
 
     //* crateKey
-    // the sprite offset the game gives an upgrade's icon is unique to that upgrade
-    // and stable across redraws, unlike the crate's positional element id
+    // The game stamps every crate with the upgrade's own id in data-id, which is
+    // the identity to use: unique, stable, and meaningful across redraws.
+    //
+    // The sprite offset is the fallback. It used to be the primary key, which was
+    // survivable while only one section was read but is not now: crate element ids
+    // restart at upgrade0 in each section, so #upgrades and #techUpgrades both
+    // contain an element called upgrade0, and two upgrades can share an icon.
     function crateKey(el) {
+        const id = el.getAttribute ? el.getAttribute('data-id') : null
+        if (id) return `id:${id}`
         const pos = el.style && el.style.backgroundPosition ? el.style.backgroundPosition : ''
         return pos || el.id || ''
     }
