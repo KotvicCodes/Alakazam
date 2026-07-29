@@ -154,3 +154,80 @@ test('identity degrades to a known-unknown rather than throwing', () => {
     assert.equal(unknown.known, false)
     assert.equal(unknown.legacyId, 'unknown')
 })
+
+//! Reading the save out of localStorage
+
+test('base64 is repaired before decoding rather than rejected', () => {
+    const { raw } = fx.save({})
+    const body = raw.split('!END!')[0]
+
+    // the game's own loader strips whitespace, so a save that has been through a
+    // text field is still a save
+    assert.ok(savefile.decode(body.slice(0, 8) + '\n ' + body.slice(8) + '!END!'))
+    // url-safe base64, and padding trimmed off the end
+    const urlSafe = body.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    assert.equal(savefile.decode(urlSafe + '!END!'), savefile.decode(raw))
+})
+
+test('a decode failure says which step failed', () => {
+    assert.equal(savefile.decodeDetailed(null).reason, 'no save found')
+    assert.equal(savefile.decodeDetailed('not base64 at all !!').reason, 'save is not base64')
+    const { raw } = fx.save({})
+    assert.equal(savefile.decodeDetailed(raw).reason, '')
+})
+
+//* store
+// a localStorage standing in for the page's, with the length/key pair the reader
+// uses to find a save that is not under the name it expects
+function localStorageOf(entries) {
+    const keys = Object.keys(entries)
+    return {
+        length: keys.length,
+        key: i => keys[i],
+        getItem: k => (k in entries ? entries[k] : null)
+    }
+}
+
+test('the save is found even when it is not under the usual key', () => {
+    const { raw } = fx.save({})
+    const store = localStorageOf({ CookieClickerGameBeta: raw })
+    const read = boot({ localStorage: store }).A.savefile.read()
+    assert.equal(read.ok, true, `read failed: ${read.reason}`)
+    assert.equal(read.key, 'CookieClickerGameBeta')
+})
+
+test('the usual key wins when both are present', () => {
+    const store = localStorageOf({
+        CookieClickerGameBeta: fx.save({ resets: 9 }).raw,
+        CookieClickerGame: fx.save({ resets: 4 }).raw
+    })
+    const read = boot({ localStorage: store }).A.savefile.read()
+    assert.equal(read.key, 'CookieClickerGame')
+    assert.equal(read.scalars.resets, 4)
+})
+
+test('a missing save is reported as missing, not as a decode failure', () => {
+    const read = boot({ localStorage: localStorageOf({}) }).A.savefile.read()
+    assert.equal(read.ok, false)
+    assert.equal(read.reason, 'no save found')
+})
+
+test('a save that is present but unreadable says so specifically', () => {
+    const store = localStorageOf({ CookieClickerGame: 'this is not a save !!' })
+    const read = boot({ localStorage: store }).A.savefile.read()
+    assert.equal(read.ok, false)
+    assert.equal(read.reason, 'save is not base64')
+})
+
+test('the fingerprint notices a change anywhere in the save', () => {
+    // it used to be the length plus the first 24 characters. the save is base64,
+    // so those cover the version and the run's start date, neither of which move
+    // during a run: two autosaves of the same length were indistinguishable.
+    const a = fx.save({ cookieClicks: 1000, handmadeCookies: 10000 }).raw
+    const b = fx.save({ cookieClicks: 1600, handmadeCookies: 16000 }).raw
+    assert.equal(a.length, b.length, 'this test is pointless unless the lengths match')
+
+    const print = raw => boot({ save: raw }).A.savefile.rawFingerprint()
+    assert.notEqual(print(a), print(b))
+    assert.equal(print(a), print(a))
+})

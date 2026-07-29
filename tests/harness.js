@@ -67,10 +67,24 @@ function boot(opts = {}) {
         MouseEvent: FakeEvent,
         PointerEvent: FakeEvent,
         Event: FakeEvent,
-        atob: s => Buffer.from(s, 'base64').toString('binary'),
+        // Buffer's base64 decoder silently discards anything outside the
+        // alphabet, where a browser throws. Validating first is what makes this
+        // stand in for the real one: without it, "not a save at all" decodes to
+        // bytes instead of failing, and the code under test never sees the branch
+        // it takes in a browser.
+        atob: s => {
+            if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s)) {
+                const err = new Error('invalid character')
+                err.name = 'InvalidCharacterError'
+                throw err
+            }
+            return Buffer.from(s, 'base64').toString('binary')
+        },
         innerWidth: 1440,
         innerHeight: 900,
-        localStorage: { getItem: k => (opts.save && k === 'CookieClickerGame' ? opts.save : null) }
+        localStorage: opts.localStorage || {
+            getItem: k => (opts.save && k === 'CookieClickerGame' ? opts.save : null)
+        }
     }
     ctx.window = ctx
     ctx.PointerEvent = FakeEvent
