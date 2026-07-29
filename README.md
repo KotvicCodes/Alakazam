@@ -164,9 +164,12 @@ protects.
 
 ## What else it plays
 - **Sugar lumps** — harvests on ripe, where the game guarantees the lump, rather
-  than on mature, where it fails half the time. Spends them on the four minigame
-  unlocks first, then the garden's full plot, then click levels, and banks a
-  hundred for the production bonus.
+  than on mature, where it fails half the time. How long that takes is measured
+  off the lump's own sprite rather than assumed: several upgrades and Rigidel
+  shorten the ripening, and the lump falls an hour after it ripens either way, so
+  a save with all of them has lost the lump by hour 21. Spends them on the four
+  minigame unlocks first, then the garden's full plot, then click levels, and
+  banks a hundred for the production bonus.
 - **Garden** — reads the plot and seed log from the save, hunts the next reachable
   mutation, harvests anything that unlocks a seed or pays out, and switches to
   wood chips to triple mutation chances while hunting.
@@ -180,8 +183,9 @@ protects.
 - **Stock market** — the save records each good's hidden trend outright, so
   Alakazam trades on that. Switch trading off and it keeps reporting the signals
   without touching your money.
-- **Ascension** — follows the wiki's ascension guide: a prestige target per
-  ascension, then a fixed shopping order through the heavenly tree. It never
+- **Ascension** — follows the wiki's ascension guide: the next prestige target
+  above where the save already stands, then a fixed shopping order through the
+  heavenly tree. It never
   leaves in the middle of a boost, because the cookies a running frenzy would have
   made count toward prestige and pulling the lever early throws them away.
 - **Loans** — the bank's three loans are a bad deal in an ordinary run and close
@@ -189,8 +193,9 @@ protects.
   and the run is about to end. All three are taken, the forty second one last, and
   the ascension happens inside its window. That is the "Debt evasion" achievement.
 - **Clones** — the first time a You is bought, the customizer is walked to the
-  look that earns "In her likeness" and then to a preset. It runs once; after that
-  the clones are yours to dress.
+  look that earns "In her likeness" and then straight back to whatever the clones
+  were wearing, or to a preset if they were still on the game's default. It runs
+  once, in a single pass; after that the clones are yours to dress.
 - **Gift codes** — wraps a gift and keeps the code, ready for you to redeem after
   the next ascension. Redeeming is not automated: it means typing into one of the
   game's own text fields, which is a different kind of act from clicking.

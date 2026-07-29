@@ -88,20 +88,71 @@ automated**: it means typing into the game's own text field, which is a differen
 kind of act from clicking on something, and it deserves a decision rather than
 being slipped in. It is written up as roadmap item 10.
 
+## What playing it turned up
+
+Three things went wrong in a real game, and the first two were the same bug.
+
+**The save was being read two fields out.** `Game.WriteSave` puts the shiny
+wrinkler count and hoard between `volume` and `lumps`, and the parser did not
+know they were there. So `lumps` held the shiny wrinkler count, `lumpT` held the
+lump count and `lumpCurrentType` held a millisecond timestamp. The layout checks
+did their job and refused to trust any of it, which is why the panel said **save
+not trustworthy** and the ascension planner would not plan: ascending on a
+misread `cookiesReset` is not undoable. The sugar lump planner went quiet for the
+same reason, and had nothing to spend besides, because it thought it had as many
+lumps as it had shiny wrinklers.
+
+The version whitelist went with it. An unrecognised version used to mark a save
+untrusted outright, which means every game patch silently switches off everything
+that needs exact numbers until somebody adds a string. The layout invariants are
+version independent, they are the real check, and they are what caught this.
+
+**Lumps do not live 24 hours.** Stevia Caelestis, Sugar aging process and Rigidel
+each take an hour off the ripening, and the game writes the moment a lump falls
+as exactly an hour after it ripens, so all three reductions move the auto-harvest
+too. On such a save the lump is gone by hour 21 and waiting for hour 23 never
+harvests one. Which upgrades are owned is not readable from a save in any form
+that survives a patch, so the lifespan is measured off the lump's own sprite,
+whose frame and cross-fade encode how far through its life it is — the same trick
+`measure/buffs.js` uses on the pie timer. And levelling never worked at all:
+`.productLevel` is in the building's row, not in the store listing it was being
+looked for in.
+
+**"In her likeness" was being declined rather than earned.** The sequence was
+three stages fifteen seconds apart, which left the game's customizer prompt open
+on the player's screen for the best part of a minute; anything that opened a
+prompt of its own or clicked `#promptOption0` in that window sent it back to the
+start. It is one pass now, on screen for a frame. And it refused to run at all on
+a save whose clones already had a look, which is declining an achievement over a
+hairstyle: it earns it and puts the look straight back.
+
+**Ascension targets were indexed by the ascension count**, which assumes a save
+followed the guide from its first reset, one entry per ascension. Ascend a few
+times early, or import a save, and the count runs ahead of the progress: the
+table's tenth entry asks for 1.6 billion chips from a save that has not earned
+the 210 million the ninth wanted, and the planner waits forever. The target is
+now the first rung above where the save actually stands.
+
 ## Verification
 
-`npm test` — 183 tests under `node --test`, green. New coverage: the prestige
+`npm test` — 198 tests under `node --test`, green. New coverage: the prestige
 formula against the guide's milestones, target selection and the doubling fallback,
 buying in plan order, never touching a ghosted or off-plan crate, refusing an
 unnamed prompt, the stale-save guard, loan ordering, ascending inside the loan
 window, a frenzy holding the sequence back, buff naming and pie-timer decoding, the
-likeness condition and the deliberate final step, and every gift gate.
+likeness condition and the deliberate final step, every gift gate, the real 55
+field scalar layout against a drifted one, measuring a shortened lump lifespan and
+harvesting inside it, spending a lump on the row badge, and answering only the
+prompt that names itself.
 
 The fake Cookie Clicker grew an ascension screen, a heavenly tree with
 prerequisites and refusals, a permanent slot picker, named prompts, buffs with real
 pie timers, the three loan slots, the clone customizer with the game's own check,
-and the options menu with gift prompts.
+the options menu with gift prompts, and a sugar lump drawn from its own sprite
+sheet with the level badges in the building rows.
 
-Not verified in a real browser: the selectors are read from the shipped `main.js`
-and `minigameMarket.js` rather than confirmed live. Everything fails soft — a
-missing element is a skipped step, not a throw.
+Everything above except the market's loan buttons is now checked against the
+shipped `main.js` rather than assumed: the save format field by field, the lump
+timing formula, the customizer's prompt, arrows, gene order and defaults, the
+achievement's own condition, the heavenly crates and every prompt id. Everything
+still fails soft — a missing element is a skipped step, not a throw.

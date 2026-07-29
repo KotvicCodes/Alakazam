@@ -72,16 +72,33 @@ test('projection survives a save with nothing in it', () => {
 
 //! Targets
 
-test('targets come from the guide, indexed by ascensions done', () => {
+test('targets come from the guide, picked by prestige already banked', () => {
     assert.equal(S.targetFor(0), 365)
-    assert.equal(S.targetFor(1), 2185)
-    assert.equal(S.targetFor(2), 12301)
-    assert.equal(S.targetFor(4), 127776)
+    assert.equal(S.targetFor(364), 365)
+    assert.equal(S.targetFor(365), 2185)
+    assert.equal(S.targetFor(2185), 12301)
+    assert.equal(S.targetFor(100000), 127776)
 })
 
-test('past the end of the guide there is no target', () => {
-    assert.equal(S.targetFor(H.PLAN.length), null)
-    assert.equal(S.targetFor(999), null)
+test('a save whose ascension count ran ahead still gets a reachable target', () => {
+    // twenty ascensions and 40 million chips is an ordinary shape for a save
+    // that ascended a few times before it ever read a guide. Indexed by the
+    // reset count that asked for 22 quadrillion, which is several ascensions
+    // away, so the planner never fired again.
+    const banked = S.cookiesFor(40e6)
+    const d = S.worthAscending({
+        cookiesReset: banked,
+        cookiesEarned: S.cookiesFor(220e6) - banked,
+        resets: 20
+    })
+    assert.equal(d.target, 210266660)
+    assert.equal(d.ready, true)
+})
+
+test('past the top of the guide there is no target', () => {
+    const top = Math.max(...H.PLAN.map(p => p.chips))
+    assert.equal(S.targetFor(top), null)
+    assert.equal(S.targetFor(top * 2), null)
 })
 
 //! The decision
@@ -132,14 +149,15 @@ test('the second ascension aims at the second target, not the first', () => {
 })
 
 test('past the guide it falls back to doubling prestige', () => {
-    const resets = H.PLAN.length
-    const banked = S.cookiesFor(1e6)
+    // above the top of the table there is nothing left to aim at
+    const top = Math.max(...H.PLAN.map(p => p.chips))
+    const banked = S.cookiesFor(top * 1.1)
 
     // half again is not a double
     const short = S.worthAscending({
         cookiesReset: banked,
-        cookiesEarned: S.cookiesFor(1.5e6) - banked,
-        resets
+        cookiesEarned: S.cookiesFor(top * 1.65) - banked,
+        resets: H.PLAN.length
     })
     assert.equal(short.ready, false)
     assert.equal(short.target, null)
@@ -147,8 +165,8 @@ test('past the guide it falls back to doubling prestige', () => {
 
     const enough = S.worthAscending({
         cookiesReset: banked,
-        cookiesEarned: S.cookiesFor(2e6) - banked,
-        resets
+        cookiesEarned: S.cookiesFor(top * 2.2) - banked,
+        resets: H.PLAN.length
     })
     assert.equal(enough.ready, true)
     assert.match(enough.why, /double/)
