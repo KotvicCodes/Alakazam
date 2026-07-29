@@ -27,6 +27,7 @@ function save(opts = {}) {
     scalars[25] = opts.prestige || 0
     scalars[26] = opts.heavenlyChips || 0
     scalars[27] = opts.heavenlyChipsSpent || 0
+    scalars[29] = opts.ascensionMode || 0 // 0 is an ordinary run, anything else a challenge
     scalars[40] = opts.lumps != null ? opts.lumps : 0
     scalars[41] = opts.lumpsTotal != null ? opts.lumpsTotal : 0
     scalars[42] = opts.lumpT != null ? opts.lumpT : Date.now()

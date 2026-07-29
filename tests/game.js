@@ -413,6 +413,49 @@ function build(opts = {}) {
         ])
     })
 
+    // ---- the options menu and gift codes ----
+    // The Send and Redeem buttons only exist once the Wrapping paper heavenly
+    // upgrade is owned, which is exactly why the extension looks for them rather
+    // than trying to read an upgrade id out of the save.
+    const prefsButton = new El('div', { id: 'prefsButton', class: 'panelButton' })
+    const menu = new El('div', { id: 'menu' })
+    doc.body.append(prefsButton, menu)
+
+    function drawMenu() {
+        menu.children = []
+        if (!prefsButton.classList.contains('selected')) return
+        if (!opts.wrappingPaper) return
+        const box = new El('div', { id: 'giftStuff', class: 'optionBox' })
+        const send = new El('a', { class: 'option', text: 'Send' })
+        const redeem = new El('a', { class: 'option', text: 'Redeem' })
+        send.addEventListener('click', () => {
+            prompt('GiftSend', [
+                [
+                    'Wrap',
+                    () => {
+                        state.log.push('wrapped a gift')
+                        gainBuff('Gifted out', 0)
+                        prompt('GiftSendReady', [['Done']], inner => {
+                            const input = new El('input', { id: 'giftCode' })
+                            input.value = opts.giftCode || 'TUFJTHwxMjN8NTB8LXx8'
+                            inner.append(input)
+                        })
+                    }
+                ],
+                ['Cancel']
+            ])
+        })
+        box.append(send, redeem)
+        menu.append(box)
+    }
+
+    prefsButton.addEventListener('click', () => {
+        const open = prefsButton.classList.contains('selected')
+        if (open) prefsButton.classList.remove('selected')
+        else prefsButton.classList.add('selected')
+        drawMenu()
+    })
+
     // ---- the You building's clone customizer ----
     // Seven genes, each a wrapping list stepped with a pair of arrows. The arrows
     // print the current index plus one, and the achievement check lives inside the
