@@ -413,6 +413,61 @@ function build(opts = {}) {
         ])
     })
 
+    // ---- the You building's clone customizer ----
+    // Seven genes, each a wrapping list stepped with a pair of arrows. The arrows
+    // print the current index plus one, and the achievement check lives inside the
+    // step handler rather than with the genes, so importing a matching appearance
+    // wins nothing. Both of those are modelled, because both are the point.
+    const GENE_IDS = ['hair', 'hairCol', 'skinCol', 'head', 'face', 'acc1', 'acc2']
+    const GENE_SIZES = [17, 18, 15, 5, 10, 36, 36]
+    state.genes = (opts.genes || [0, 1, 0, 0, 0, 0, 0]).slice()
+    state.likenessWon = false
+
+    const youRow = new El('div', { class: 'row', id: 'row' + 19 })
+    youRow.append(new El('a', { class: 'smallFancyButton framed onlyOnCanvas', text: 'Customize' }))
+    doc.body.append(youRow)
+
+    function checkLikeness() {
+        const [hair, hairCol, , head, , acc1, acc2] = state.genes
+        if (
+            hair === 9 &&
+            (hairCol === 1 || hairCol === 6) &&
+            (head === 2 || head === 3) &&
+            (acc1 === 2 || acc1 === 3 || acc2 === 2 || acc2 === 3) &&
+            (acc1 === 0 || acc2 === 0)
+        ) {
+            if (!state.likenessWon) state.log.push('achievement In her likeness')
+            state.likenessWon = true
+        }
+    }
+
+    function offsetGene(index, off) {
+        if (off === 0) return
+        const size = GENE_SIZES[index]
+        state.genes[index] = (((state.genes[index] + off) % size) + size) % size
+        const readout = doc.getElementById('customizerSelect-N-' + GENE_IDS[index])
+        if (readout) readout.innerText = String(state.genes[index] + 1)
+        // the game only runs its check here, on a real step
+        checkLikeness()
+    }
+
+    function openCustomizer() {
+        prompt('CustomizeYou', [['Done']], inner => {
+            GENE_IDS.forEach((id, i) => {
+                const left = new El('a', { id: 'customizerSelect-L-' + id, text: '<' })
+                const num = new El('div', {
+                    id: 'customizerSelect-N-' + id,
+                    text: String(state.genes[i] + 1)
+                })
+                const right = new El('a', { id: 'customizerSelect-R-' + id, text: '>' })
+                left.addEventListener('click', () => offsetGene(i, -1))
+                right.addEventListener('click', () => offsetGene(i, 1))
+                inner.append(left, num, right)
+            })
+        })
+    }
+    youRow.children[0].addEventListener('click', openCustomizer)
+
     function refresh() {
         cookies.innerText = `${fmt(state.bank)}\ncookies\nper second : ${state.cps}`
         cpsEl.innerText = `per second: ${state.cps}`
@@ -442,7 +497,9 @@ function build(opts = {}) {
         loseBuff,
         progressBuff,
         setBuffProgress,
-        loanEls
+        loanEls,
+        openCustomizer,
+        GENE_IDS
     }
 }
 

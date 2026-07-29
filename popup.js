@@ -19,6 +19,7 @@ const LABELS = {
     achievements: 'Achievements',
     marketTrading: 'Stock trading',
     ascend: 'Ascension',
+    clones: 'Clone look',
     hud: 'In-page panel'
 }
 
