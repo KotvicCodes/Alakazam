@@ -31,6 +31,7 @@
         garden: 'Garden',
         achievements: 'Achievements',
         marketTrading: 'Stock trading',
+        ascend: 'Ascension',
         hud: 'This panel'
     }
 
@@ -376,6 +377,24 @@
             html += section('stock market')
             html += row('trading', debug.market.trading ? 'on' : 'advisory only')
             html += row('signals', debug.market.signals.slice(0, 3).join(', ') || 'nothing notable')
+        }
+
+        if (debug.ascend) {
+            html += section('ascension')
+            if (debug.ascend.blocked) {
+                html += row('status', debug.ascend.blocked, true)
+            } else {
+                html += row('prestige', `${format(debug.ascend.current)} lvl`)
+                html += row('chips banked', format(debug.ascend.chipsBanked))
+                html += row('ascending pays', `${format(debug.ascend.chipsGained)} chips`)
+                // the target is the plan's, and past the plan there is not one to
+                // name; the reason line says which rule is in force either way
+                html += row('plan', debug.ascend.why)
+                if (debug.ascend.cookiesToTarget > 0) {
+                    html += row('still needs', format(debug.ascend.cookiesToTarget))
+                }
+                html += row('phase', debug.ascend.phase)
+            }
         }
 
         if (debug.wrinklers && debug.wrinklers.active > 0) {

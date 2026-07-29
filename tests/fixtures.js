@@ -18,12 +18,15 @@ function save(opts = {}) {
     scalars[1] = opts.cookiesEarned != null ? opts.cookiesEarned : 1e9 // cookiesEarned
     scalars[2] = opts.cookieClicks || 0 // cookieClicks, the game's own tally
     scalars[4] = opts.handmadeCookies || 0 // cookies earned by clicking, ever
+    scalars[8] = opts.cookiesReset || 0 // lifetime cookies across every past run
     scalars[14] = opts.resets || 0 // resets
     scalars[17] = opts.wrinklersPopped || 0
     scalars[22] = 0 // season
     scalars[23] = opts.wrinklerHoard || 0 // wrinklersAmount
     scalars[24] = opts.wrinklers || 0 // wrinklersNumber
     scalars[25] = opts.prestige || 0
+    scalars[26] = opts.heavenlyChips || 0
+    scalars[27] = opts.heavenlyChipsSpent || 0
     scalars[40] = opts.lumps != null ? opts.lumps : 0
     scalars[41] = opts.lumpsTotal != null ? opts.lumpsTotal : 0
     scalars[42] = opts.lumpT != null ? opts.lumpT : Date.now()

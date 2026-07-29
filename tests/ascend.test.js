@@ -1,6 +1,7 @@
 const { test } = require('node:test')
 const assert = require('node:assert')
 const { boot } = require('./harness')
+const fx = require('./fixtures')
 
 const { A } = boot({})
 const S = A.strategy.ascend
@@ -198,4 +199,121 @@ test('names are matched however the game capitalises them', () => {
 test('permanent slot picks put kittens first', () => {
     assert.equal(H.PERMANENT_PICKS[0], 'kitten angels')
     assert.ok(H.PERMANENT_PICKS.indexOf('kitten helpers') < H.PERMANENT_PICKS.indexOf('heavenly key'))
+})
+
+//! The planner module
+
+//* ascendSave
+// a save at a given lifetime total and reset count. cookiesEarned carries the
+// current run, cookiesReset everything banked before it.
+function ascendSave({ earned = 0, reset = 0, resets = 0, chips = 0, version } = {}) {
+    return fx.save({
+        cookiesEarned: earned,
+        cookiesReset: reset,
+        resets,
+        heavenlyChips: chips,
+        version
+    }).raw
+}
+
+test('the planner reads the run straight out of the save', () => {
+    const h = boot({ save: ascendSave({ earned: 8e12, chips: 3 }) })
+    const s = h.A.ascend.state()
+    assert.equal(s.prestige, 2)
+    assert.equal(s.chipsGained, 2)
+    assert.equal(s.chipsBanked, 3)
+    assert.equal(s.ascensions, 0)
+    assert.equal(s.target, 365)
+    assert.equal(s.ready, false)
+})
+
+test('the planner says ready once the plan target is met', () => {
+    const h = boot({ save: ascendSave({ earned: S.cookiesFor(365) }) })
+    assert.equal(h.A.ascend.state().ready, true)
+})
+
+test('the planner reports how far off the target still is', () => {
+    const h = boot({ save: ascendSave({ earned: S.cookiesFor(300) }) })
+    const s = h.A.ascend.state()
+    assert.ok(s.cookiesToTarget > 0)
+    // exactly the gap between where the run is and what 365 needs
+    const gap = S.cookiesFor(365) - S.cookiesFor(300)
+    assert.ok(Math.abs(s.cookiesToTarget - gap) / gap < 1e-9)
+})
+
+test('a met target leaves nothing still to bake', () => {
+    const h = boot({ save: ascendSave({ earned: S.cookiesFor(400) }) })
+    assert.equal(h.A.ascend.state().cookiesToTarget, 0)
+})
+
+test('an untrusted save refuses to plan an ascension at all', () => {
+    // an unrecognised game version means the positional scalar layout cannot be
+    // believed, and ascending on a misread cookiesReset is unrecoverable
+    const h = boot({ save: ascendSave({ earned: S.cookiesFor(999), version: '1.0466' }) })
+    assert.equal(h.A.ascend.state(), null)
+})
+
+//* run
+// drive one module tick directly rather than through the scheduler. The planner
+// is a pure read on a 5 second interval, so waiting for a real tick would add
+// five seconds per test for no extra coverage.
+async function run(h) {
+    const mod = h.A.registry.get('ascend')
+    if (mod.setup) await mod.setup()
+    await mod.tick()
+    return mod
+}
+
+test('the planner publishes to the debug handle', async () => {
+    const h = boot({ save: ascendSave({ earned: 8e12 }) })
+    await h.A.store.ready('t')
+    await run(h)
+    assert.equal(h.debug().ascend.prestige, 2)
+    assert.equal(h.debug().ascend.chipsGained, 2)
+})
+
+test('an unreadable save is reported rather than guessed around', async () => {
+    const h = boot({ save: ascendSave({ earned: 8e12, version: '1.0466' }) })
+    await h.A.store.ready('t')
+    await run(h)
+    assert.match(h.debug().ascend.blocked, /trustworthy/)
+    assert.equal(h.debug().ascend.prestige, undefined)
+})
+
+test('the phase starts at watching and follows the verdict', async () => {
+    const h = boot({ save: ascendSave({ earned: S.cookiesFor(365) }) })
+    await h.A.store.ready('t')
+    assert.equal(h.A.ascend.state().phase, 'watching')
+    await run(h)
+    assert.equal(h.A.ascend.state().phase, 'ready')
+})
+
+test('a run short of the target stays in watching', async () => {
+    const h = boot({ save: ascendSave({ earned: S.cookiesFor(100) }) })
+    await h.A.store.ready('t')
+    await run(h)
+    assert.equal(h.A.ascend.state().phase, 'watching')
+})
+
+test('the phase is remembered across a reload', async () => {
+    const disk = {}
+    const first = boot({ save: ascendSave({ earned: S.cookiesFor(365) }), disk })
+    await first.A.store.ready('t')
+    await run(first)
+    await first.A.store.flush()
+
+    // a fresh boot against the same storage picks the phase back up
+    const second = boot({ save: ascendSave({ earned: S.cookiesFor(365) }), disk })
+    await second.A.store.ready('t')
+    await second.A.registry.get('ascend').setup()
+    assert.equal(second.A.ascend.state().phase, 'ready')
+})
+
+test('ascension is a module the master switch can stop', () => {
+    const h = boot({})
+    const mod = h.A.registry.get('ascend')
+    assert.ok(mod)
+    assert.equal(mod.setting, 'ascend')
+    assert.equal(mod.always, false)
+    assert.equal(h.A.store.DEFAULTS.ascend, true)
 })
