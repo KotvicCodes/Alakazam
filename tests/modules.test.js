@@ -546,6 +546,9 @@ test('a decision reads as a sentence, with no action prefix and no raw seconds',
     assert.equal(decision.action, 'wait')
     assert.match(decision.reason, /^saving for /)
     assert.equal(/\d+\.\ds\b/.test(decision.reason), false, `raw seconds in "${decision.reason}"`)
+    // and the payback rides alongside it rather than inside it, so the panel can
+    // put the two on separate rows
+    assert.ok(Number.isFinite(decision.payback))
 })
 
 //! Achievement hunt
