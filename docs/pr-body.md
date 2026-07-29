@@ -1,4 +1,4 @@
-# Ascension, pre-ascension loans, and two achievements (v1.2.7)
+# Ascension
 
 Alakazam played a run competently and had never finished one. This branch builds
 the ascension loop end to end, following the wiki's
