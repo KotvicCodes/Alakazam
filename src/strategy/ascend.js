@@ -86,14 +86,29 @@
     }
 
     //* targetFor
-    // the prestige level the guide wants before this ascension. `resets` is how
-    // many ascensions are already done, so it indexes straight into the plan.
+    // the prestige level the guide wants before this ascension, picked from the
+    // prestige already banked.
     //
-    // Past the table there is no target to name, and the caller uses the doubling
-    // rule instead; that is what the null means.
-    function targetFor(resets) {
-        const n = number(resets)
-        return n < PLAN.length ? PLAN[n].chips : null
+    // It used to index the table by the ascension count, which assumes the save
+    // has followed the guide from its first ascension, exactly one entry per
+    // reset. No real save does. Ascend a few times early, the way everybody does
+    // before they read a guide, or import a save, and the count runs ahead of the
+    // progress. The table's tenth entry then asks a save for 1.6 billion chips
+    // when it has yet to earn the 210 million the ninth wanted, and the planner
+    // sits waiting for a number several ascensions away, forever.
+    //
+    // The prestige level is the thing the entries are really a ladder of, so the
+    // target is the first rung above where the save already stands. A save that
+    // did follow the guide gets the same entry the reset count would have given.
+    //
+    // Past the top of the table there is nothing left to aim at, and the caller
+    // uses the doubling rule instead; that is what the null means.
+    function targetFor(prestige) {
+        const at = number(prestige)
+        for (const step of PLAN) {
+            if (step.chips > at) return step.chips
+        }
+        return null
     }
 
     //! worthAscending
@@ -116,13 +131,13 @@
         if (p.chipsGained < 1) {
             return {
                 ...p,
-                target: targetFor(scalars && scalars.resets),
+                target: targetFor(p.current),
                 ready: false,
                 why: 'no chips yet'
             }
         }
 
-        const target = targetFor(scalars && scalars.resets)
+        const target = targetFor(p.current)
         if (target === null) {
             const ready = p.prestige >= p.current * DOUBLING
             return {
