@@ -188,6 +188,115 @@ test('lumps are banked at a hundred rather than spent', () => {
     assert.ok(boot({ save: lumpSave(5, 150, done, OWNED) }).A.lumps.nextSpend(150))
 })
 
+//* lumpBoot
+// a save plus a page drawn at the same age, so the sprite and the timestamp
+// agree the way they do in a real game. `life` is how long lumps live on this
+// save, which upgrades and Rigidel shorten by hours.
+function lumpBoot({ hours, life = 24, lumps = 1, levels = {}, amounts = OWNED, askLumps } = {}) {
+    const age = hours * HOUR
+    return boot({
+        save: lumpSave(hours, lumps, levels, amounts),
+        game: { lumpLife: life, lumpAge: age, askLumps }
+    })
+}
+
+async function lumpTick(h) {
+    await h.A.store.ready('t')
+    await h.A.registry.get('lumps').tick()
+}
+
+test('a lump that ripens early is harvested early', async () => {
+    // Stevia Caelestis, Sugar aging process and Rigidel each take an hour off the
+    // ripening, and the fall follows an hour behind it. On this save the lump is
+    // ripe at 20 hours and gone at 21, so waiting for hour 23 harvests nothing.
+    //
+    // The sprite says nothing useful this late in a lump's life, which is exactly
+    // why the reading is taken all the way through and remembered.
+    const h = boot({
+        save: lumpSave(20.5, 1, {}, OWNED),
+        game: { lumpLife: 21, lumpAge: 20.5 * HOUR },
+        disk: { 'legacy:t': { lumpLifeSpan: 21 * HOUR } }
+    })
+    await h.A.store.ready('t')
+    assert.equal(h.A.lumps.lumpState().ripe, true)
+    await h.A.registry.get('lumps').tick()
+    assert.ok(h.game.state.log.includes('harvested a ripe lump'))
+})
+
+test('the same lump is left alone without that reading', async () => {
+    // nothing remembered and nothing legible on screen, so the base timings
+    // stand: an hour late is a cheap mistake, half a lump is not. The one
+    // deliberate early harvest holds off for the same reason.
+    const h = lumpBoot({ hours: 20.5, life: 21 })
+    await lumpTick(h)
+    const state = h.A.lumps.lumpState()
+    assert.equal(state.ripe, false)
+    assert.equal(state.measured, false)
+    assert.ok(!h.game.state.log.some(l => /harvest/.test(l)))
+})
+
+test('the shortened lifespan is measured off the lump sprite', () => {
+    const h = lumpBoot({ hours: 10, life: 21 })
+    assert.ok(Math.abs(h.A.lumps.lifeSpan() - 21 * HOUR) < 60000)
+    // and the same page with nothing shortening it reads as the full day
+    const plain = lumpBoot({ hours: 10, life: 24 })
+    assert.ok(Math.abs(plain.A.lumps.lifeSpan() - 24 * HOUR) < 60000)
+})
+
+test('an unreadable sprite falls back to the base timings', () => {
+    const h = lumpBoot({ hours: 10, life: 21 })
+    h.game.doc.getElementById('lumpsIcon').style.backgroundPosition = ''
+    // nothing was measured, so the twenty four hour base stands and the lump is
+    // not treated as ripe on the strength of a guess
+    assert.equal(h.A.lumps.lifeSpan(), 24 * HOUR)
+    assert.equal(h.A.lumps.lumpState().ripe, false)
+})
+
+test('an early lump is left alone until it is worth harvesting', async () => {
+    const h = lumpBoot({ hours: 12, life: 21, lumps: 0 })
+    await lumpTick(h)
+    assert.ok(!h.game.state.log.some(l => /harvest/.test(l)))
+})
+
+test('a lump is spent on the level badge in the building row', async () => {
+    const h = lumpBoot({ hours: 2, lumps: 1 })
+    await lumpTick(h)
+    // the Wizard tower, whose first level unlocks the Grimoire
+    assert.ok(h.game.state.log.includes('levelled Wizard tower'))
+})
+
+test("a spend confirmation is answered, and another module's prompt is not", async () => {
+    const h = lumpBoot({ hours: 2, lumps: 1, askLumps: true })
+    await lumpTick(h)
+    await sleep(200)
+    assert.ok(h.game.state.log.includes('levelled Wizard tower'))
+})
+
+test('no other prompt is answered on the way past', async () => {
+    // the game does not ask before a harvest, and does not ask about a level
+    // unless that preference is on. Confirming blindly meant clicking whatever
+    // prompt happened to be open, and the clone customizer's only option, at
+    // #promptOption0 like every other confirmation in the game, is Done.
+    const h = lumpBoot({ hours: 2, lumps: 1 })
+    h.game.openCustomizer()
+    await lumpTick(h)
+    await sleep(200)
+    assert.ok(h.game.state.log.includes('levelled Wizard tower'))
+    assert.ok(h.game.doc.getElementById('promptContentCustomizeYou'))
+})
+
+test('banked lumps are spent even when no lump is growing', async () => {
+    // lumpT of zero is "no lump on screen", which used to return before the
+    // spending half of the tick and quietly stall the levelling plan
+    const h = boot({
+        save: fx.save({ lumps: 1, lumpsTotal: 500, lumpT: 0, amounts: OWNED }).raw,
+        game: {}
+    })
+    assert.equal(h.A.lumps.lumpState(), null)
+    await lumpTick(h)
+    assert.ok(h.game.state.log.includes('levelled Wizard tower'))
+})
+
 //! Garden
 
 test('garden data covers every plant and recipe', () => {
