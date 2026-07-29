@@ -5,17 +5,33 @@
     // Runs once, the first time a You is owned, and then never again.
     //
     // It walks the customizer's arrows to the look that earns "In her likeness",
-    // steps a free gene once to make the game actually check, and then leaves the
-    // clones on a chosen preset. Why any of that is necessary is in
-    // src/data/clones.js; the short version is that the achievement is awarded
-    // inside the arrow handler, so importing the right appearance does nothing.
+    // steps a free gene once to make the game actually check, and then puts the
+    // clones back. Why any of that is necessary is in src/data/clones.js; the
+    // short version is that the achievement is awarded inside the arrow handler,
+    // so importing the right appearance does nothing.
     //
-    //! And then it stops
-    // The appearance is written into the save and survives ascension, so there is
-    // nothing to redo. More to the point, it is the player's to change: once this
-    // has run, whatever they set stays set. The flag that records it has run is
-    // stored per save, and the run is skipped outright if the appearance was
-    // already something other than the game's default when first seen.
+    //! All of it in one tick
+    // This used to be three stages a tick apart, which meant leaving the game's
+    // customizer prompt open on the player's screen for the best part of a minute
+    // and hoping it was still there next time. It is a prompt like any other:
+    // anything that opens one of its own replaces it, anything that clicks
+    // #promptOption0 closes it, and the player can dismiss it themselves. Any of
+    // those and the sequence went back to the beginning.
+    //
+    // Nothing here needs to wait for the game. An arrow click runs the game's own
+    // handler synchronously and the readout is updated inside it, and Game.Prompt
+    // builds its content synchronously too. So the whole thing is one pass: open,
+    // walk, nudge, put back, close. The panel is on screen for a frame.
+    //
+    //! Whose clones they are
+    // The appearance is the player's to choose, and it is written into the save
+    // and survives ascension. So whatever the clones looked like when Alakazam
+    // first met this save is put back afterwards, and only clones still on the
+    // game's default are left on a preset.
+    //
+    // Refusing to run at all on a save with a look of its own, which is what this
+    // did before, means declining the achievement over a hairstyle. The look is
+    // worth preserving; a few seconds of it changing is not worth an achievement.
 
     const { simulateClick } = window.Alakazam.input
     const { save, store, registry } = window.Alakazam
@@ -26,19 +42,20 @@
     // the You building's index in the game's own building order
     const YOU = 19
 
-    // Clicking is cheap here (the game updates the arrow's readout synchronously)
-    // but a hundred events in one burst is still not something to do to a page, and
-    // the stage machine below makes stopping half way harmless.
-    const MAX_CLICKS_PER_TICK = 40
+    //* MAX_CLICKS
+    // the whole sequence is a bit over a hundred arrow clicks, each of which
+    // redraws a 32 by 32 portrait. This is the ceiling rather than the
+    // expectation: it exists so that a customizer that stops responding cannot
+    // turn into a loop, not to ration a job that happens once per save.
+    const MAX_CLICKS = 300
 
     const DONE_KEY = 'clonesStyled'
-    const STARTED_KEY = 'clonesStarted'
 
-    //* Stages
-    //   likeness  walk every gene to the achievement look
-    //   nudge     step a free gene, which is what makes the game check
-    //   preset    walk every gene to the appearance to leave behind
-    let stage = 'likeness'
+    //* THEIRS_KEY
+    // the look the clones had the first time Alakazam saw this save, so it can be
+    // put back. It is recorded before anything is touched, because once the walk
+    // has begun the save no longer says what the player chose.
+    const THEIRS_KEY = 'clonesTheirLook'
 
     function el(id) {
         return document.getElementById(id)
@@ -69,6 +86,22 @@
         return !!el('promptContentCustomizeYou')
     }
 
+    //! Whose look it was
+
+    function rememberTheirs() {
+        if (store.get(THEIRS_KEY, undefined) !== undefined) return
+        const s = save.get()
+        const appearance = s.ok && s.run ? s.run.appearance : null
+        // null records "the game's default", which is nobody's choice and so
+        // nothing to put back
+        store.set(THEIRS_KEY, appearance && !isDefault(appearance) ? appearance.slice() : null)
+    }
+
+    function theirs() {
+        const held = store.get(THEIRS_KEY, null)
+        return Array.isArray(held) && held.length === GENES.length ? held : null
+    }
+
     //* currentGenes
     // read straight off the customizer, which prints each gene's index plus one
     // next to its arrows. Returns null when the panel is not up.
@@ -97,11 +130,11 @@
     }
 
     //* walk
-    // click toward a target appearance, up to the tick's budget. Returns whether
-    // everything now matches, so the caller knows when the stage is finished.
+    // click toward a target appearance. Returns whether everything now matches,
+    // so the caller can stop rather than carry on with a half-walked set.
     function walk(target, budget) {
         let clicks = 0
-        while (clicks < budget) {
+        while (clicks < budget.left) {
             const genes = currentGenes()
             if (!genes) return false
 
@@ -114,77 +147,59 @@
                 moved = true
                 break
             }
-            if (!moved) return true
+            if (!moved) {
+                budget.left -= clicks
+                return true
+            }
         }
+        budget.left = 0
         return false
     }
 
     //! The sequence
 
-    function advance() {
-        const genes = currentGenes()
-        if (!genes) return
-
-        if (stage === 'likeness') {
-            if (walk(LIKENESS, MAX_CLICKS_PER_TICK)) stage = 'nudge'
-            return
-        }
-
-        if (stage === 'nudge') {
-            // The whole set already matches, so these two clicks are the ones the
-            // game checks against. Two rather than one so the appearance is left
-            // exactly where it was, and on a gene the achievement does not care
-            // about so neither click can break the match.
-            step(FREE_GENE, 1)
-            step(FREE_GENE, -1)
-            console.log('Alakazam: styled the clones after a grandma for "In her likeness".')
-            stage = 'preset'
-            return
-        }
-
-        if (stage === 'preset') {
-            if (!walk(PRESET, MAX_CLICKS_PER_TICK)) return
-            // #promptOption0 on this prompt is its only option, "Done"
-            const close = el('promptOption0')
-            if (close) simulateClick(close)
-            store.set(DONE_KEY, true)
-            console.log('Alakazam: clone appearance set. It is yours to change from here on.')
-        }
-    }
-
     function tick() {
         if (done()) return
         if (!ownsAYou()) return
 
-        const s = save.get()
-        const appearance = s.ok && s.run ? s.run.appearance : null
-        const started = store.get(STARTED_KEY, false) === true
-
-        // Someone has already dressed these clones. Leave them alone, and record
-        // that so no later tick reconsiders it.
-        //
-        // The started flag is what keeps this from tripping over our own work: once
-        // the walk has begun the appearance is no longer the default, and without
-        // it a page reload half way through would read that as the player's choice
-        // and abandon a job that is only partly done.
-        if (!started && appearance && !isDefault(appearance)) {
-            store.set(DONE_KEY, true)
-            console.log('Alakazam: the clones already have a look of their own, leaving them be.')
-            return
-        }
+        rememberTheirs()
 
         if (!isOpen()) {
             const button = customizeButton()
             if (!button) return
-            store.set(STARTED_KEY, true)
             simulateClick(button)
-            return
         }
+        // Game.Prompt builds its content there and then, so if the panel is not up
+        // now the click did not land. Try again on the next tick rather than
+        // clicking arrows that are not there.
+        if (!isOpen()) return
 
-        advance()
+        const budget = { left: MAX_CLICKS }
+        if (!walk(LIKENESS, budget)) return
+
+        // The whole set already matches, so these two clicks are the ones the game
+        // checks against. Two rather than one so the appearance is left exactly
+        // where it was, and on a gene the achievement does not care about so
+        // neither click can break the match.
+        step(FREE_GENE, 1)
+        step(FREE_GENE, -1)
+        console.log('Alakazam: styled the clones after a grandma for "In her likeness".')
+
+        const back = theirs()
+        walk(back || PRESET, budget)
+
+        // #promptOption0 on this prompt is its only option, "Done"
+        const close = el('promptOption0')
+        if (close) simulateClick(close)
+        store.set(DONE_KEY, true)
+        console.log(
+            back
+                ? 'Alakazam: put your clones back the way you had them.'
+                : 'Alakazam: clone appearance set. It is yours to change from here on.'
+        )
     }
 
     registry.register({ name: 'clones', interval: INTERVAL_MS, tick })
 
-    window.Alakazam.clones = { currentGenes, walk, ownsAYou, tick }
+    window.Alakazam.clones = { currentGenes, walk, ownsAYou, theirs, tick }
 })()

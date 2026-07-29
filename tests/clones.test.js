@@ -114,11 +114,45 @@ test('it runs once and then leaves the clones alone', async () => {
     assert.deepEqual(h.game.state.genes, [3, 3, 3, 3, 3, 3, 3])
 })
 
-test('an appearance the player already chose is never touched', async () => {
-    const h = boot({ save: cloneSave({ appearance: '4,5,6,1,2,3,4' }) })
+test('an appearance the player chose is earned through and then put back', async () => {
+    // Declining to run at all on a save with a look of its own, which is what
+    // this did, forfeits the achievement over a hairstyle. The look is the thing
+    // worth keeping, not the refusal to touch it.
+    const mine = [4, 5, 6, 1, 2, 3, 4]
+    const h = boot({
+        save: cloneSave({ appearance: mine.join(',') }),
+        game: { genes: mine.slice() }
+    })
     const state = await styleClones(h)
-    assert.deepEqual(state.genes, [0, 1, 0, 0, 0, 0, 0], 'opened a customizer it should not have')
+    assert.equal(state.likenessWon, true)
+    assert.deepEqual(state.genes, mine, 'left the clones somewhere the player did not put them')
     assert.equal(h.A.store.get('clonesStyled'), true)
+})
+
+test('a half-walked appearance is not mistaken for the player s own', async () => {
+    // the walk is recorded before anything moves, so a run that stops part way
+    // through cannot come back and read its own handiwork as a choice
+    const mine = [4, 5, 6, 1, 2, 3, 4]
+    const h = boot({
+        save: cloneSave({ appearance: mine.join(',') }),
+        game: { genes: mine.slice() }
+    })
+    await h.A.store.ready('t')
+    assert.deepEqual(h.A.clones.theirs(), null)
+    await h.A.registry.get('clones').tick()
+    assert.deepEqual(h.A.clones.theirs(), mine)
+})
+
+test('the whole sequence happens in one tick', async () => {
+    // it used to be three stages a tick apart, which left the game's customizer
+    // prompt open on screen for the best part of a minute. Anything that opened
+    // a prompt of its own, or clicked #promptOption0, sent it back to the start.
+    const h = boot({ save: cloneSave() })
+    await h.A.store.ready('t')
+    await h.A.registry.get('clones').tick()
+    assert.equal(h.game.state.likenessWon, true)
+    assert.deepEqual(h.game.state.genes, C.PRESET)
+    assert.equal(h.game.doc.getElementById('promptContentCustomizeYou'), null, 'left it open')
 })
 
 test('the default appearance is not mistaken for a choice', async () => {
