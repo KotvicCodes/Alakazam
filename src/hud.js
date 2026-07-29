@@ -14,6 +14,7 @@
     // selectors can never pick its panel up as part of the game.
 
     const { store, scheduler, registry, live, catalog, save, act } = window.Alakazam
+    const { formatNumber } = window.Alakazam.parse
 
     const INTERVAL_MS = 1000
     const STATUS_WRITE_MS = 5000
@@ -166,7 +167,9 @@
         })
         fold.textContent = root.classList.contains('az-folded') ? '+' : '-'
 
-        makeDraggable(head)
+        // the fold button lives inside the drag handle, so the drag has to be told
+        // to leave it alone: see the note in makeDraggable
+        makeDraggable(head, fold)
     }
 
     //* makeDraggable
@@ -178,13 +181,20 @@
     // those bubble all the way to the document. Without this the panel followed
     // them and snapped to the cookie the instant you grabbed it, which looked like
     // it was jumping to wherever you had clicked.
-    function makeDraggable(handle) {
+    //
+    // `ignore` is what makes the minimize button work. Pointer capture retargets
+    // every later pointer event, and the click, at the capturing element. The fold
+    // button sits inside the header, so grabbing it started a drag on the header,
+    // the header swallowed the click, and the button did nothing at all: it moved
+    // the panel instead. A pointerdown that starts on the button is left alone.
+    function makeDraggable(handle, ignore) {
         let pointer = null
 
         handle.addEventListener('pointerdown', event => {
             // real input only. the autoclicker fires a stream of synthetic pointer
             // events at the big cookie and they bubble everywhere.
             if (!event.isTrusted || event.button !== 0) return
+            if (ignore && (event.target === ignore || ignore.contains(event.target))) return
             pointer = event.pointerId
 
             // Pointer capture is the reason this works at all. Listening on the
@@ -288,18 +298,16 @@
             html += row('from clicking', format(click.clickCps))
             html += row('effective', format(globals.cps + click.clickCps))
         }
-        if (click.dispatchedPerSecond > 0) {
-            // both numbers, because they differ by orders of magnitude and only
-            // the registered one means anything
-            html += row(
-                'clicks',
-                `${click.registeredPerSecond}/s of ${click.dispatchedPerSecond}/s sent`
-            )
-        }
+        // how many clicks the game acts on. what we dispatch used to be shown
+        // alongside it and was only ever noise: it is not a number anyone can do
+        // anything with, and it made the real one look broken by comparison.
         html += row(
-            'decision',
-            debug.decision ? `${debug.decision.action}: ${debug.decision.reason}` : 'starting up'
+            'clicks',
+            click.measured ? `${click.registeredPerSecond}/s` : `~${click.registeredPerSecond}/s`
         )
+        // the action is dropped: every reason already says what it is, and the
+        // panel spent nearly all its time showing the word "wait"
+        html += row('decision', debug.decision ? debug.decision.reason : 'starting up')
 
         const cat = catalog.stats()
         html += row('catalog', `${cat.buildings} bldg / ${cat.upgrades} upg`)
@@ -313,7 +321,13 @@
             saveStats.ok ? `${saveStats.secondsSinceChange}s ago` : 'failed',
             !saveStats.ok
         )
-        if (saveStats.stale) html += row('warning', saveStats.reason, true)
+        // the reason names the step that failed, so it is worth showing whenever
+        // there is one, not only when the parse came out stale
+        if (saveStats.reason) html += row(saveStats.ok ? 'note' : 'why', saveStats.reason, true)
+        // only when it is not where it should be, which is the interesting case
+        if (saveStats.key && saveStats.key !== 'CookieClickerGame') {
+            html += row('found in', saveStats.key)
+        }
         if (debug.identity) html += row('save id', debug.identity.legacyId)
 
         if (debug.lumps) {
@@ -365,22 +379,10 @@
         return html
     }
 
-    function format(n) {
-        if (!Number.isFinite(n)) return '-'
-        if (n < 1000) return String(Math.round(n))
-        const units = [
-            [1e24, 'Sp'],
-            [1e21, 'Sx'],
-            [1e18, 'Qi'],
-            [1e15, 'Qa'],
-            [1e12, 'T'],
-            [1e9, 'B'],
-            [1e6, 'M'],
-            [1e3, 'k']
-        ]
-        for (const [v, s] of units) if (n >= v) return `${(n / v).toFixed(2)}${s}`
-        return String(Math.round(n))
-    }
+    // the panel used to carry its own magnitude table, which stopped at 10^24 and
+    // rendered anything past that as seventeen digits and a wrong suffix. the
+    // shared one in parse.js is the game's own, all the way up.
+    const format = formatNumber
 
     function render() {
         if (!body) return

@@ -36,6 +36,20 @@
     // minute, so they are trusted more than the old noisy per-second ones were.
     const SMOOTHING = 0.4
 
+    //* ASSUMED_RATE
+    // What to reason with before the game has autosaved twice.
+    //
+    // Measurement needs two saves a minute apart, so there is a window at the
+    // start of every session with nothing to go on, and clicking upgrades are at
+    // their most valuable in exactly that window. Scoring them against zero clicks
+    // a second is the old bug in a new place: it values every one of them at
+    // nothing and skips them all.
+    //
+    // Three a second is what the game registers in practice, whether the clicks
+    // arriving are three a second or three thousand. It is a floor, not a
+    // prediction, and the moment a real measurement exists it takes over.
+    const ASSUMED_RATE = 3
+
     let dispatched = 0
     let dispatchedRate = 0
     let lastDispatched = 0
@@ -128,9 +142,10 @@
 
     //* clicksPerSecond
     // how many clicks the game actually acts on, which is a small fraction of what
-    // the autoclicker sends. this is the one to value a clicking upgrade against.
+    // the autoclicker sends. this is the one to value a clicking upgrade against,
+    // and it falls back to the assumed floor rather than to zero.
     function clicksPerSecond() {
-        return rate
+        return rate > 0 ? rate : ASSUMED_RATE
     }
 
     function cookiesPerClick() {
@@ -154,7 +169,7 @@
     function stats() {
         return {
             clickCps: clickCps(),
-            registeredPerSecond: Math.round(rate * 10) / 10,
+            registeredPerSecond: Math.round(clicksPerSecond() * 10) / 10,
             dispatchedPerSecond: Math.round(dispatchedRate),
             cookiesPerClick: cookiesPerClick(),
             measured: measured(),

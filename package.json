@@ -1,9 +1,9 @@
 {
     "name": "alakazam",
-    "version": "1.1.18",
+    "version": "1.1.19",
     "description": "Analyzes and optimizes Cookie Clicker strategy",
     "scripts": {
-        "test": "node --test tests/",
+        "test": "node --test --test-timeout=120000 tests/",
         "format": "prettier --write .",
         "format:check": "prettier --check ."
     },
