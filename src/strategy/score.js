@@ -14,6 +14,7 @@
     // happened to be the cheapest thing on screen.
 
     const { PRICE_GROWTH, COUNT_THRESHOLDS } = window.Alakazam.data.buildings
+    const { formatDuration } = window.Alakazam.parse
 
     //! Why upgrades are not scored against buildings
     // They used to be. An upgrade whose tooltip could not be parsed was given an
@@ -288,7 +289,7 @@
 
         if (nextUpgrade) {
             const how = nextUpgrade.measured
-                ? `${nextUpgrade.payback.toFixed(1)}s payback`
+                ? `${formatDuration(nextUpgrade.payback)} payback`
                 : 'effect not readable'
             return {
                 action: 'buyUpgrade',
@@ -310,7 +311,7 @@
                 action: 'buyBuilding',
                 target: bestBuilding,
                 amount,
-                reason: `${bestBuilding.name} x${amount} (${bestBuilding.payback.toFixed(1)}s${tier})`
+                reason: `${bestBuilding.name} x${amount} (${formatDuration(bestBuilding.payback)}${tier})`
             }
         }
 
@@ -319,7 +320,7 @@
             action: 'wait',
             target: bestBuilding,
             amount: 0,
-            reason: `saving for ${bestBuilding.name} (payback ${bestBuilding.payback.toFixed(1)}s)`
+            reason: `saving for ${bestBuilding.name}, pays back in ${formatDuration(bestBuilding.payback)}`
         }
     }
 

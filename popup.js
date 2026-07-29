@@ -43,21 +43,39 @@ function latestStatus(all) {
     return best
 }
 
+//* format
+// Cookie Clicker's own magnitude suffixes, at every third power from a thousand
+// up to 10^276, after which the game itself switches to an exponent.
+//
+// This is deliberately a copy of formatNumber in src/parse.js rather than a
+// shared import. The popup is a separate document in a separate context with no
+// access to the content scripts, and a two-file duplicate beats a build step for
+// one function. Change one, change the other.
+const MAGNITUDES = (() => {
+    const bases = ['', 'Un', 'Do', 'Tr', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No']
+    const tiers = ['', 'D', 'V', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No']
+    const names = ['k', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc']
+    for (let tier = 1; tier < tiers.length; tier++) {
+        for (let base = 1; base < bases.length; base++) names.push(bases[base] + tiers[tier])
+    }
+    return names.map((suffix, i) => [Math.pow(10, 3 * (i + 1)), suffix]).reverse()
+})()
+
 function format(n) {
     if (!Number.isFinite(n)) return '-'
-    if (n < 1000) return String(Math.round(n))
-    const units = [
-        [1e24, 'Sp'],
-        [1e21, 'Sx'],
-        [1e18, 'Qi'],
-        [1e15, 'Qa'],
-        [1e12, 'T'],
-        [1e9, 'B'],
-        [1e6, 'M'],
-        [1e3, 'k']
-    ]
-    for (const [v, s] of units) if (n >= v) return `${(n / v).toFixed(2)}${s}`
-    return String(Math.round(n))
+    if (n < 0) return '-' + format(-n)
+    if (n < 1000) return n < 100 && n % 1 !== 0 ? trimZeros(n.toFixed(1)) : String(Math.round(n))
+    for (const [value, suffix] of MAGNITUDES) {
+        if (n < value) continue
+        const scaled = n / value
+        if (scaled >= 1000) break
+        return trimZeros(scaled.toFixed(3)) + suffix
+    }
+    return n.toExponential(2)
+}
+
+function trimZeros(text) {
+    return text.indexOf('.') === -1 ? text : text.replace(/\.?0+$/, '')
 }
 
 async function render() {
