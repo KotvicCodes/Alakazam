@@ -31,8 +31,14 @@
 
     //* Known-good game versions
     // the scalar section is positional with no field names, so its layout is
-    // version specific. on an unrecognised version we still parse, but flag the
-    // result so consumers fall back to the DOM instead of trusting field offsets.
+    // version specific. This list is what we have actually read the layout from.
+    //
+    // It is not a gate. It used to be: an unrecognised version marked the whole
+    // parse untrusted, which meant every game patch silently switched off
+    // everything that needs exact numbers, ascension included, until somebody
+    // noticed and added a string here. The invariants in scalarsLookSane are the
+    // real check, they are version independent, and they are what caught the last
+    // layout drift. An unfamiliar version is worth saying out loud and nothing more.
     const KNOWN_VERSIONS = ['2.052', '2.053', '2.048', '2.047']
 
     //* Building order
@@ -108,6 +114,15 @@
         'dragonAura2',
         'chimeType',
         'volume',
+        // Shiny wrinklers, written by Game.SaveWrinklers alongside the ordinary
+        // pair much further up the section. These two were missing, which put
+        // every field from here on two places out: `lumps` was reading the shiny
+        // wrinkler count, `lumpCurrentType` was reading the lump's start
+        // timestamp, and the layout check below rightly refused to trust any of
+        // it. That is what left the ascension planner saying "save not
+        // trustworthy" and the lump planner never harvesting or spending.
+        'wrinklersShiny',
+        'wrinklersShinyAmount',
         'lumps',
         'lumpsTotal',
         'lumpT',
@@ -254,6 +269,9 @@
         // lumpT is a millisecond timestamp: sanity check it lands this century
         if (s.lumpT !== 0 && !(s.lumpT > 1e12 && s.lumpT < 4e12)) return false
         if (!(s.season >= 0)) return false
+        // the prestige fields are what ascension is decided on, so they get their
+        // own check rather than riding on the lump ones
+        if (!(s.resets >= 0) || !(s.prestige >= 0) || !(s.heavenlyChips >= 0)) return false
         return true
     }
 
@@ -479,12 +497,12 @@
 
         return {
             ok: true,
-            stale: !knownVersion || !scalars.trusted,
-            reason: knownVersion
-                ? scalars.trusted
-                    ? ''
-                    : 'scalar layout drifted'
-                : 'unknown game version',
+            stale: !scalars.trusted,
+            reason: !scalars.trusted
+                ? 'scalar layout drifted'
+                : knownVersion
+                  ? ''
+                  : `game version ${version} is newer than this parser was read against`,
             version,
             run: parseRun(sections[S_RUN]),
             prefs: parseBits(sections[S_PREFS]),

@@ -3,7 +3,10 @@
 // the real encoding rather than against a hand-written object. Every field is
 // positional, which is exactly the fragility these fixtures exist to pin down.
 
-const SCALAR_COUNT = 53
+// section 4 of a real save, counted straight off Game.WriteSave. The two shiny
+// wrinkler fields sit between `volume` and `lumps`, which is what makes the lump
+// and prestige offsets below look further along than you might expect.
+const SCALAR_COUNT = 55
 
 function encode(text) {
     return Buffer.from(unescape(encodeURIComponent(text)), 'binary').toString('base64') + '!END!'
@@ -28,11 +31,20 @@ function save(opts = {}) {
     scalars[26] = opts.heavenlyChips || 0
     scalars[27] = opts.heavenlyChipsSpent || 0
     scalars[29] = opts.ascensionMode || 0 // 0 is an ordinary run, anything else a challenge
-    scalars[40] = opts.lumps != null ? opts.lumps : 0
-    scalars[41] = opts.lumpsTotal != null ? opts.lumpsTotal : 0
-    scalars[42] = opts.lumpT != null ? opts.lumpT : Date.now()
-    scalars[44] = opts.lumpType != null ? opts.lumpType : 0
-    scalars[45] = '' // vault, a comma list
+    scalars[40] = opts.shinyWrinklers || 0 // shiny wrinklers, then what they hold
+    scalars[41] = opts.shinyWrinklerHoard || 0
+    scalars[42] = opts.lumps != null ? opts.lumps : 0
+    scalars[43] = opts.lumpsTotal != null ? opts.lumpsTotal : 0
+    scalars[44] = opts.lumpT != null ? opts.lumpT : Date.now()
+    scalars[46] = opts.lumpType != null ? opts.lumpType : 0
+    scalars[47] = '' // vault, a comma list
+
+    //* driftedScalars
+    // write the section the way a game that did not have shiny wrinklers would:
+    // the same values, two fields short, everything from the lumps onward sitting
+    // two places to the left. This is exactly the drift the parser was reading
+    // saves through, so it is what an untrusted save looks like in a test.
+    if (opts.driftedScalars) scalars.splice(40, 2)
 
     const levels = opts.levels || {}
     const amounts = opts.amounts || {}
