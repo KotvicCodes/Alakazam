@@ -455,6 +455,99 @@ test('dragging the panel ignores the autoclicker synthetic events', async () => 
     h.A.scheduler.stop()
 })
 
+test('the minimize button folds the panel instead of dragging it', async () => {
+    // pointer capture retargets the click at whatever element captured the
+    // pointer, so a drag started on the header swallowed the fold button's click
+    // entirely: pressing minimize moved the panel and did nothing else
+    const h = boot({})
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    await sleep(120)
+
+    const panel = h.game.doc.getElementById('alakazam-hud')
+    const head = h.game.doc.getElementById('alakazam-hud-head')
+    const fold = h.game.doc.getElementById('alakazam-hud-fold')
+    assert.ok(panel && head && fold, 'the panel should have been built')
+
+    try {
+        const before = panel.style.left
+        assert.equal(panel.classList.contains('az-folded'), false, 'starts unfolded')
+
+        // pressing the fold button bubbles to the header, exactly as in a browser
+        fold.dispatchEvent({
+            type: 'pointerdown',
+            pointerId: 1,
+            button: 0,
+            isTrusted: true,
+            clientX: 700,
+            clientY: 12,
+            preventDefault() {}
+        })
+        assert.equal(panel.style.left, before, 'grabbing the fold button must not move the panel')
+        assert.equal(head.captured, undefined, 'and must not start a drag')
+
+        fold.dispatchEvent({ type: 'click', isTrusted: true, stopPropagation() {} })
+        assert.equal(panel.classList.contains('az-folded'), true, 'the panel should be folded')
+        assert.equal(fold.textContent, '+')
+
+        fold.dispatchEvent({ type: 'click', isTrusted: true, stopPropagation() {} })
+        assert.equal(panel.classList.contains('az-folded'), false, 'and unfolded again')
+    } finally {
+        h.A.scheduler.stop()
+    }
+})
+
+test('numbers are rendered with the suffixes the game itself uses', () => {
+    const { formatNumber } = boot({}).A.parse
+    assert.equal(formatNumber(543), '543')
+    assert.equal(formatNumber(1234), '1.234k')
+    assert.equal(formatNumber(1.5e6), '1.5M')
+    assert.equal(formatNumber(3.2e9), '3.2B')
+    // the panel's own table stopped at 10^24, so this rendered as
+    // "54566999999999992.00Sp": seventeen digits of noise
+    assert.equal(formatNumber(5.4567e40), '54.567DoD')
+    assert.equal(formatNumber(2.2895e28), '22.895Oc')
+    // past the biggest suffix the game has there is nothing to do but exponent
+    assert.equal(formatNumber(1e300), '1.00e+300')
+    assert.equal(formatNumber(Infinity), '-')
+})
+
+test('the popup renders numbers identically to the panel', () => {
+    // the popup is a separate document with no access to the content scripts, so
+    // it carries its own copy of the table. this is what keeps the two in step.
+    const fs = require('fs')
+    const path = require('path')
+    const source = fs.readFileSync(path.join(__dirname, '..', 'popup.js'), 'utf8')
+    const table = source.match(/const MAGNITUDES = \(\(\) => \{[\s\S]*?\}\)\(\)/)
+    assert.ok(table, 'the popup should build a magnitude table')
+
+    const popupMagnitudes = eval(table[0].replace('const MAGNITUDES =', ''))
+    assert.deepEqual(popupMagnitudes, boot({}).A.parse.MAGNITUDES)
+})
+
+test('durations are rendered in units a person can act on', () => {
+    const { formatDuration } = boot({}).A.parse
+    assert.equal(formatDuration(0.4), '<1s')
+    assert.equal(formatDuration(42), '42s')
+    assert.equal(formatDuration(90), '1.5m')
+    assert.equal(formatDuration(3600 * 5), '5h')
+    assert.equal(formatDuration(86400 * 3), '3d')
+    assert.equal(formatDuration(604800 * 9), '9w')
+    assert.equal(formatDuration(31557600 * 4), '4y')
+    // the panel showed this one as "263949956031657248.0s"
+    assert.equal(formatDuration(2.639e17), '8.362B years')
+    assert.equal(formatDuration(Infinity), 'never')
+})
+
+test('a decision reads as a sentence, with no action prefix and no raw seconds', () => {
+    const h = boot({ game: { bank: 0, cps: 1 } })
+    const view = h.A.purchase.buildView(0)
+    const decision = h.A.strategy.decide(view)
+    assert.equal(decision.action, 'wait')
+    assert.match(decision.reason, /^saving for /)
+    assert.equal(/\d+\.\ds\b/.test(decision.reason), false, `raw seconds in "${decision.reason}"`)
+})
+
 //! Achievement hunt
 
 function achievementUI(h, { stats = true, log = true, bakery = true, tiny = true, slot = true } = {}) {
@@ -660,6 +753,87 @@ test('click income comes from the game totals, not from guessing at the bank', a
         Math.abs(h.A.clicks.cookiesPerClick() - 10) < 0.001,
         `cookies per click was ${h.A.clicks.cookiesPerClick()}`
     )
+})
+
+test('an unmeasured click rate falls back to a floor, never to zero', async () => {
+    // measurement needs two autosaves, so there is a window at the start of every
+    // session with nothing to go on. valuing clicking upgrades at zero clicks a
+    // second through that window is how they came to be skipped entirely, and it
+    // is exactly the window in which they matter most.
+    const h = boot({})
+    assert.equal(h.A.clicks.measured(), false)
+    assert.equal(h.A.clicks.clicksPerSecond(), 3)
+    assert.equal(h.A.clicks.stats().registeredPerSecond, 3)
+
+    // and a real measurement takes over from it
+    let current = fx.save({ cookieClicks: 1000, handmadeCookies: 10000 }).raw
+    h.ctx.localStorage.getItem = key => (key === 'CookieClickerGame' ? current : null)
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    try {
+        await sleep(300)
+        current = fx.save({ cookieClicks: 100000, handmadeCookies: 1000000 }).raw
+        await waitFor(() => h.A.clicks.measured())
+        assert.ok(h.A.clicks.clicksPerSecond() > 3, 'the measurement should replace the floor')
+    } finally {
+        h.A.scheduler.stop()
+    }
+})
+
+test('the autoclicker paces itself in time, not per frame', async () => {
+    // it used to fire a burst every animation frame, which worked out at about
+    // 240 events a second on a 60Hz display and rather more on a 144Hz one. the
+    // game registers around three.
+    const h = boot({})
+    assert.equal(h.A.autoclick.CLICKS_PER_SECOND, 15)
+
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    try {
+        const cookie = h.game.doc.getElementById('bigCookie')
+        const clicks = () => cookie.events.filter(e => e === 'click').length
+        const before = clicks()
+        // sixty frames is a second of display time, delivered in an instant. a
+        // per-frame burst would send sixty clicks or more; pacing sends one.
+        for (let i = 0; i < 60; i++) h.frame()
+        const sent = clicks() - before
+        assert.ok(sent > 0, 'the autoclicker should be clicking at all')
+        assert.ok(sent <= 2, `sixty frames in an instant sent ${sent} clicks`)
+    } finally {
+        h.A.scheduler.stop()
+    }
+})
+
+test('a failed save read is retried, a successful one is not re-parsed', async () => {
+    // The watcher skips any tick whose fingerprint matches the last one, which is
+    // what keeps it from decoding twenty kilobytes twice a second. That is right
+    // for a successful read and wrong for a failed one: a failure has no state
+    // worth preserving, and latching on it means the next attempt waits for the
+    // game to write its save, up to a minute away.
+    const h = boot({ save: 'not a save at all !!' })
+    let reads = 0
+    const real = h.A.savefile.read
+    h.A.savefile.read = () => {
+        reads++
+        return real()
+    }
+
+    await h.A.store.ready('t')
+    await h.A.scheduler.start()
+    try {
+        const failing = await waitFor(() => reads >= 3)
+        assert.equal(failing, true, `a failed read should be retried, saw ${reads}`)
+        assert.equal(h.A.save.get().ok, false)
+
+        // once it succeeds, the unchanged save must stop being re-read
+        h.ctx.localStorage.getItem = () => fx.save({}).raw
+        await waitFor(() => h.A.save.get().ok)
+        const settled = reads
+        await sleep(600)
+        assert.equal(reads, settled, 'an unchanged save must not be decoded again')
+    } finally {
+        h.A.scheduler.stop()
+    }
 })
 
 test('clicking upgrades are valued off the registered rate, not the dispatched one', () => {

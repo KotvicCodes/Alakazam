@@ -73,6 +73,15 @@ class El {
 
     preventDefault() {}
 
+    //* contains
+    // Node.contains: true for the node itself and for any descendant. used by the
+    // panel to tell a grab on the fold button from a grab on the header.
+    contains(node) {
+        if (!node) return false
+        if (node === this) return true
+        return this.children.some(kid => kid.contains && kid.contains(node))
+    }
+
     get firstChild() {
         return this.children[0] || null
     }
@@ -124,7 +133,11 @@ class El {
     }
 
     dispatchEvent(ev) {
-        ev.target = this
+        // the target is the node the event was dispatched on and stays fixed as it
+        // bubbles, which is the whole point of target: a handler on an ancestor
+        // has to be able to tell which descendant was actually hit. a caller that
+        // sets one explicitly is simulating exactly that, so it is left alone.
+        if (!ev.target) ev.target = this
         this.events.push(ev.type)
         let node = this
         while (node) {
