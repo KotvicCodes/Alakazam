@@ -35,6 +35,7 @@
         garden: true,
         achievements: true,
         marketTrading: true,
+        ascend: true,
         hud: true
     }
 

@@ -18,6 +18,7 @@ const LABELS = {
     garden: 'Garden',
     achievements: 'Achievements',
     marketTrading: 'Stock trading',
+    ascend: 'Ascension',
     hud: 'In-page panel'
 }
 
