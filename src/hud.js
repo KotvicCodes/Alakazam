@@ -33,6 +33,7 @@
         marketTrading: 'Stock trading',
         ascend: 'Ascension',
         clones: 'Clone look',
+        gifts: 'Gift codes',
         hud: 'This panel'
     }
 
@@ -409,6 +410,16 @@
                     html += row('hoard at risk', format(debug.ascend.wrinklerHoard), true)
                 }
             }
+        }
+
+        // the code is the deliverable, so it gets its own section and the whole
+        // string: it is meant to be selected and pasted back into the game
+        if (debug.gifts && debug.gifts.code) {
+            html += section('gift code')
+            html += row('redeem in', 'Options -> Redeem')
+            html += row('after', 'your next ascension')
+            html += row('expires in', `${debug.gifts.expiresInHours}h`)
+            html += row('code', debug.gifts.code)
         }
 
         if (debug.wrinklers && debug.wrinklers.active > 0) {

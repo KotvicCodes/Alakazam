@@ -20,6 +20,7 @@ const LABELS = {
     marketTrading: 'Stock trading',
     ascend: 'Ascension',
     clones: 'Clone look',
+    gifts: 'Gift codes',
     hud: 'In-page panel'
 }
 
