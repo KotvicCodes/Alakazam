@@ -204,8 +204,25 @@
             fullDate: toNumber(bits[1]), // this save was first created
             lastDate: toNumber(bits[2]),
             bakeryName: bits[3] || '',
-            seed: bits[4] || ''
+            seed: bits[4] || '',
+            // the You building's clone appearance, seven comma-separated gene
+            // indices. It lives in the run section but outlives the run: only a
+            // hard reset clears it, not an ascension.
+            appearance: parseAppearance(bits[5])
         }
+    }
+
+    //* parseAppearance
+    // Game.YouCustomizer.save() is currentGenes.join(','). An empty or missing
+    // field means the customizer has never been touched, which is a different
+    // thing from every gene happening to be zero, so it comes back as null.
+    function parseAppearance(raw) {
+        if (!raw) return null
+        const genes = String(raw)
+            .split(',')
+            .map(g => toNumber(g))
+        if (genes.length === 0 || genes.some(g => !Number.isFinite(g))) return null
+        return genes
     }
 
     //* parseScalars

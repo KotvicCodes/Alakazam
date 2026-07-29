@@ -36,6 +36,7 @@
         achievements: true,
         marketTrading: true,
         ascend: true,
+        clones: true,
         hud: true
     }
 

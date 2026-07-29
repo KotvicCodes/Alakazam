@@ -32,6 +32,7 @@
         achievements: 'Achievements',
         marketTrading: 'Stock trading',
         ascend: 'Ascension',
+        clones: 'Clone look',
         hud: 'This panel'
     }
 

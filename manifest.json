@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Alakazam",
-    "version": "1.2.3",
+    "version": "1.2.4",
     "description": "Analyzes and optimizes Cookie Clicker strategy",
     "permissions": ["activeTab", "storage"],
     "host_permissions": ["https://orteil.dashnet.org/*"],
@@ -29,6 +29,7 @@
                 "src/data/plants.js",
                 "src/data/heavenly.js",
                 "src/data/loans.js",
+                "src/data/clones.js",
                 "src/act/store.js",
                 "src/act/drag.js",
                 "src/act/ascend.js",
@@ -51,6 +52,7 @@
                 "src/modules/purchase.js",
                 "src/modules/achievements.js",
                 "src/modules/ascend.js",
+                "src/modules/clones.js",
                 "src/hud.js",
                 "src/main.js"
             ],

@@ -55,13 +55,17 @@ function save(opts = {}) {
     const text = [
         opts.version || '2.052',
         '',
+        // the clone appearance is a sixth field here, and older saves simply do not
+        // have it, so it is only written when a test asks for one
         [
             opts.startDate || 1750000001000,
             opts.fullDate || 1750000000000,
             Date.now(),
             opts.bakeryName || 'Test Bakery',
             opts.seed || 'abcde'
-        ].join(';'),
+        ]
+            .concat(opts.appearance != null ? [opts.appearance] : [])
+            .join(';'),
         '1'.repeat(27),
         scalars.join(';'),
         buildings.join(';'),
