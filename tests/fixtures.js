@@ -8,8 +8,15 @@
 // and prestige offsets below look further along than you might expect.
 const SCALAR_COUNT = 55
 
+//* encode
+// what actually ends up in localStorage. The game writes
+// escape(base64 + '!END!'), not the base64 itself, and reads it back through
+// unescape before it looks for the marker. Escaping here is the point: without
+// it the fixtures were the only place a save was ever stored unescaped, and the
+// reader passed against them while failing against every real browser.
 function encode(text) {
-    return Buffer.from(unescape(encodeURIComponent(text)), 'binary').toString('base64') + '!END!'
+    const b64 = Buffer.from(unescape(encodeURIComponent(text)), 'binary').toString('base64')
+    return escape(b64 + '!END!')
 }
 
 //* save

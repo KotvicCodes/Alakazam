@@ -6,6 +6,22 @@ const fx = require('./fixtures')
 const { A } = boot({})
 const { savefile, identity } = A
 
+test('reads the percent-escaped form the game actually stores', () => {
+    // Game.WriteSave stores escape(base64 + '!END!'), so '=' arrives as %3D and
+    // the marker as %21END%21. Reading it without unescaping first finds no
+    // marker, hands the percent signs to atob, and calls a good save "not
+    // base64" -- which it did, on every save, in every real browser.
+    const { text, raw } = fx.save({ seed: 'qwert' })
+    assert.match(raw, /%21END%21$/)
+    assert.equal(savefile.decode(raw), text)
+})
+
+test('still reads a save that was never escaped', () => {
+    // a code pasted by hand, or anything that has already been through unescape
+    const { text, raw } = fx.save({ seed: 'qwert' })
+    assert.equal(savefile.decode(unescape(raw)), text)
+})
+
 test('decodes a save and reads its run metadata', () => {
     const { text, raw } = fx.save({ seed: 'qwert', bakeryName: 'My Bakery', resets: 4 })
     assert.equal(savefile.decode(raw), text)
