@@ -355,6 +355,12 @@
                 'ripe in',
                 debug.lumps.ripe ? 'ready now' : `${debug.lumps.hoursToRipe.toFixed(1)}h`
             )
+            // on an upgraded save this is hours below the 24 the guides quote,
+            // and until it has been read off the lump it is only the base
+            html += row(
+                'lives for',
+                `${debug.lumps.lifeSpanHours.toFixed(1)}h` + (debug.lumps.measured ? '' : ' (assumed)')
+            )
         }
 
         if (debug.garden) {
