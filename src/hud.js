@@ -31,6 +31,9 @@
         garden: 'Garden',
         achievements: 'Achievements',
         marketTrading: 'Stock trading',
+        ascend: 'Ascension',
+        clones: 'Clone look',
+        gifts: 'Gift codes',
         hud: 'This panel'
     }
 
@@ -344,6 +347,12 @@
         }
         if (debug.identity) html += row('save id', debug.identity.legacyId)
 
+        // only while it is actually running: the rest of a run is the ordinary
+        // one-at-a-time buying and needs no row of its own
+        if (debug.buyAll && debug.buyAll.sweeping) {
+            html += row('buying', `all upgrades, ${debug.buyAll.minutesLeft.toFixed(1)}m left`)
+        }
+
         if (debug.lumps) {
             html += section('sugar lumps')
             html += row('banked', debug.lumps.lumps)
@@ -351,6 +360,12 @@
             html += row(
                 'ripe in',
                 debug.lumps.ripe ? 'ready now' : `${debug.lumps.hoursToRipe.toFixed(1)}h`
+            )
+            // on an upgraded save this is hours below the 24 the guides quote,
+            // and until it has been read off the lump it is only the base
+            html += row(
+                'lives for',
+                `${debug.lumps.lifeSpanHours.toFixed(1)}h` + (debug.lumps.measured ? '' : ' (assumed)')
             )
         }
 
@@ -376,6 +391,52 @@
             html += section('stock market')
             html += row('trading', debug.market.trading ? 'on' : 'advisory only')
             html += row('signals', debug.market.signals.slice(0, 3).join(', ') || 'nothing notable')
+        }
+
+        if (debug.ascend) {
+            html += section('ascension')
+            if (debug.ascend.blocked) {
+                html += row('status', debug.ascend.blocked, true)
+            } else {
+                html += row('prestige', `${format(debug.ascend.current)} lvl`)
+                html += row('chips banked', format(debug.ascend.chipsBanked))
+                html += row('ascending pays', `${format(debug.ascend.chipsGained)} chips`)
+                // what the plan still wants, which is the whole of the decision:
+                // it comes down as upgrades are bought and as chips are banked
+                if (debug.ascend.chipsNeeded > 0) {
+                    html += row('plan wants', `${format(debug.ascend.chipsNeeded)} chips`)
+                }
+                // the target is the plan's, and past the plan there is not one to
+                // name; the reason line says which rule is in force either way
+                html += row('plan', debug.ascend.why)
+                if (debug.ascend.cookiesToTarget > 0) {
+                    html += row('still needs', format(debug.ascend.cookiesToTarget))
+                }
+                html += row('phase', debug.ascend.phase)
+                if (debug.ascend.loans && debug.ascend.loans.length > 0) {
+                    html += row('loans taken', debug.ascend.loans.join(', '))
+                }
+                if (debug.ascend.loanWindow !== null && debug.ascend.loanWindow !== undefined) {
+                    html += row('window closes', `${debug.ascend.loanWindow}s`)
+                }
+                if (debug.ascend.bought && debug.ascend.bought.length > 0) {
+                    html += row('bought', debug.ascend.bought.length)
+                }
+                // the hoard is only at risk once the run is actually ending
+                if (debug.ascend.wrinklerHoard > 0 && debug.ascend.phase !== 'watching') {
+                    html += row('hoard at risk', format(debug.ascend.wrinklerHoard), true)
+                }
+            }
+        }
+
+        // the code is the deliverable, so it gets its own section and the whole
+        // string: it is meant to be selected and pasted back into the game
+        if (debug.gifts && debug.gifts.code) {
+            html += section('gift code')
+            html += row('redeem in', 'Options -> Redeem')
+            html += row('after', 'your next ascension')
+            html += row('expires in', `${debug.gifts.expiresInHours}h`)
+            html += row('code', debug.gifts.code)
         }
 
         if (debug.wrinklers && debug.wrinklers.active > 0) {

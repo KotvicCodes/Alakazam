@@ -47,6 +47,26 @@
     // spending pocket change: see the second rule in chooseAmount
     const SURPLUS_SHARE = 0.05
 
+    //* WAIT_LIMIT_S
+    // How long the engine will hold cookies back for something it cannot afford.
+    // A minute is generous: past that, buying the best thing already on the shelf
+    // wins, because it starts paying at once and its production shortens the wait
+    // for the expensive one rather than lengthening it. See the note in decide.
+    const WAIT_LIMIT_S = 60
+
+    //* secondsToAfford
+    // how long the bank needs to reach a price at the current rate. Zero when it
+    // is already there, Infinity when nothing is being produced, which reads as
+    // "never" and is exactly right: with no income, waiting achieves nothing.
+    function secondsToAfford(building, view) {
+        const short = building.price - view.cookies
+        if (!(short > 0)) return 0
+        const rate =
+            Number.isFinite(view.effectiveCps) && view.effectiveCps > 0 ? view.effectiveCps : view.cps
+        if (!Number.isFinite(rate) || rate <= 0) return Infinity
+        return short / rate
+    }
+
     //* paybackSeconds
     // how long the thing takes to pay for itself: price divided by the cookies per
     // second it adds. lower is better. returns Infinity when it cannot be scored.
@@ -328,7 +348,37 @@
             }
         }
 
-        // save up for the best building instead of buying a worse affordable one
+        //! Saving, and when to stop
+        // The best building is out of reach. Waiting for it is only right while it
+        // is nearly here: cookies held back earn nothing, whereas a building bought
+        // now starts paying immediately and brings the target closer rather than
+        // pushing it away.
+        //
+        // There used to be no limit on this at all. Whenever the top of the ranking
+        // was unaffordable the engine simply waited, however long that was going to
+        // take, and never looked at the rest of the list. Cursors rank top for most
+        // of a run and their price climbs 15% per cursor, so by the seven hundredth
+        // one they cost thousands of times the bank: the engine sat there for hours
+        // announcing "saving for Cursor" with a store full of buildings it could
+        // have bought outright many times over.
+        const away = secondsToAfford(bestBuilding, view)
+        const affordable = buildings.filter(b => b.affordable)
+
+        if (affordable.length > 0 && away > WAIT_LIMIT_S) {
+            const pick = affordable[0]
+            const runnerUp = affordable.length > 1 ? affordable[1].payback : Infinity
+            const amount = chooseAmount(pick, runnerUp, view.cookies)
+            const tier = crossesThreshold(pick.owned, amount) ? ', crosses tier' : ''
+            return {
+                action: 'buyBuilding',
+                target: pick,
+                amount,
+                payback: pick.payback,
+                measured: true,
+                reason: `${pick.name} x${amount}${tier}, ${bestBuilding.name} is ${formatDuration(away)} off`
+            }
+        }
+
         return {
             action: 'wait',
             target: bestBuilding,

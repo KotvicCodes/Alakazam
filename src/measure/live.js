@@ -154,32 +154,32 @@
     }
 
     //* readBuffs
-    // buffs render a name and a countdown. the name matters: spending magic on a
-    // golden cookie is only worth it under a production buff, and a click buff
-    // wants entirely different handling from a production one.
+    // How many buffs are running, and their elements. Nothing more, because there
+    // is nothing more here to read.
+    //
+    // This used to claim to read a name and a countdown off each buff. It could
+    // not: the game builds a buff as an icon crate containing a pie timer and no
+    // text whatsoever, so the name came back as the empty string every time and
+    // every caller matching on it got false. Identifying a buff needs its tooltip,
+    // which needs a hover, which is exactly what this file is not allowed to do.
+    // That work is in measure/buffs.js.
     function readBuffs() {
         const buffs = []
         document.querySelectorAll('#buffs .buff').forEach(b => {
-            const text = b.innerText || ''
-            const timeText = b.querySelector('.icon + div, .buffName ~ div')
-            buffs.push({
-                name: text.split('\n')[0].trim(),
-                text,
-                timeLeft: timeText ? firstNumberIn(timeText.innerText) : firstNumberIn(text),
-                element: b
-            })
+            buffs.push({ id: b.id || '', element: b })
         })
         return buffs
     }
 
-    //* productionBuffs
-    // the buffs that multiply cookies per second, which are the ones worth timing
-    // a Force the Hand of Fate cast against
-    const PRODUCTION_BUFFS =
-        /frenzy|dragon harvest|building special|high-five|congregation|luxuriant harvest|ore vein|oiled-up|juicy profits|fervent adoration|manabloom|delicious lifeforms|breakthrough|righteous cataclysm|golden ages|extra cycles|solar flare|winning streak|macrocosm|refactoring|cosmic nursery|brainstorm|deliciousness/i
-
+    //* hasProductionBuff
+    // whether anything is currently multiplying production.
+    //
+    // Delegated to measure/buffs.js, which loads after this file, so the lookup is
+    // deliberately made at call time rather than destructured at the top. Callers
+    // kept this name; only the thing answering it changed.
     function hasProductionBuff() {
-        return readBuffs().some(b => PRODUCTION_BUFFS.test(b.name))
+        const buffs = window.Alakazam.buffs
+        return buffs ? buffs.hasProductionBuff() : false
     }
 
     //* readWrinklers

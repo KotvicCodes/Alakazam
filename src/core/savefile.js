@@ -31,8 +31,14 @@
 
     //* Known-good game versions
     // the scalar section is positional with no field names, so its layout is
-    // version specific. on an unrecognised version we still parse, but flag the
-    // result so consumers fall back to the DOM instead of trusting field offsets.
+    // version specific. This list is what we have actually read the layout from.
+    //
+    // It is not a gate. It used to be: an unrecognised version marked the whole
+    // parse untrusted, which meant every game patch silently switched off
+    // everything that needs exact numbers, ascension included, until somebody
+    // noticed and added a string here. The invariants in scalarsLookSane are the
+    // real check, they are version independent, and they are what caught the last
+    // layout drift. An unfamiliar version is worth saying out loud and nothing more.
     const KNOWN_VERSIONS = ['2.052', '2.053', '2.048', '2.047']
 
     //* Building order
@@ -108,6 +114,15 @@
         'dragonAura2',
         'chimeType',
         'volume',
+        // Shiny wrinklers, written by Game.SaveWrinklers alongside the ordinary
+        // pair much further up the section. These two were missing, which put
+        // every field from here on two places out: `lumps` was reading the shiny
+        // wrinkler count, `lumpCurrentType` was reading the lump's start
+        // timestamp, and the layout check below rightly refused to trust any of
+        // it. That is what left the ascension planner saying "save not
+        // trustworthy" and the lump planner never harvesting or spending.
+        'wrinklersShiny',
+        'wrinklersShinyAmount',
         'lumps',
         'lumpsTotal',
         'lumpT',
@@ -142,9 +157,27 @@
         return s + (remainder === 2 ? '==' : '=')
     }
 
+    //* unescapeStored
+    // The game does not put its base64 into localStorage directly. Game.WriteSave
+    // stores `escape(base64 + '!END!')`, and Game.LoadSave calls `unescape` on the
+    // way back in, before it goes looking for the marker. Exported save codes are
+    // escaped the same way.
+    //
+    // escape() leaves most of the base64 alphabet alone but writes '=' as %3D, and
+    // it turns the marker's exclamation marks into %21. So skipping this step
+    // finds no marker to strip, hands a string full of percent signs to atob, and
+    // reports a perfectly good save as "save is not base64". Which is exactly what
+    // it did, on every save, in every real browser.
+    //
+    // Safe on input that was never escaped: base64 and the marker contain no
+    // percent sign, so there is nothing here for it to change.
+    function unescapeStored(raw) {
+        return typeof unescape === 'function' ? unescape(raw) : raw
+    }
+
     //* decodeDetailed
-    // undoes Game.WriteSave: strip the !END! marker, base64 decode, then undo the
-    // utf8 escaping the game applies before encoding.
+    // undoes Game.WriteSave: unescape, strip the !END! marker, base64 decode, then
+    // undo the utf8 escaping the game applies before encoding.
     //
     // This reports which step failed rather than a single null. Every failure used
     // to collapse into "could not decode save", which said nothing about whether
@@ -158,7 +191,7 @@
     // failure the raw bytes are used and the worst case is a mangled name.
     function decodeDetailed(raw) {
         if (!raw || typeof raw !== 'string') return { text: null, reason: 'no save found' }
-        const body = normalizeBase64(raw.split(END_MARKER)[0] || '')
+        const body = normalizeBase64(unescapeStored(raw).split(END_MARKER)[0] || '')
         if (!body) return { text: null, reason: 'save is not base64' }
 
         let binary = null
@@ -204,8 +237,25 @@
             fullDate: toNumber(bits[1]), // this save was first created
             lastDate: toNumber(bits[2]),
             bakeryName: bits[3] || '',
-            seed: bits[4] || ''
+            seed: bits[4] || '',
+            // the You building's clone appearance, seven comma-separated gene
+            // indices. It lives in the run section but outlives the run: only a
+            // hard reset clears it, not an ascension.
+            appearance: parseAppearance(bits[5])
         }
+    }
+
+    //* parseAppearance
+    // Game.YouCustomizer.save() is currentGenes.join(','). An empty or missing
+    // field means the customizer has never been touched, which is a different
+    // thing from every gene happening to be zero, so it comes back as null.
+    function parseAppearance(raw) {
+        if (!raw) return null
+        const genes = String(raw)
+            .split(',')
+            .map(g => toNumber(g))
+        if (genes.length === 0 || genes.some(g => !Number.isFinite(g))) return null
+        return genes
     }
 
     //* parseScalars
@@ -237,6 +287,9 @@
         // lumpT is a millisecond timestamp: sanity check it lands this century
         if (s.lumpT !== 0 && !(s.lumpT > 1e12 && s.lumpT < 4e12)) return false
         if (!(s.season >= 0)) return false
+        // the prestige fields are what ascension is decided on, so they get their
+        // own check rather than riding on the lump ones
+        if (!(s.resets >= 0) || !(s.prestige >= 0) || !(s.heavenlyChips >= 0)) return false
         return true
     }
 
@@ -462,12 +515,12 @@
 
         return {
             ok: true,
-            stale: !knownVersion || !scalars.trusted,
-            reason: knownVersion
-                ? scalars.trusted
-                    ? ''
-                    : 'scalar layout drifted'
-                : 'unknown game version',
+            stale: !scalars.trusted,
+            reason: !scalars.trusted
+                ? 'scalar layout drifted'
+                : knownVersion
+                  ? ''
+                  : `game version ${version} is newer than this parser was read against`,
             version,
             run: parseRun(sections[S_RUN]),
             prefs: parseBits(sections[S_PREFS]),

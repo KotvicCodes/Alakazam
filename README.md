@@ -36,9 +36,11 @@ Clicker, so the content scripts are loaded exactly as the manifest lists them an
 exercised without a browser.
 
 ## Todo
-- Pop wrinklers automatically (they are drawn on a canvas, so this needs hit-testing)
+- Pop wrinklers automatically (they are drawn on a canvas, so this needs hit-testing).
+  This is the one that now costs something: every ascension throws the hoard away
+- Golden cookie combos, which are the largest single source of cookies in the game
+- Redeem a gift code, which needs typing into one of the game's own text fields
 - Cookie-dunker, which needs the cookie to physically reach the milk
-- Ascension planning, loans and golden cookie combos
 
 Everything else that used to be here is done, and the larger plans have moved to
 [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -109,6 +111,10 @@ registers itself, so adding one is a file and a manifest line.
   rendered text only and hovers nothing, so a full pass is sub-millisecond.
 - `src/measure/catalog.js` — the cold path. Tooltip reads behind a mutex, one
   building and two upgrades per tick, and never while your real mouse is moving.
+- `src/measure/buffs.js` — what is currently boosting production, by name and by
+  how much of it is left. A buff renders as an icon and nothing else, so the name
+  comes from its tooltip and the time left is decoded out of the pie timer's
+  sprite offset.
 - `src/measure/save.js` — reparses the save only when its fingerprint changes.
 
 **Action**
@@ -116,11 +122,18 @@ registers itself, so adding one is a file and a manifest line.
 - `src/act/store.js` — owns the store's shared buy/sell mode and 1/10/100 amount,
   and always puts it back.
 - `src/act/drag.js` — the mousedown/move/up sequence the pantheon needs.
+- `src/act/ascend.js` — the ascension screen. Confirms a prompt only when the
+  prompt names itself in the DOM, because every confirmation in the game, up to
+  and including "Really wipe save", is the same `#promptOption0`.
+- `src/act/loans.js` — the bank's three loan slots, which nothing outside the
+  pre-ascension sequence may touch.
 
-**Decisions** — `src/strategy/score.js`, pure functions over a measured view.
+**Decisions** — `src/strategy/score.js` for purchases and
+`src/strategy/ascend.js` for prestige, both pure functions over measured data.
 
 **Modules** — `src/modules/*`: autoclick, shimmers, wrinklers, purchase, lumps,
-grimoire, pantheon, garden, market, achievements. Plus `src/hud.js`.
+grimoire, pantheon, garden, market, achievements, ascend, clones, gifts. Plus
+`src/hud.js`.
 
 ## Autobuy Strategy
 Buying used to be one purchase every couple of seconds, because measuring the
@@ -149,11 +162,26 @@ payback; and once a batch costs under a twentieth of the bank, take it, because
 the elapsed time of clicking singles costs more than the ordering efficiency it
 protects.
 
+It will hold cookies back for something better, but only for about a minute.
+Saving longer than that is a loss: cookies in the bank earn nothing, while a
+building bought now starts paying immediately and brings the expensive one
+closer. Past that limit it buys the best thing it can actually afford.
+
 ## What else it plays
 - **Sugar lumps** — harvests on ripe, where the game guarantees the lump, rather
-  than on mature, where it fails half the time. Spends them on the four minigame
-  unlocks first, then the garden's full plot, then click levels, and banks a
-  hundred for the production bonus.
+  than on mature, where it fails half the time. How long that takes is measured
+  off the lump's own sprite rather than assumed: several upgrades and Rigidel
+  shorten the ripening, and the lump falls an hour after it ripens either way, so
+  a save with all of them has lost the lump by hour 21. Spends them on the four
+  minigame unlocks first, then the garden's full plot, then click levels, and
+  banks a hundred for the production bonus.
+- **After an ascension** — for the first five minutes of a new run the store is
+  swept with the game's own "Buy all upgrades" button rather than picked through
+  one upgrade at a time. A returning run buys back a whole run's worth of
+  upgrades faster than anything can read them, and while everything on offer is
+  trivially cheap the order hardly matters. It needs the heavenly upgrade
+  "Inspired checklist", and it cannot buy the research that starts the
+  grandmapocalypse: the game's own button skips the tech pool.
 - **Garden** — reads the plot and seed log from the save, hunts the next reachable
   mutation, harvests anything that unlocks a seed or pays out, and switches to
   wood chips to triple mutation chances while hunting.
@@ -167,8 +195,24 @@ protects.
 - **Stock market** — the save records each good's hidden trend outright, so
   Alakazam trades on that. Switch trading off and it keeps reporting the signals
   without touching your money.
+- **Ascension** — follows the wiki's ascension guide: the next prestige target
+  above where the save already stands, then a fixed shopping order through the
+  heavenly tree. It never
+  leaves in the middle of a boost, because the cookies a running frenzy would have
+  made count toward prestige and pulling the lever early throws them away.
+- **Loans** — the bank's three loans are a bad deal in an ordinary run and close
+  to free immediately before an ascension, because the penalty belongs to the run
+  and the run is about to end. All three are taken, the forty second one last, and
+  the ascension happens inside its window. That is the "Debt evasion" achievement.
+- **Clones** — the first time a You is bought, the customizer is walked to the
+  look that earns "In her likeness" and then straight back to whatever the clones
+  were wearing, or to a preset if they were still on the game's default. It runs
+  once, in a single pass; after that the clones are yours to dress.
+- **Gift codes** — wraps a gift and keeps the code, ready for you to redeem after
+  the next ascension. Redeeming is not automated: it means typing into one of the
+  game's own text fields, which is a different kind of act from clicking.
 
 ## Future Improvements
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the full list, including ascension
-planning, pre-ascension loans, golden cookie combos, the dragon, seasons, and the
-stock market tick oracle.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full list, including wrinkler
+popping, golden cookie combos, the dragon, seasons, the stock market tick oracle,
+and redeeming gift codes.

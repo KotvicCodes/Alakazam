@@ -83,6 +83,132 @@ test('selling works and leaves the store back in buy mode', async () => {
     assert.equal(h.A.act.store.currentMode(), 'buy')
 })
 
+//! Screening upgrades
+
+test('the game own vault hint does not make an upgrade unbuyable', () => {
+    // Once "Inspired checklist" is owned the game appends this to the bottom of
+    // every upgrade tooltip in the store. The screen used to search the whole
+    // tooltip for the word "vault", so from that ascension onward every upgrade
+    // was classified skip and not one was ever bought again.
+    const C = boot({}).A.catalog
+    const hint = 'Click to purchase. Shift-click to vault.'
+    assert.equal(C.classifyUpgrade(`Cookie production multiplier +5%. ${hint}`, 'Plain cookies'), 'buy')
+    assert.equal(C.classifyUpgrade(`You gain more golden cookies. ${hint}`, 'Lucky day'), 'buy')
+    assert.equal(C.classifyUpgrade(`Upgrade is vaulted. ${hint}`, 'Elderwort biscuits'), 'buy')
+})
+
+test('the three doors into the grandmapocalypse stay shut', () => {
+    const C = boot({}).A.catalog
+    for (const name of ['One mind', 'Communal brainsweep', 'Elder pact']) {
+        assert.equal(C.classifyUpgrade('Each grandma gains +0.02 base CpS per grandma.', name), 'skip')
+    }
+    // and the pledges, which are state changes wearing a price tag
+    assert.equal(C.classifyUpgrade('Ends the grandmapocalypse.', 'Elder Pledge'), 'skip')
+})
+
+test('a crate whose name could not be read is left alone', () => {
+    const C = boot({}).A.catalog
+    assert.equal(C.classifyUpgrade('some description', ''), 'skip')
+})
+
+//! Buy all, early in a run
+
+const SWEEP_CRATES = [
+    { name: 'Reinforced index finger', price: 100, body: 'clicking gains +1% of your CpS' },
+    { name: 'Forwards from grandma', price: 1000, body: 'grandmas are twice as efficient' },
+    { name: 'One mind', price: 500, body: 'research', section: 'techUpgrades' }
+]
+
+function sweeper({ startedMinutesAgo = 0, buyAll = true, bank = 1e6 } = {}) {
+    return boot({
+        save: fx.save({ startDate: Date.now() - startedMinutesAgo * 60000 }).raw,
+        game: { buyAll, bank, crates: SWEEP_CRATES }
+    })
+}
+
+test('a new run has its store swept with the game own buy all button', async () => {
+    const h = sweeper()
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), true)
+    assert.equal(h.A.purchase.buyAll(), true)
+    assert.ok(h.game.state.log.includes('buy all'))
+    assert.ok(h.game.state.log.includes('buy upgrade Reinforced index finger'))
+})
+
+test('the sweep cannot reach the research that starts the grandmapocalypse', async () => {
+    // Game.storeBuyAll skips the tech pool outright, so this holds for the whole
+    // window rather than only while the research is still slow to arrive
+    const h = sweeper()
+    await h.A.store.ready('t')
+    h.A.purchase.buyAll()
+    assert.ok(!h.game.state.log.includes('buy upgrade One mind'))
+})
+
+test('the sweep stops once the run is no longer new', async () => {
+    const h = sweeper({ startedMinutesAgo: 20 })
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), false)
+    assert.equal(h.A.purchase.buyAll(), false)
+    assert.ok(!h.game.state.log.includes('buy all'))
+})
+
+test('the sweep is rate limited rather than pressed every tick', async () => {
+    const h = sweeper()
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.buyAll(), true)
+    assert.equal(h.A.purchase.buyAll(), false)
+    assert.equal(h.game.state.log.filter(l => l === 'buy all').length, 1)
+})
+
+test('a save without Inspired checklist has no button and is left alone', async () => {
+    const h = sweeper({ buyAll: false })
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), true)
+    assert.equal(h.A.purchase.buyAll(), false)
+})
+
+test('a save that cannot be read is not treated as a new run', async () => {
+    // no start date means no way to tell a fresh run from an established one, and
+    // sweeping an established store is the case the window exists to stay out of
+    const h = boot({ save: 'not a save at all', game: { buyAll: true, crates: SWEEP_CRATES } })
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), false)
+    assert.equal(h.A.purchase.buyAll(), false)
+})
+
+test('a run the save has not caught up with yet still counts as new', async () => {
+    // the save is rewritten on autosave, so for up to a minute after an ascension
+    // it still carries the old run's start date. That minute is the busiest part
+    // of the new run, and the sweep used to sit it out.
+    const h = boot({
+        save: fx.save({ startDate: Date.now() - 3 * 3600e3 }).raw,
+        game: { buyAll: true, crates: SWEEP_CRATES },
+        disk: { 'legacy:t': { runStartedAt: Date.now() - 5000 } }
+    })
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), true)
+    assert.equal(h.A.purchase.buyAll(), true)
+})
+
+test('a note left by an older ascension does not reopen the window', async () => {
+    const h = boot({
+        save: fx.save({ startDate: Date.now() - 3 * 3600e3 }).raw,
+        game: { buyAll: true, crates: SWEEP_CRATES },
+        disk: { 'legacy:t': { runStartedAt: Date.now() - 2 * 3600e3 } }
+    })
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), false)
+})
+
+test('the drain loop presses it on its own tick', async () => {
+    const h = sweeper()
+    await h.A.store.ready('t')
+    await h.A.registry.get('purchase').tick({ budget: h.A.scheduler.budget(60) })
+    assert.ok(h.game.state.log.includes('buy all'))
+    assert.equal(h.debug().buyAll.sweeping, true)
+    assert.ok(h.debug().buyAll.minutesLeft > 4)
+})
+
 //! Live measurement
 
 test('the live pass reads prices without touching the tooltip', () => {
@@ -186,6 +312,115 @@ test('lumps are banked at a hundred rather than spent', () => {
     const done = { 7: 1, 6: 1, 2: 9, 5: 1, 0: 12 }
     assert.equal(boot({ save: lumpSave(5, 60, done, OWNED) }).A.lumps.nextSpend(60), null)
     assert.ok(boot({ save: lumpSave(5, 150, done, OWNED) }).A.lumps.nextSpend(150))
+})
+
+//* lumpBoot
+// a save plus a page drawn at the same age, so the sprite and the timestamp
+// agree the way they do in a real game. `life` is how long lumps live on this
+// save, which upgrades and Rigidel shorten by hours.
+function lumpBoot({ hours, life = 24, lumps = 1, levels = {}, amounts = OWNED, askLumps } = {}) {
+    const age = hours * HOUR
+    return boot({
+        save: lumpSave(hours, lumps, levels, amounts),
+        game: { lumpLife: life, lumpAge: age, askLumps }
+    })
+}
+
+async function lumpTick(h) {
+    await h.A.store.ready('t')
+    await h.A.registry.get('lumps').tick()
+}
+
+test('a lump that ripens early is harvested early', async () => {
+    // Stevia Caelestis, Sugar aging process and Rigidel each take an hour off the
+    // ripening, and the fall follows an hour behind it. On this save the lump is
+    // ripe at 20 hours and gone at 21, so waiting for hour 23 harvests nothing.
+    //
+    // The sprite says nothing useful this late in a lump's life, which is exactly
+    // why the reading is taken all the way through and remembered.
+    const h = boot({
+        save: lumpSave(20.5, 1, {}, OWNED),
+        game: { lumpLife: 21, lumpAge: 20.5 * HOUR },
+        disk: { 'legacy:t': { lumpLifeSpan: 21 * HOUR } }
+    })
+    await h.A.store.ready('t')
+    assert.equal(h.A.lumps.lumpState().ripe, true)
+    await h.A.registry.get('lumps').tick()
+    assert.ok(h.game.state.log.includes('harvested a ripe lump'))
+})
+
+test('the same lump is left alone without that reading', async () => {
+    // nothing remembered and nothing legible on screen, so the base timings
+    // stand: an hour late is a cheap mistake, half a lump is not. The one
+    // deliberate early harvest holds off for the same reason.
+    const h = lumpBoot({ hours: 20.5, life: 21 })
+    await lumpTick(h)
+    const state = h.A.lumps.lumpState()
+    assert.equal(state.ripe, false)
+    assert.equal(state.measured, false)
+    assert.ok(!h.game.state.log.some(l => /harvest/.test(l)))
+})
+
+test('the shortened lifespan is measured off the lump sprite', () => {
+    const h = lumpBoot({ hours: 10, life: 21 })
+    assert.ok(Math.abs(h.A.lumps.lifeSpan() - 21 * HOUR) < 60000)
+    // and the same page with nothing shortening it reads as the full day
+    const plain = lumpBoot({ hours: 10, life: 24 })
+    assert.ok(Math.abs(plain.A.lumps.lifeSpan() - 24 * HOUR) < 60000)
+})
+
+test('an unreadable sprite falls back to the base timings', () => {
+    const h = lumpBoot({ hours: 10, life: 21 })
+    h.game.doc.getElementById('lumpsIcon').style.backgroundPosition = ''
+    // nothing was measured, so the twenty four hour base stands and the lump is
+    // not treated as ripe on the strength of a guess
+    assert.equal(h.A.lumps.lifeSpan(), 24 * HOUR)
+    assert.equal(h.A.lumps.lumpState().ripe, false)
+})
+
+test('an early lump is left alone until it is worth harvesting', async () => {
+    const h = lumpBoot({ hours: 12, life: 21, lumps: 0 })
+    await lumpTick(h)
+    assert.ok(!h.game.state.log.some(l => /harvest/.test(l)))
+})
+
+test('a lump is spent on the level badge in the building row', async () => {
+    const h = lumpBoot({ hours: 2, lumps: 1 })
+    await lumpTick(h)
+    // the Wizard tower, whose first level unlocks the Grimoire
+    assert.ok(h.game.state.log.includes('levelled Wizard tower'))
+})
+
+test("a spend confirmation is answered, and another module's prompt is not", async () => {
+    const h = lumpBoot({ hours: 2, lumps: 1, askLumps: true })
+    await lumpTick(h)
+    await sleep(200)
+    assert.ok(h.game.state.log.includes('levelled Wizard tower'))
+})
+
+test('no other prompt is answered on the way past', async () => {
+    // the game does not ask before a harvest, and does not ask about a level
+    // unless that preference is on. Confirming blindly meant clicking whatever
+    // prompt happened to be open, and the clone customizer's only option, at
+    // #promptOption0 like every other confirmation in the game, is Done.
+    const h = lumpBoot({ hours: 2, lumps: 1 })
+    h.game.openCustomizer()
+    await lumpTick(h)
+    await sleep(200)
+    assert.ok(h.game.state.log.includes('levelled Wizard tower'))
+    assert.ok(h.game.doc.getElementById('promptContentCustomizeYou'))
+})
+
+test('banked lumps are spent even when no lump is growing', async () => {
+    // lumpT of zero is "no lump on screen", which used to return before the
+    // spending half of the tick and quietly stall the levelling plan
+    const h = boot({
+        save: fx.save({ lumps: 1, lumpsTotal: 500, lumpT: 0, amounts: OWNED }).raw,
+        game: {}
+    })
+    assert.equal(h.A.lumps.lumpState(), null)
+    await lumpTick(h)
+    assert.ok(h.game.state.log.includes('levelled Wizard tower'))
 })
 
 //! Garden

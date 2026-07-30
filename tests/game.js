@@ -30,6 +30,10 @@ function build(opts = {}) {
         log: []
     }
 
+    // #game carries the mode classes the real game keys its stylesheet off, which
+    // is also how the extension tells the ascension screen from ordinary play
+    const gameEl = new El('div', { id: 'game' })
+    doc.body.append(gameEl)
     doc.body.append(new El('div', { id: 'bigCookie' }))
     const cookies = new El('div', { id: 'cookies' })
     const cpsEl = new El('div', { id: 'cookiesPerSecond' })
@@ -170,8 +174,36 @@ function build(opts = {}) {
     let nextUpgradeId = 0
     const perSection = {}
 
+    // ---- buy all ----
+    // Only present once "Inspired checklist" is owned. Game.storeBuyAll walks the
+    // store cheapest first and buys anything that is not vaulted and not in the
+    // toggle or tech pools, which is why the research that starts the
+    // grandmapocalypse is out of its reach.
+    const buyAllTargets = []
+    if (opts.buyAll) {
+        const wrap = new El('div', { id: 'storeBuyAll', class: 'storePre' })
+        const button = new El('div', { id: 'storeBuyAllButton', class: 'storePreButton' })
+        button.addEventListener('click', () => {
+            state.log.push('buy all')
+            buyAllTargets
+                .slice()
+                .sort((a, b) => a.price - b.price)
+                .forEach(c => {
+                    if (state.bank < c.price) return
+                    state.bank -= c.price
+                    state.log.push(`buy upgrade ${c.name}`)
+                })
+        })
+        wrap.append(button)
+        store.append(wrap)
+    }
+
     CRATES.forEach(c => {
         const where = c.section || 'upgrades'
+        // the vault and the two excluded pools are exactly what Buy all skips
+        if (where === 'upgrades' || where === 'techUpgrades') {
+            if (where === 'upgrades') buyAllTargets.push(c)
+        }
         const box = sections[where]
         perSection[where] = perSection[where] || 0
         const id = nextUpgradeId++
@@ -193,11 +225,387 @@ function build(opts = {}) {
         box.append(el)
     })
 
-    doc.body.append(
-        new El('div', { id: 'shimmers' }),
-        new El('div', { id: 'buffs' }),
-        new El('div', { id: 'wrinklers' })
-    )
+    const buffsEl = new El('div', { id: 'buffs' })
+    doc.body.append(new El('div', { id: 'shimmers' }), buffsEl, new El('div', { id: 'wrinklers' }))
+
+    // ---- buffs ----
+    // A real buff is an icon crate with a pie timer inside it and no text at all:
+    // the name is only in the tooltip and the time left is only in the pie timer's
+    // sprite offset. Both are modelled here, because both are the only way to read
+    // one, and a fake that rendered a helpful label would test nothing.
+    let nextBuffId = 0
+    const buffsByName = new Map()
+
+    //* gainBuff
+    // `progress` is how much of the buff has elapsed, 0 to 1, matching the game's
+    // own T = (1 - time/maxTime) encoding
+    function gainBuff(name, progress = 0) {
+        const id = 'buff' + nextBuffId++
+        const el = new El('div', { id, class: 'crate enabled buff' })
+        buffsByName.set(name, el)
+        const step = Math.floor(Math.min(143, Math.max(0, progress * 144)))
+        const timer = new El('div', {
+            id: 'buffPieTimer' + id,
+            class: 'pieTimer',
+            style: {
+                backgroundPosition: `${-(step % 18) * 48}px ${-Math.floor(step / 18) * 48}px`
+            }
+        })
+        el.append(timer)
+        el.addEventListener('mouseover', () => setTooltip(name, '', `${name} is running`))
+        buffsEl.append(el)
+        return { id, element: el, setProgress: p => setBuffProgress(el, p) }
+    }
+
+    function setBuffProgress(el, progress) {
+        const timer = el.querySelector('.pieTimer')
+        const step = Math.floor(Math.min(143, Math.max(0, progress * 144)))
+        timer.style.backgroundPosition = `${-(step % 18) * 48}px ${-Math.floor(step / 18) * 48}px`
+    }
+
+    function loseBuff(name) {
+        const el = buffsByName.get(name)
+        if (!el) return
+        buffsByName.delete(name)
+        buffsEl.children = buffsEl.children.filter(x => x !== el)
+    }
+
+    //* progressBuff
+    // move a named buff along its timer, which is how a test walks a loan window
+    // down toward the moment the ascension has to happen
+    function progressBuff(name, progress) {
+        const el = buffsByName.get(name)
+        if (el) setBuffProgress(el, progress)
+    }
+
+    // ---- bank loans ----
+    // three slots, revealed by office level and switched off while already running
+    const loanEls = {}
+    state.loansTaken = []
+    for (const id of [1, 2, 3]) {
+        const needs = { 1: 2, 2: 4, 3: 5 }[id]
+        const el = new El('div', { id: 'bankLoan' + id, class: 'bankButton bankButtonSell' })
+        if ((opts.officeLevel || 0) < needs) el.style.display = 'none'
+        el.addEventListener('click', () => {
+            if (el.classList.contains('bankButtonOff')) return
+            el.classList.add('bankButtonOff')
+            state.loansTaken.push(id)
+            state.log.push(`loan ${id}`)
+            gainBuff('Loan ' + id, opts.loanProgress != null ? opts.loanProgress : 0)
+        })
+        loanEls[id] = el
+        doc.body.append(el)
+    }
+
+    // ---- ascension ----
+    // The real sequence is Legacy button -> a named prompt -> five seconds of
+    // animation -> the heavenly tree -> Reincarnate -> another named prompt. Every
+    // one of those steps is modelled, because the extension's safety rule is that
+    // it only ever confirms a prompt it can name, and that rule is only worth
+    // anything if a test can put the wrong prompt up.
+    const HEAVENLY = opts.heavenly || []
+    state.chips = opts.chips != null ? opts.chips : 0
+    state.heavenlyBought = []
+    state.permanent = null
+
+    const legacy = new El('div', { id: 'legacyButton' })
+    const promptAnchor = new El('div', { id: 'promptAnchor' })
+    const promptContent = new El('div', { id: 'promptContent' })
+    promptAnchor.append(promptContent)
+    const ascendUpgrades = new El('div', { id: 'ascendUpgrades' })
+    const ascendHCs = new El('div', { id: 'ascendHCs' })
+    const ascendPrestige = new El('div', { id: 'ascendPrestige' })
+    const ascendButton = new El('a', { id: 'ascendButton' })
+    doc.body.append(legacy, promptAnchor, ascendUpgrades, ascendHCs, ascendPrestige, ascendButton)
+
+    //* prompt
+    // mirrors Game.Prompt: the content is wrapped in a div named after the prompt,
+    // and the options become #promptOption0, #promptOption1 and so on
+    function prompt(name, options, extra) {
+        promptContent.children = []
+        const inner = new El('div', { id: 'promptContent' + name })
+        if (extra) extra(inner)
+        promptContent.append(inner)
+        options.forEach(([label, onClick], i) => {
+            const opt = new El('a', { id: 'promptOption' + i, class: 'option', text: label })
+            opt.addEventListener('click', () => {
+                closePrompt()
+                onClick && onClick()
+            })
+            promptContent.append(opt)
+        })
+        state.log.push(`prompt ${name}`)
+    }
+    function closePrompt() {
+        promptContent.children = []
+    }
+
+    function setMode(cls) {
+        gameEl.classes = new Set(cls ? [cls] : [])
+    }
+
+    function drawTree() {
+        ascendHCs.children = []
+        ascendHCs.append(new El('span', { class: 'price', text: fmt(state.chips) }))
+        ascendPrestige.innerText = String(opts.prestige || 0)
+        ascendUpgrades.children = []
+        // the tree draws one decorative crate with no data-id behind the real ones
+        ascendUpgrades.append(new El('div', { class: 'crate upgrade heavenly' }))
+        // A bought upgrade stays on the tree, carrying `enabled`. That matters:
+        // Game.Upgrade.buy runs the upgrade's activateFunction whenever it is
+        // clicked and already owned, outside the branch that checks whether
+        // anything was actually purchased, so clicking an owned permanent slot
+        // reopens its picker for free, forever.
+        HEAVENLY.forEach(u => {
+            const owned = state.heavenlyBought.indexOf(u.name) !== -1
+            const locked = !owned && u.needs && state.heavenlyBought.indexOf(u.needs) === -1
+            const crate = new El('div', {
+                id: 'heavenlyUpgrade' + u.id,
+                class: locked
+                    ? 'crate upgrade heavenly ghosted'
+                    : owned
+                      ? 'crate upgrade heavenly enabled'
+                      : 'crate upgrade heavenly'
+            })
+            crate.setAttribute('data-id', String(u.id))
+            crate.addEventListener('mouseover', () => setTooltip(u.name, fmt(u.cost), u.name))
+            if (!locked) {
+                crate.addEventListener('click', () => {
+                    if (owned) {
+                        // no chips move, but the slot's activateFunction still runs
+                        state.log.push(`RECLICK ${u.name}`)
+                        if (u.slot) openSlotPicker(u, false)
+                        return
+                    }
+                    // the game checks affordability inside its own handler, so a
+                    // crate can look buyable and quietly refuse
+                    if (state.chips < u.cost) {
+                        state.log.push(`REJECT heavenly ${u.name}`)
+                        return
+                    }
+                    state.chips -= u.cost
+                    state.heavenlyBought.push(u.name)
+                    state.log.push(`heavenly ${u.name}`)
+                    // buying a slot opens its picker straight away, same function
+                    if (u.slot) openSlotPicker(u, true)
+                    else drawTree()
+                })
+            }
+            ascendUpgrades.append(crate)
+        })
+    }
+
+    function openSlotPicker(slot, justBought) {
+        state.log.push(`picker ${slot.name}`)
+        let chosen = null
+        prompt(
+            'PickPermaUpgrade',
+            [
+                [
+                    'Confirm',
+                    () => {
+                        state.permanent = chosen
+                        state.log.push(`permanent ${chosen}`)
+                        drawTree()
+                    }
+                ],
+                ['Cancel', () => drawTree()]
+            ],
+            inner => {
+                ;(opts.permanentChoices || []).forEach(c => {
+                    const crate = new El('div', {
+                        id: 'upgradeForPermanent' + c.id,
+                        class: 'crate upgrade'
+                    })
+                    crate.setAttribute('data-id', String(c.id))
+                    crate.addEventListener('mouseover', () =>
+                        setTooltip(c.name, fmt(c.price || 0), c.name)
+                    )
+                    crate.addEventListener('click', () => {
+                        chosen = c.name
+                    })
+                    inner.append(crate)
+                })
+            }
+        )
+    }
+
+    legacy.addEventListener('click', () => {
+        prompt('Ascend', [
+            [
+                'Ascend',
+                () => {
+                    setMode('ascending')
+                    drawTree()
+                }
+            ],
+            ['Cancel']
+        ])
+    })
+
+    ascendButton.addEventListener('click', () => {
+        prompt('Reincarnate', [
+            [
+                'Yes',
+                () => {
+                    setMode('')
+                    state.log.push('reincarnated')
+                }
+            ],
+            ['No']
+        ])
+    })
+
+    // ---- the options menu and gift codes ----
+    // The Send and Redeem buttons only exist once the Wrapping paper heavenly
+    // upgrade is owned, which is exactly why the extension looks for them rather
+    // than trying to read an upgrade id out of the save.
+    const prefsButton = new El('div', { id: 'prefsButton', class: 'panelButton' })
+    const menu = new El('div', { id: 'menu' })
+    doc.body.append(prefsButton, menu)
+
+    function drawMenu() {
+        menu.children = []
+        if (!prefsButton.classList.contains('selected')) return
+        if (!opts.wrappingPaper) return
+        const box = new El('div', { id: 'giftStuff', class: 'optionBox' })
+        const send = new El('a', { class: 'option', text: 'Send' })
+        const redeem = new El('a', { class: 'option', text: 'Redeem' })
+        send.addEventListener('click', () => {
+            prompt('GiftSend', [
+                [
+                    'Wrap',
+                    () => {
+                        state.log.push('wrapped a gift')
+                        gainBuff('Gifted out', 0)
+                        prompt('GiftSendReady', [['Done']], inner => {
+                            const input = new El('input', { id: 'giftCode' })
+                            input.value = opts.giftCode || 'TUFJTHwxMjN8NTB8LXx8'
+                            inner.append(input)
+                        })
+                    }
+                ],
+                ['Cancel']
+            ])
+        })
+        box.append(send, redeem)
+        menu.append(box)
+    }
+
+    prefsButton.addEventListener('click', () => {
+        const open = prefsButton.classList.contains('selected')
+        if (open) prefsButton.classList.remove('selected')
+        else prefsButton.classList.add('selected')
+        drawMenu()
+    })
+
+    // ---- sugar lumps ----
+    // The lump itself, the two stacked sprites it is drawn with, and the level
+    // badge on each building's row. The badge is deliberately not inside the
+    // store product: in the real game it lives in the row over on the other side
+    // of the page, which is the whole reason levelling never worked.
+    //
+    // `lumpLife` is how long a lump lives on this save, in hours, and the sprites
+    // are drawn from it exactly the way Game.DrawLumps does.
+    const lumpLife = (opts.lumpLife != null ? opts.lumpLife : 24) * 3600000
+    const lumpsEl = new El('div', { id: 'lumps' })
+    const lumpsIcon = new El('div', { id: 'lumpsIcon' })
+    const lumpsIcon2 = new El('div', { id: 'lumpsIcon2' })
+    lumpsEl.append(lumpsIcon, lumpsIcon2)
+    doc.body.append(lumpsEl)
+
+    function drawLumps(ageMs) {
+        const sevenths = (ageMs / lumpLife) * 7
+        const phase = Math.min(6, Math.floor(sevenths))
+        const phase2 = Math.min(6, Math.floor(sevenths) + 1)
+        let opacity = Math.min(6, sevenths) % 1
+        if (phase >= 6) opacity = 1
+        lumpsIcon.style.backgroundPosition = `${-(23 + Math.min(phase, 5)) * 48}px ${-14 * 48}px`
+        lumpsIcon2.style.backgroundPosition = `${-(23 + phase2) * 48}px ${-14 * 48}px`
+        lumpsIcon2.style.opacity = String(opacity)
+    }
+    state.lumpAge = opts.lumpAge != null ? opts.lumpAge : 0
+    drawLumps(state.lumpAge)
+
+    lumpsEl.addEventListener('click', () => {
+        // the game harvests silently, and never asks first. A lump clicked before
+        // it is ripe yields nothing half the time, which is what the two entries
+        // in the log are there to tell apart.
+        if (state.lumpAge >= lumpLife - 3600000) state.log.push('harvested a ripe lump')
+        else if (state.lumpAge >= lumpLife - 4 * 3600000) state.log.push('harvested an unripe lump')
+    })
+
+    const levelBadges = []
+    BUILDINGS.forEach((b, i) => {
+        const row = new El('div', { class: 'row', id: 'row' + i })
+        const badge = new El('div', { id: 'productLevel' + i, class: 'productButton productLevel' })
+        badge.addEventListener('click', () => {
+            // the game only asks when the "confirm lump spends" preference is on
+            if (!opts.askLumps) {
+                state.log.push('levelled ' + BUILDINGS[i][0])
+                return
+            }
+            prompt('SpendLump', [['Yes', () => state.log.push('levelled ' + BUILDINGS[i][0])], ['No']])
+        })
+        row.append(badge)
+        levelBadges.push(badge)
+        doc.body.append(row)
+    })
+
+    // ---- the You building's clone customizer ----
+    // Seven genes, each a wrapping list stepped with a pair of arrows. The arrows
+    // print the current index plus one, and the achievement check lives inside the
+    // step handler rather than with the genes, so importing a matching appearance
+    // wins nothing. Both of those are modelled, because both are the point.
+    const GENE_IDS = ['hair', 'hairCol', 'skinCol', 'head', 'face', 'acc1', 'acc2']
+    const GENE_SIZES = [17, 18, 15, 5, 10, 36, 36]
+    state.genes = (opts.genes || [0, 1, 0, 0, 0, 0, 0]).slice()
+    state.likenessWon = false
+
+    const youRow = new El('div', { class: 'row', id: 'row' + 19 })
+    youRow.append(new El('a', { class: 'smallFancyButton framed onlyOnCanvas', text: 'Customize' }))
+    doc.body.append(youRow)
+
+    function checkLikeness() {
+        const [hair, hairCol, , head, , acc1, acc2] = state.genes
+        if (
+            hair === 9 &&
+            (hairCol === 1 || hairCol === 6) &&
+            (head === 2 || head === 3) &&
+            (acc1 === 2 || acc1 === 3 || acc2 === 2 || acc2 === 3) &&
+            (acc1 === 0 || acc2 === 0)
+        ) {
+            if (!state.likenessWon) state.log.push('achievement In her likeness')
+            state.likenessWon = true
+        }
+    }
+
+    function offsetGene(index, off) {
+        if (off === 0) return
+        const size = GENE_SIZES[index]
+        state.genes[index] = (((state.genes[index] + off) % size) + size) % size
+        const readout = doc.getElementById('customizerSelect-N-' + GENE_IDS[index])
+        if (readout) readout.innerText = String(state.genes[index] + 1)
+        // the game only runs its check here, on a real step
+        checkLikeness()
+    }
+
+    function openCustomizer() {
+        prompt('CustomizeYou', [['Done']], inner => {
+            GENE_IDS.forEach((id, i) => {
+                const left = new El('a', { id: 'customizerSelect-L-' + id, text: '<' })
+                const num = new El('div', {
+                    id: 'customizerSelect-N-' + id,
+                    text: String(state.genes[i] + 1)
+                })
+                const right = new El('a', { id: 'customizerSelect-R-' + id, text: '>' })
+                left.addEventListener('click', () => offsetGene(i, -1))
+                right.addEventListener('click', () => offsetGene(i, 1))
+                inner.append(left, num, right)
+            })
+        })
+    }
+    youRow.children[0].addEventListener('click', openCustomizer)
 
     function refresh() {
         cookies.innerText = `${fmt(state.bank)}\ncookies\nper second : ${state.cps}`
@@ -210,13 +618,52 @@ function build(opts = {}) {
     }
     refresh()
 
-    return { doc, state, refresh, tooltip, bulk, BUILDINGS, unitPrice, sumPrice, selectAmount }
+    return {
+        doc,
+        state,
+        refresh,
+        tooltip,
+        bulk,
+        BUILDINGS,
+        unitPrice,
+        sumPrice,
+        selectAmount,
+        prompt,
+        closePrompt,
+        setMode,
+        drawTree,
+        gainBuff,
+        loseBuff,
+        progressBuff,
+        setBuffProgress,
+        loanEls,
+        openCustomizer,
+        GENE_IDS,
+        drawLumps,
+        lumpsEl,
+        levelBadges
+    }
 }
 
 function fmt(n) {
     n = Math.round(n)
     if (n < 1e6) return n.toLocaleString('en-US')
+    // the game's own ladder. It has to run this far up because kitten prices do:
+    // the strongest are past 1e50, and a permanent slot is picked by comparing them
     const units = [
+        [1e63, 'vigintillion'],
+        [1e60, 'novemdecillion'],
+        [1e57, 'octodecillion'],
+        [1e54, 'septendecillion'],
+        [1e51, 'sexdecillion'],
+        [1e48, 'quindecillion'],
+        [1e45, 'quattuordecillion'],
+        [1e42, 'tredecillion'],
+        [1e39, 'duodecillion'],
+        [1e36, 'undecillion'],
+        [1e33, 'decillion'],
+        [1e30, 'nonillion'],
+        [1e27, 'octillion'],
         [1e24, 'septillion'],
         [1e21, 'sextillion'],
         [1e18, 'quintillion'],
