@@ -134,19 +134,46 @@
     // Everything else in the research tree is a plain multiplier and is bought.
     const GRANDMAPOCALYPSE = ['one mind', 'communal brainsweep', 'elder pact']
 
-    //* classifyUpgrade
-    // 'skip'  -> toggles, pledges, season switchers: never auto-buy
+    //* NEVER_BUY
+    // Everything screened out, by exact name. The pledges and the sugar frenzy
+    // switch are state changes dressed up as purchases; they live in
+    // #toggleUpgrades, which measure/live.js does not read, so listing them here
+    // is a second lock on a door that is already shut.
+    const NEVER_BUY = GRANDMAPOCALYPSE.concat([
+        'elder pledge',
+        'elder covenant',
+        'revoke elder covenant',
+        'sugar frenzy'
+    ])
+
+    //! classifyUpgrade
+    // 'skip'  -> never auto-buy
     // 'buy'   -> ordinary production/click upgrades: safe to auto-buy
     //
-    // The name is matched separately from the tooltip body where it is known,
-    // because a phrase common enough to appear in flavour text is too blunt to
-    // screen a whole upgrade on.
+    // It matches on the name alone, and it is worth saying why, because this used
+    // to read the whole tooltip and that quietly switched upgrade buying off for
+    // the rest of the game.
+    //
+    // The screen included the word "vault". Once the heavenly upgrade "Inspired
+    // checklist" is owned, the game appends its own hint to the bottom of every
+    // upgrade tooltip in the store:
+    //
+    //   Click to purchase. Shift-click to vault.
+    //
+    // So from that ascension onward every upgrade matched, every upgrade was
+    // classified 'skip', and not one was ever bought again. The prose in a tooltip
+    // belongs to the game and can say anything it likes; the name is the only part
+    // of it that identifies the upgrade, so the name is what is screened.
+    //
+    // Narrowing it costs nothing. Toggles, pledges and anything the player has
+    // vaulted are in store sections that are never read, so they do not reach
+    // here, and the three doors into the grandmapocalypse are named outright.
     function classifyUpgrade(text, name) {
-        const t = (text || '').toLowerCase()
         const n = (name || '').toLowerCase().trim()
-        if (n && GRANDMAPOCALYPSE.indexOf(n) !== -1) return 'skip'
-        if (/switch|toggle|pledge|covenant|\bpact\b|turn all|vault|elder/.test(t)) return 'skip'
-        return 'buy'
+        // an unnamed crate cannot be checked against the list, and the list is
+        // what stands between us and the grandmapocalypse
+        if (!n) return 'skip'
+        return NEVER_BUY.indexOf(n) !== -1 ? 'skip' : 'buy'
     }
 
     async function refreshCrate(crate) {

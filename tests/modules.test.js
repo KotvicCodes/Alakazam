@@ -83,6 +83,34 @@ test('selling works and leaves the store back in buy mode', async () => {
     assert.equal(h.A.act.store.currentMode(), 'buy')
 })
 
+//! Screening upgrades
+
+test('the game own vault hint does not make an upgrade unbuyable', () => {
+    // Once "Inspired checklist" is owned the game appends this to the bottom of
+    // every upgrade tooltip in the store. The screen used to search the whole
+    // tooltip for the word "vault", so from that ascension onward every upgrade
+    // was classified skip and not one was ever bought again.
+    const C = boot({}).A.catalog
+    const hint = 'Click to purchase. Shift-click to vault.'
+    assert.equal(C.classifyUpgrade(`Cookie production multiplier +5%. ${hint}`, 'Plain cookies'), 'buy')
+    assert.equal(C.classifyUpgrade(`You gain more golden cookies. ${hint}`, 'Lucky day'), 'buy')
+    assert.equal(C.classifyUpgrade(`Upgrade is vaulted. ${hint}`, 'Elderwort biscuits'), 'buy')
+})
+
+test('the three doors into the grandmapocalypse stay shut', () => {
+    const C = boot({}).A.catalog
+    for (const name of ['One mind', 'Communal brainsweep', 'Elder pact']) {
+        assert.equal(C.classifyUpgrade('Each grandma gains +0.02 base CpS per grandma.', name), 'skip')
+    }
+    // and the pledges, which are state changes wearing a price tag
+    assert.equal(C.classifyUpgrade('Ends the grandmapocalypse.', 'Elder Pledge'), 'skip')
+})
+
+test('a crate whose name could not be read is left alone', () => {
+    const C = boot({}).A.catalog
+    assert.equal(C.classifyUpgrade('some description', ''), 'skip')
+})
+
 //! Buy all, early in a run
 
 const SWEEP_CRATES = [
@@ -146,6 +174,30 @@ test('a save that cannot be read is not treated as a new run', async () => {
     await h.A.store.ready('t')
     assert.equal(h.A.purchase.inBuyAllWindow(), false)
     assert.equal(h.A.purchase.buyAll(), false)
+})
+
+test('a run the save has not caught up with yet still counts as new', async () => {
+    // the save is rewritten on autosave, so for up to a minute after an ascension
+    // it still carries the old run's start date. That minute is the busiest part
+    // of the new run, and the sweep used to sit it out.
+    const h = boot({
+        save: fx.save({ startDate: Date.now() - 3 * 3600e3 }).raw,
+        game: { buyAll: true, crates: SWEEP_CRATES },
+        disk: { 'legacy:t': { runStartedAt: Date.now() - 5000 } }
+    })
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), true)
+    assert.equal(h.A.purchase.buyAll(), true)
+})
+
+test('a note left by an older ascension does not reopen the window', async () => {
+    const h = boot({
+        save: fx.save({ startDate: Date.now() - 3 * 3600e3 }).raw,
+        game: { buyAll: true, crates: SWEEP_CRATES },
+        disk: { 'legacy:t': { runStartedAt: Date.now() - 2 * 3600e3 } }
+    })
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), false)
 })
 
 test('the drain loop presses it on its own tick', async () => {

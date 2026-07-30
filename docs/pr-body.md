@@ -212,9 +212,43 @@ skips the vault, the toggle pool and the tech pool, and the research that starts
 it is tech — so that holds for the whole window rather than resting on it being
 short.
 
+## Three things a long run turned up
+
+**No store upgrade had been bought since "Inspired checklist".** `classifyUpgrade`
+screened the whole tooltip for a handful of words, one of which was "vault". Once
+that heavenly upgrade is owned the game appends its own hint to the bottom of
+every upgrade tooltip in the store:
+
+> Click to purchase. Shift-click to vault.
+
+So from that ascension onward every upgrade matched, every upgrade was classified
+`skip`, and not one was ever bought again — cookie upgrades, golden cookie
+upgrades, the lot. It screens on the name now. Nothing is lost by narrowing it:
+toggles, pledges and anything the player has vaulted live in store sections
+`measure/live.js` does not read at all, and the three doors into the
+grandmapocalypse are named outright.
+
+**The engine would sit and save forever.** When the top-ranked building was
+unaffordable, `decide` waited — and never looked at the rest of the list. Cursors
+rank top for most of a run and their price climbs 15% per cursor, so by the seven
+hundredth one they cost thousands of times the bank. The panel read "saving for
+Cursor" for hours with a store full of buildings that could have been bought
+outright many times over.
+
+Waiting is only right while the target is nearly here, because held cookies earn
+nothing while a building bought now starts paying at once and shortens the wait
+rather than lengthening it. Past a minute it buys the best thing actually on the
+shelf.
+
+**The buy-all sweep started a minute into a run, not at the top of it.** It read
+the run's age from the save, and the save is rewritten on autosave, so for up to a
+minute after an ascension it still carries the previous run's start date. The
+ascension module notes the moment it reincarnates now, and the younger of the two
+readings wins.
+
 ## Verification
 
-`npm test` — 215 tests under `node --test`, green. New coverage: the prestige
+`npm test` — 224 tests under `node --test`, green. New coverage: the prestige
 formula against the guide's milestones, target selection and the doubling fallback,
 buying in plan order, never touching a ghosted or off-plan crate, refusing an
 unnamed prompt, the stale-save guard, loan ordering, ascending inside the loan
@@ -225,7 +259,9 @@ drifted one, measuring a shortened lump lifespan and
 harvesting inside it, spending a lump on the row badge, answering only the
 prompt that names itself, never clicking an upgrade the save already owns, and
 ranking the permanent slot by price, and
-sweeping a new run's store without ever reaching the tech pool.
+sweeping a new run's store without ever reaching the tech pool, buying an upgrade
+whose tooltip carries the game's own vault hint, and buying the best affordable
+building rather than saving forever for one that is hours away.
 
 The fake Cookie Clicker grew an ascension screen, a heavenly tree with
 prerequisites and refusals, a permanent slot picker, named prompts, buffs with real

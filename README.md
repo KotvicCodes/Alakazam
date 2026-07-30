@@ -162,6 +162,11 @@ payback; and once a batch costs under a twentieth of the bank, take it, because
 the elapsed time of clicking singles costs more than the ordering efficiency it
 protects.
 
+It will hold cookies back for something better, but only for about a minute.
+Saving longer than that is a loss: cookies in the bank earn nothing, while a
+building bought now starts paying immediately and brings the expensive one
+closer. Past that limit it buys the best thing it can actually afford.
+
 ## What else it plays
 - **Sugar lumps** — harvests on ripe, where the game guarantees the lump, rather
   than on mature, where it fails half the time. How long that takes is measured

@@ -22,7 +22,7 @@
 
     const { simulateClick } = window.Alakazam.input
     const { decide, sumPrice } = window.Alakazam.strategy
-    const { live, catalog, save, registry, act, clicks } = window.Alakazam
+    const { live, catalog, save, store, registry, act, clicks } = window.Alakazam
     const { BASE_PRODUCTION } = window.Alakazam.data.buildings
 
     const INTERVAL_MS = 250
@@ -148,8 +148,21 @@
     // this window exists to stay out of.
     function runAge() {
         const s = save.get()
-        if (!s.ok || !s.run || !s.run.startDate) return NaN
-        return Date.now() - s.run.startDate
+        const fromSave = s.ok && s.run && s.run.startDate ? Date.now() - s.run.startDate : NaN
+
+        // The save is rewritten on autosave, so for up to a minute after an
+        // ascension it still carries the previous run's start date and this would
+        // read a brand new run as an old one -- which is why the sweep used to
+        // begin a minute into a run rather than at the top of it. The ascension
+        // module notes the moment it reincarnated, and that is available at once.
+        const noted = store.get('runStartedAt', 0)
+        const fromNote = noted > 0 ? Date.now() - noted : NaN
+
+        // the younger of the two readings is the fresher information. A note left
+        // by an earlier ascension is simply older than the save and loses.
+        if (!Number.isFinite(fromSave)) return fromNote
+        if (!Number.isFinite(fromNote)) return fromSave
+        return Math.min(fromSave, fromNote)
     }
 
     function inBuyAllWindow() {

@@ -236,6 +236,52 @@ test('waits rather than buying a worse building', () => {
     assert.equal(decision.amount, 0)
 })
 
+test('waiting stops once the target is more than a minute off', () => {
+    // The cursor line ranks top and has climbed out of reach, which is what
+    // happens to it in every long run: its price grows 15% per cursor. With no
+    // limit on the wait the engine sat here for hours announcing "saving for
+    // Cursor" while the shelf was full of buildings it could buy outright.
+    const v = view({ cps: 1000, cookies: 1e6 })
+    v.buildings = [
+        // the best payback on the board, and thoroughly out of reach
+        { name: 'Cursor', owned: 700, price: 1e12, perUnitCps: 1e10, baseCps: 0.1, affordable: false },
+        { name: 'Grandma', owned: 50, price: 5000, perUnitCps: 4, baseCps: 1, affordable: true }
+    ]
+    const decision = S.decide(v)
+    assert.equal(decision.action, 'buyBuilding')
+    assert.equal(decision.target.name, 'Grandma')
+    assert.match(decision.reason, /Cursor is .* off/)
+})
+
+test('but it still waits when the target is nearly here', () => {
+    // a thousand cookies short at a thousand a second is one second away, and
+    // buying something worse first would only push it back
+    const v = view({ cps: 1000, cookies: 1e6 })
+    v.buildings = [
+        { name: 'Farm', owned: 24, price: 1e6 + 1000, perUnitCps: 2000, baseCps: 8, affordable: false },
+        { name: 'Grandma', owned: 50, price: 5000, perUnitCps: 4, baseCps: 1, affordable: true }
+    ]
+    const decision = S.decide(v)
+    assert.equal(decision.action, 'wait')
+    assert.equal(decision.target.name, 'Farm')
+})
+
+test('with nothing coming in, waiting is never the answer', () => {
+    // no production means the bank never grows, so a wait would last forever
+    const v = view({ cps: 0, effectiveCps: 0, cookies: 1e6 })
+    v.buildings = [
+        { name: 'Cursor', owned: 700, price: 1e12, perUnitCps: 1e10, baseCps: 0.1, affordable: false },
+        { name: 'Grandma', owned: 50, price: 5000, perUnitCps: 4, baseCps: 1, affordable: true }
+    ]
+    assert.equal(S.decide(v).action, 'buyBuilding')
+})
+
+test('nothing affordable at all is still a wait', () => {
+    const v = view({ cps: 1000, cookies: 10 })
+    v.buildings = v.buildings.map(b => ({ ...b, affordable: false }))
+    assert.equal(S.decide(v).action, 'wait')
+})
+
 test('reports nothing scorable when there is nothing to score', () => {
     const decision = S.decide({ cps: 0, cookies: 0, buildings: [], upgrades: [] })
     assert.equal(decision.action, 'none')
