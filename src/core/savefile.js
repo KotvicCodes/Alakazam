@@ -29,17 +29,18 @@
     const S_ACHIEVEMENTS = 7
     const S_BUFFS = 8
 
-    //* Known-good game versions
-    // the scalar section is positional with no field names, so its layout is
-    // version specific. This list is what we have actually read the layout from.
+    //* On not keeping a list of known versions
+    // There used to be one here, and a note in the panel whenever the game's version
+    // was not on it. It had already stopped being a gate, because an unrecognised
+    // version marking the whole parse untrusted meant every game patch silently
+    // switched off everything that needs exact numbers until somebody noticed and
+    // added a string. What was left was a warning that fired for every version after
+    // the last one anybody had thought to add, which by then was every real game.
     //
-    // It is not a gate. It used to be: an unrecognised version marked the whole
-    // parse untrusted, which meant every game patch silently switched off
-    // everything that needs exact numbers, ascension included, until somebody
-    // noticed and added a string here. The invariants in scalarsLookSane are the
-    // real check, they are version independent, and they are what caught the last
-    // layout drift. An unfamiliar version is worth saying out loud and nothing more.
-    const KNOWN_VERSIONS = ['2.052', '2.053', '2.048', '2.047']
+    // The invariants in scalarsLookSane are the actual check. They are version
+    // independent, they are what caught the last layout drift, and they say what they
+    // found in `reason`. A hand-maintained list of version numbers says nothing that
+    // is both true and useful, so there is not one.
 
     //* Building order
     // matches Game.ObjectsById, which is the order records appear in the save
@@ -511,16 +512,11 @@
 
         const version = sections[S_VERSION] || ''
         const scalars = parseScalars(sections[S_SCALARS])
-        const knownVersion = KNOWN_VERSIONS.indexOf(version) !== -1
 
         return {
             ok: true,
             stale: !scalars.trusted,
-            reason: !scalars.trusted
-                ? 'scalar layout drifted'
-                : knownVersion
-                  ? ''
-                  : `game version ${version} is newer than this parser was read against`,
+            reason: !scalars.trusted ? 'scalar layout drifted' : '',
             version,
             run: parseRun(sections[S_RUN]),
             prefs: parseBits(sections[S_PREFS]),
@@ -637,7 +633,6 @@
         parse,
         SAVE_KEY,
         BUILDINGS,
-        SCALAR_FIELDS,
-        KNOWN_VERSIONS
+        SCALAR_FIELDS
     }
 })()

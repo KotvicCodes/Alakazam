@@ -245,32 +245,6 @@
             minutesLeft: Math.max(0, (BUY_ALL_WINDOW_MS - runAge()) / 60000),
             presses: buyAllPresses
         }
-        logOccasionally(decision, actions)
-    }
-
-    //* logOccasionally
-    // one compact line every few seconds. the tick is far too fast to log every
-    // pass, and the interesting event is the decision changing, not its repetition.
-    let lastLoggedReason = ''
-    let lastLoggedAt = 0
-
-    function logOccasionally(decision, actions) {
-        if (!decision) return
-        const now = Date.now()
-        const changed = decision.reason !== lastLoggedReason
-        if (!changed && now - lastLoggedAt < 5000) return
-        lastLoggedReason = decision.reason
-        lastLoggedAt = now
-        const globals = live.readGlobals()
-        console.log('Alakazam', {
-            cookies: globals.cookies,
-            cps: globals.cps,
-            boughtThisDrain: actions,
-            boughtTotal: bought,
-            bulkControls: act.store.available() ? 'ok' : 'missing',
-            catalog: catalog.stats(),
-            decision: `${decision.action}: ${decision.reason}`
-        })
     }
 
     registry.register({ name: 'purchase', interval: INTERVAL_MS, tick })

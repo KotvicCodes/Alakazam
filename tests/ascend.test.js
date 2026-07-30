@@ -169,7 +169,7 @@ test('chips already banked count toward what the plan wants', () => {
         resets: 1
     })
     assert.equal(d.chipsNeeded, 2185)
-    assert.equal(d.chipsShort, 185)
+    assert.equal(d.target, d.current + 185, 'the target is the levels the plan is short by')
     assert.equal(d.ready, true)
 })
 

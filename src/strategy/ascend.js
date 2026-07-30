@@ -152,7 +152,6 @@
                 ...p,
                 target: null,
                 chipsNeeded: 0,
-                chipsShort: 0,
                 ready,
                 why: !earned
                     ? 'no chips yet'
@@ -172,7 +171,6 @@
             ...p,
             target,
             chipsNeeded: needed,
-            chipsShort: short,
             ready,
             why: !earned
                 ? 'no chips yet'

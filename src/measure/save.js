@@ -21,7 +21,6 @@
     let current = savefile.read()
     let fingerprint = savefile.rawFingerprint()
     let lastChangeAt = Date.now()
-    let generation = 0
 
     //* tick
     // The fingerprint check exists to skip the decode when nothing has changed.
@@ -39,7 +38,6 @@
         // the age shown in the panel
         if (current.ok !== previouslyOk || current.ok) {
             lastChangeAt = Date.now()
-            generation++
         }
         window.__alakazam.save = current
     }
@@ -99,7 +97,6 @@
             // which localStorage key the save was actually found under. worth
             // showing: if it is not CookieClickerGame, that alone explains a lot.
             key: current.key || '',
-            generation,
             secondsSinceChange: Math.round((Date.now() - lastChangeAt) / 1000)
         }
     }

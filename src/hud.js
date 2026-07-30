@@ -13,7 +13,7 @@
     // Everything is namespaced under alakazam- ids so the extension's own
     // selectors can never pick its panel up as part of the game.
 
-    const { store, scheduler, registry, live, catalog, save, act } = window.Alakazam
+    const { store, scheduler, registry, live, save, act } = window.Alakazam
     const { formatNumber, formatDuration } = window.Alakazam.parse
 
     const INTERVAL_MS = 1000
@@ -28,6 +28,7 @@
         lumps: 'Sugar lumps',
         grimoire: 'Grimoire',
         pantheon: 'Pantheon',
+        dragon: 'Dragon',
         garden: 'Garden',
         achievements: 'Achievements',
         marketTrading: 'Stock trading',
@@ -275,6 +276,17 @@
         return decision.action === 'buyUpgrade' ? 'effect not readable' : '-'
     }
 
+    //* dragonText
+    // one row's worth of dragon: how grown it is and what it is wearing, or what it
+    // is waiting for while it is neither. Everything else about it, including the
+    // comparison of every aura, goes to the console.
+    function dragonText(dragon) {
+        const level = `lvl ${dragon.level}/${dragon.max}`
+        if (dragon.waiting) return `${level}, ${dragon.waiting}`
+        const worn = dragon.aura2 ? `${dragon.aura} + ${dragon.aura2}` : dragon.aura
+        return `${level}, ${worn}`
+    }
+
     function escape(value) {
         return String(value === undefined || value === null ? '-' : value)
             .replace(/&/g, '&amp;')
@@ -302,9 +314,10 @@
         const globals = live.readGlobals()
         let html = ''
 
+        // the bank and CpS used to lead this section. Both are rendered by the game
+        // in letters twice the size, a few inches above the panel, so the panel was
+        // spending its two best rows repeating them.
         html += section('game')
-        html += row('cookies', format(globals.cookies))
-        html += row('per second', format(globals.cps))
         const click = window.Alakazam.clicks.stats()
         if (click.clickCps > 0) {
             html += row('from clicking', format(click.clickCps))
@@ -326,13 +339,22 @@
             html += row('payback', paybackText(debug.decision))
         }
 
-        const cat = catalog.stats()
-        html += row('catalog', `${cat.buildings} bldg / ${cat.upgrades} upg`)
+        // how much of the store has been catalogued was a progress bar for a job
+        // nobody is waiting on: it fills in seconds and never comes up again
         if (!act.store.available()) html += row('bulk controls', 'not found', true)
+
+        // one row for the dragon, because there is one decision in it worth seeing:
+        // which aura is in, or what it is waiting for
+        if (debug.dragon) {
+            html += row('dragon', dragonText(debug.dragon))
+        }
 
         const saveStats = save.stats()
         html += section('save')
-        html += row('version', saveStats.version || 'unreadable')
+        // the version and the note about it are gone. The note said the game was
+        // newer than the parser had been read against, which was true of every
+        // version after the list in savefile.js and told nobody anything: the parse
+        // is trusted or not on its own invariants, and that is what `why` says.
         html += row(
             'read',
             saveStats.ok ? `${saveStats.secondsSinceChange}s ago` : 'failed',
@@ -345,7 +367,6 @@
         if (saveStats.key && saveStats.key !== 'CookieClickerGame') {
             html += row('found in', saveStats.key)
         }
-        if (debug.identity) html += row('save id', debug.identity.legacyId)
 
         // only while it is actually running: the rest of a run is the ordinary
         // one-at-a-time buying and needs no row of its own
@@ -381,11 +402,9 @@
             html += row('next cast', `${Math.round(debug.grimoire.secondsToFthof)}s`)
         }
 
-        if (debug.pantheon) {
-            html += section('pantheon')
-            html += row('swaps', debug.pantheon.swaps)
-            html += row('slots wrong', debug.pantheon.wrong.length)
-        }
+        // the pantheon section is gone: the temple shows its own swaps and its own
+        // slots, and what Alakazam thinks of a layout is a table too wide for a
+        // panel. window.Alakazam.pantheon.explain() prints it.
 
         if (debug.market) {
             html += section('stock market')
@@ -400,15 +419,14 @@
             } else {
                 html += row('prestige', `${format(debug.ascend.current)} lvl`)
                 html += row('chips banked', format(debug.ascend.chipsBanked))
-                html += row('ascending pays', `${format(debug.ascend.chipsGained)} chips`)
                 // what the plan still wants, which is the whole of the decision:
-                // it comes down as upgrades are bought and as chips are banked
+                // it comes down as upgrades are bought and as chips are banked. What
+                // ascending would pay right now was next to it and was the same
+                // number from the other side, and the sentence naming the rule in
+                // force belongs in the log rather than wrapped over three rows.
                 if (debug.ascend.chipsNeeded > 0) {
-                    html += row('plan wants', `${format(debug.ascend.chipsNeeded)} chips`)
+                    html += row('planned', `${format(debug.ascend.chipsNeeded)} chips`)
                 }
-                // the target is the plan's, and past the plan there is not one to
-                // name; the reason line says which rule is in force either way
-                html += row('plan', debug.ascend.why)
                 if (debug.ascend.cookiesToTarget > 0) {
                     html += row('still needs', format(debug.ascend.cookiesToTarget))
                 }
