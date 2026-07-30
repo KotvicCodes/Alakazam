@@ -15,6 +15,7 @@ const LABELS = {
     lumps: 'Sugar lumps',
     grimoire: 'Grimoire',
     pantheon: 'Pantheon',
+    dragon: 'Dragon',
     garden: 'Garden',
     achievements: 'Achievements',
     marketTrading: 'Stock trading',
