@@ -241,9 +241,22 @@
     // needs tooltip data, so there is no reason to hover when buying is off
     registry.register({ name: 'catalog', interval: TICK_MS, setting: 'purchase', tick })
 
+    //* names
+    // every upgrade name the catalog has seen on offer. A new one appearing is how a
+    // dragon drop announces itself: the drops are ordinary store upgrades once the
+    // dragon has coughed them up.
+    function names() {
+        const out = []
+        for (const entry of upgradeCache.values()) {
+            if (entry.name) out.push(entry.name)
+        }
+        return out
+    }
+
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.catalog = {
         buildingCps,
+        names,
         upgradeFor,
         classifyUpgrade,
         perUnitCpsFromTooltip,
