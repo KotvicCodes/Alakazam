@@ -52,6 +52,11 @@
     // is low, so idle spending only happens while comfortably full
     const IDLE_CAST_FRACTION = 0.95
 
+    // the dragon aura that makes spells cheaper and backfires likelier, and by how
+    // much either way
+    const SUPREME_INTELLECT = 20
+    const SPELL_DISCOUNT = 0.1
+
     let lastCastAt = 0
 
     //! Formulas
@@ -65,10 +70,24 @@
     }
 
     //* spellCost
-    // the aura that discounts spells is not readable from the DOM, so this is the
-    // undiscounted cost: an overestimate, which only ever makes us cast later
-    function spellCost(spell, magicM) {
-        return Math.floor(spell.costMin + magicM * spell.costPercent)
+    // Supreme Intellect makes every spell a tenth cheaper, and it also makes them a
+    // tenth likelier to backfire. This used to say the aura was not readable and
+    // charge the full price, which was true of the DOM and never true of the save:
+    // dragonAura and dragonAura2 have been parsed all along. Overestimating the cost
+    // only ever meant casting later than the magic allowed, which is a small, silent
+    // loss on every cast of the run.
+    function spellCost(spell, magicM, discount) {
+        const cost = spell.costMin + magicM * spell.costPercent
+        return Math.floor(cost * (1 - (discount || 0)))
+    }
+
+    //* supremeIntellect
+    // the discount the dragon is currently granting on spells, and how much likelier
+    // a cast is to backfire because of it
+    function supremeIntellect() {
+        const scalars = (save.get() || {}).scalars || {}
+        const on = scalars.dragonAura === SUPREME_INTELLECT || scalars.dragonAura2 === SUPREME_INTELLECT
+        return { on, discount: on ? SPELL_DISCOUNT : 0, backfire: on ? SPELL_DISCOUNT : 0 }
     }
 
     //* regenPerSecond
@@ -114,6 +133,8 @@
         const level = tower ? tower.level : 0
         const magicM = bar ? bar.magicM : maxMagic(towers, level)
         const magic = bar ? bar.magic : fromSave.magic
+        const dragon = supremeIntellect()
+        const fthofCost = spellCost(FTHOF, magicM, dragon.discount)
 
         return {
             unlocked: !!(bar || (fromSave && tower && tower.level >= 1)),
@@ -122,8 +143,11 @@
             magic,
             magicM,
             regen: regenPerSecond(magic, magicM),
-            fthofCost: spellCost(FTHOF, magicM),
-            secondsToFthof: secondsToRefill(magic, spellCost(FTHOF, magicM), magicM)
+            supremeIntellect: dragon.on,
+            discount: dragon.discount,
+            backfireExtra: dragon.backfire,
+            fthofCost,
+            secondsToFthof: secondsToRefill(magic, fthofCost, magicM)
         }
     }
 
@@ -154,7 +178,7 @@
     // at full, refill from what is left back to full
     function cycleSeconds(towers, level) {
         const magicM = maxMagic(towers, level)
-        const cost = spellCost(FTHOF, magicM)
+        const cost = spellCost(FTHOF, magicM, supremeIntellect().discount)
         return secondsToRefill(Math.max(0, magicM - cost), magicM, magicM)
     }
 
@@ -190,7 +214,7 @@
 
         // otherwise, only spend when the bar is essentially full: regeneration
         // scales with how full it is, so running it down is self-defeating
-        const conjureCost = spellCost(CONJURE, s.magicM)
+        const conjureCost = spellCost(CONJURE, s.magicM, s.discount)
         if (s.magic >= s.magicM * IDLE_CAST_FRACTION && s.magic >= conjureCost) {
             // hold the bar for Force the Hand of Fate if it is nearly affordable,
             // rather than spending it on cookies moments before a buff lands
