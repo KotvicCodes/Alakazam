@@ -62,6 +62,17 @@
     // the hour the game makes you wait between sending and redeeming
     const GIFTED_OUT_MS = 60 * 60 * 1000
 
+    // a beat between clicks, for the game to draw what the next one needs. The same
+    // figure the achievement hunt uses on the game's own menus.
+    const MENU_MS = 350
+
+    // how long to wait for the save to admit whether the redeem won anything
+    const VERDICT_MS = 3 * 60 * 1000
+
+    // what the achievement count was when the code went in, so the save can be asked
+    // afterwards whether it moved
+    const ACHIEVEMENTS_KEY = 'giftAchievementsAtRedeem'
+
     const GIFTED_OUT = /^gifted out$/i
 
     function el(id) {
@@ -131,6 +142,10 @@
 
     function eligible() {
         if (heldCode()) return false
+        // The whole point of the exercise is one achievement, and it is won the first
+        // time. Without this the module wrapped a fresh gift every time the last code
+        // expired, forever, each one costing an hour of "Gifted out" for nothing.
+        if (store.get(REDEEMED_KEY, 0)) return false
 
         const s = save.get()
         if (!s.ok || !s.scalars || s.stale) return false
@@ -148,10 +163,32 @@
     }
 
     //! The sequence
-    // one step per tick. Each step recognises where it is from what is on screen
-    // rather than from a counter, so an interrupted run picks up where it left off.
+    // Each step recognises where it is from what is on screen rather than from a
+    // counter, so an interrupted run picks up where it left off. It is driven to
+    // completion inside one tick, with a beat between clicks for the game to draw.
+    //
+    // It used to be one step per tick, and the tick is a minute: open the options
+    // menu, wait a minute, press Send, wait a minute, press Wrap, wait a minute,
+    // read the code. Four minutes to do what takes a person four seconds, with the
+    // options menu sitting open over the game for most of it. There was never a
+    // reason for it beyond the shape of the loop.
+    async function step() {
+        // up to four steps: menu, Send, Wrap, Done. Each one checks the screen, so
+        // a step that has not drawn yet simply gets picked up on the next tick.
+        for (let i = 0; i < 4; i++) {
+            if (!stepOnce()) return
+            await wait(MENU_MS)
+        }
+    }
 
-    function step() {
+    function wait(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms))
+    }
+
+    //* stepOnce
+    // one click. Returns false when there is nothing further to do right now, which
+    // is what stops the loop above.
+    function stepOnce() {
         // the code is ready and waiting to be read
         if (promptIs('GiftSendReady')) {
             const input = el('giftCode')
@@ -167,7 +204,8 @@
             // "Done" is this prompt's only option
             const done = el('promptOption0')
             if (done) simulateClick(done)
-            return
+            // and with the code in hand the sending half is finished
+            return false
         }
 
         // the amount and the note are left at whatever the game filled in. The
@@ -176,12 +214,12 @@
         if (promptIs('GiftSend')) {
             const wrap = el('promptOption0')
             if (wrap) simulateClick(wrap)
-            return
+            return true
         }
 
         if (!menuOpen()) {
             toggleMenu()
-            return
+            return true
         }
 
         const send = sendButton()
@@ -189,9 +227,10 @@
             // the buttons are not there, so Wrapping paper is not owned yet
             store.set(CHECKED_KEY, Date.now())
             closeOurMenu()
-            return
+            return false
         }
         simulateClick(send)
+        return true
     }
 
     //! Redeeming
@@ -228,7 +267,15 @@
     // option with the same id afterwards. getElementById returns the first, which
     // happens to be the right one, but relying on that is a trap for whoever reads
     // this next, so the button is taken from inside the named content instead.
-    function redeemStep(held) {
+    async function redeemStep(held) {
+        // menu, Redeem, type and confirm
+        for (let i = 0; i < 3; i++) {
+            if (!redeemOnce(held)) return
+            await wait(MENU_MS)
+        }
+    }
+
+    function redeemOnce(held) {
         if (promptIs('GiftRedeem')) {
             const input = el('giftCode')
             if (!input) return
@@ -242,29 +289,66 @@
                 simulateClick(button)
                 store.set(REDEEMED_KEY, Date.now())
                 store.forget(CODE_KEY)
-                console.log('Alakazam: redeemed a gift code, for "No time like the present"')
-                return
+                noteRedeemed()
+                return false
             }
 
             // the game will not take it: expired, or from a save that has moved on.
             // Drop it and get out of the prompt rather than sitting in it.
+            console.log('Alakazam: the game would not accept that gift code, dropping it')
             store.forget(CODE_KEY)
+            // and do not turn round and wrap another one on the next tick: whatever
+            // was wrong with that code is likely to be wrong with the next, and each
+            // attempt costs an hour of "Gifted out"
+            store.set(CHECKED_KEY, Date.now())
             dismissPrompt()
-            return
+            return false
         }
 
         if (!menuOpen()) {
             toggleMenu()
-            return
+            return true
         }
 
         const redeem = redeemButton()
         if (!redeem) {
             store.set(CHECKED_KEY, Date.now())
             closeOurMenu()
-            return
+            return false
         }
         simulateClick(redeem)
+        return true
+    }
+
+    //* noteRedeemed
+    // the redeem is done, once and for all. The count of achievements held is written
+    // down with it: the save is a minute behind, so whether this actually won
+    // anything can only be answered later, and it is worth answering rather than
+    // leaving somebody to wonder why their bot spent an hour on a gift.
+    function noteRedeemed() {
+        store.set(REDEEMED_KEY, Date.now())
+        store.set(ACHIEVEMENTS_KEY, { at: Date.now(), count: save.achievementsWon() })
+        store.forget(CODE_KEY)
+        console.log('Alakazam: redeemed a gift code')
+    }
+
+    //* verdict
+    // did it win anything. Runs after the fact, once, and then never again.
+    function verdict() {
+        const mark = store.get(ACHIEVEMENTS_KEY, null)
+        if (!mark) return
+        if (save.achievementsWon() > mark.count) {
+            console.log('Alakazam: that gift code earned "No time like the present"')
+            store.forget(ACHIEVEMENTS_KEY)
+            return
+        }
+        if (Date.now() - mark.at > VERDICT_MS) {
+            console.log(
+                'Alakazam: the gift code won nothing, so "No time like the present" was ' +
+                    'already on this save. Not gifting again.'
+            )
+            store.forget(ACHIEVEMENTS_KEY)
+        }
     }
 
     //* dismissPrompt
@@ -275,7 +359,8 @@
         if (darken) simulateClick(darken)
     }
 
-    function tick() {
+    async function tick() {
+        verdict()
         const held = heldCode()
         window.__alakazam.gifts = held
             ? { code: held.code, expiresInHours: hoursLeft(held), redeemable: redeemable() }
@@ -283,7 +368,10 @@
 
         if (held) {
             if (redeemable()) {
-                redeemStep(held)
+                await redeemStep(held)
+                // the sequence runs to its end inside this tick, so the menu we
+                // opened is closed inside it too rather than a minute later
+                closeOurMenu()
                 return
             }
             // waiting out the hour, or waiting for a bank: nothing to do, and no
@@ -298,7 +386,8 @@
             return
         }
 
-        step()
+        await step()
+        closeOurMenu()
     }
 
     function hoursLeft(held) {

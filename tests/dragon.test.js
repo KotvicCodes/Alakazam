@@ -207,12 +207,18 @@ test('a rung the game says is paid for is climbed', async () => {
     assert.ok(h.game.state.log.indexOf('trained dragon') !== -1)
 })
 
-test('what the next rung costs is read from the save, not from the panel', async () => {
-    const h = await ready(dragonBoot({ level: 5, amounts: { 0: 300 } }))
+test('what the next rung costs is read from the store face, not the lagging save', async () => {
+    // the save is written on autosave and is up to a minute behind, so reading
+    // building counts from it meant waiting out that minute on every single rung
+    const h = await ready(dragonBoot({ level: 5, amounts: { 0: 0 }, owned: [300, 0, 0, 0, 0, 0, 0, 0] }))
     const dragon = h.A.dragon
-    assert.equal(dragon.affordable(h.A.data.dragon.levelFor(5)), true, '300 cursors covers 100')
+    assert.equal(dragon.affordable(h.A.data.dragon.levelFor(5)), true, '300 cursors are on screen')
     assert.equal(dragon.affordable(h.A.data.dragon.levelFor(6)), false, 'no grandmas at all')
     assert.equal(dragon.affordable(h.A.data.dragon.levelFor(27)), false, 'nothing left to pay for')
+
+    // and the save is still there for when the face cannot be read
+    const blind = await ready(dragonBoot({ level: 5, amounts: { 0: 300 }, owned: undefined }))
+    assert.equal(blind.A.dragon.affordable(blind.A.data.dragon.levelFor(5)), false)
 })
 
 //! Auras
@@ -270,20 +276,43 @@ test('the module puts the best aura in and says why', async () => {
     assert.match(state.why, /Radiant Appetite/)
 })
 
-test('nothing is touched while a buff is running', async () => {
+test('a production buff does not stop the dragon growing any more', async () => {
+    // a hundred cursors are bought back within seconds; Radiant Appetite is not
     const h = await ready(
-        dragonBoot({ level: 5, amounts: { 0: 300 }, dragon: { level: 5, trainable: true } })
+        dragonBoot({
+            level: 5,
+            owned: [300, 0, 0, 0, 0, 0, 0, 0],
+            dragon: { level: 5, trainable: true }
+        })
     )
     h.game.gainBuff('Frenzy', 0.5)
     await h.A.registry.get('buffs').tick()
     await h.A.registry.get('dragon').tick()
-    assert.equal(h.game.dragon.level, 5)
-    assert.match(h.debug().dragon.waiting, /buff/)
+    assert.ok(h.game.dragon.level > 5, 'the ladder is worth more than a tidy moment')
+})
+
+test('one visit climbs as far as the game allows, not one rung', async () => {
+    const h = await ready(
+        dragonBoot({
+            level: 5,
+            owned: [300, 0, 0, 0, 0, 0, 0, 0],
+            dragon: { level: 5, trainable: true }
+        })
+    )
+    await h.A.registry.get('dragon').tick()
+    // the panel is already open and every rung is one click, so a single tick takes
+    // the whole ladder it can pay for, up to its own cap
+    assert.equal(h.game.dragon.level, 15)
+    assert.equal(h.game.state.log.filter(l => l === 'trained dragon').length, 10)
 })
 
 test('nothing is touched while a golden cookie is on screen', async () => {
     const h = await ready(
-        dragonBoot({ level: 5, amounts: { 0: 300 }, dragon: { level: 5, trainable: true } })
+        dragonBoot({
+            level: 5,
+            owned: [300, 0, 0, 0, 0, 0, 0, 0],
+            dragon: { level: 5, trainable: true }
+        })
     )
     h.game.addShimmer()
     await h.A.registry.get('dragon').tick()
@@ -292,16 +321,20 @@ test('nothing is touched while a golden cookie is on screen', async () => {
 
     h.game.clearShimmers()
     await h.A.registry.get('dragon').tick()
-    assert.equal(h.game.dragon.level, 6, 'and once it is gone the rung is climbed')
+    assert.ok(h.game.dragon.level > 5, 'and once it is gone the climb happens')
 })
 
 test('the scheduler is left running after a panel visit', async () => {
     const h = await ready(
-        dragonBoot({ level: 5, amounts: { 0: 300 }, dragon: { level: 5, trainable: true } })
+        dragonBoot({
+            level: 5,
+            owned: [300, 0, 0, 0, 0, 0, 0, 0],
+            dragon: { level: 5, trainable: true }
+        })
     )
     await h.A.registry.get('dragon').tick()
     assert.equal(h.A.scheduler.isPaused(), false)
-    assert.equal(h.game.dragon.level, 6, 'and the visit did its work')
+    assert.ok(h.game.dragon.level > 5, 'and the visit did its work')
 })
 
 test('explain prints the comparison and hands back the choice', async () => {

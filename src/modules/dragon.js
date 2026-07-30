@@ -18,10 +18,9 @@
     // of the ones that are gone, and the drain loop rebuys them within seconds. It
     // does not touch cookiesEarned either, so prestige is untouched.
     //
-    // What it will not do is pick a bad moment. Sacrificing during a frenzy throws
-    // away multiplied output, the buy-all sweep at the start of a run is buying in
-    // bulk while this would be selling, and the end of a run is no time to be
-    // opening menus. All three are checked before anything is touched.
+    // So it climbs as fast as the game will let it, and stops for very little: see
+    // `waiting` for the short list of things worth stopping for, and for the two that
+    // used to be on it and cost most of a run between them.
     //
     //! And it has to hold the autoclicker still
     // The dragon's tab is on a canvas and the game only accepts the click if the
@@ -34,10 +33,15 @@
         window.Alakazam.data.dragon
     const { MAX_LEVEL, SECOND_SLOT_LEVEL, DROP_MIN_LEVEL } = window.Alakazam.data.dragon
 
-    const INTERVAL_MS = 5000
+    const INTERVAL_MS = 2000
 
     // one panel visit at a time, with a beat between them
-    const ACTION_MS = 3000
+    const ACTION_MS = 750
+
+    // how many rungs one visit will climb before letting go. The panel is already
+    // open and each rung is a click, so stopping after one meant a tick and a
+    // cooldown for every rung of a ladder that is twenty seven rungs long.
+    const RUNGS_PER_VISIT = 10
 
     // an aura change sacrifices a building, so it is not something to do twice in a
     // row over a number that wobbled
@@ -46,9 +50,17 @@
     // and it has to be worth this much more than what is already equipped
     const SWITCH_MARGIN = 0.02
 
-    // no dragon panel means the egg is not bought yet, which takes an ascension to
-    // change. Nothing about that answer changes quickly.
-    const RECHECK_MS = 10 * 60 * 1000
+    // A panel that will not open means one of two things, and they want opposite
+    // responses. Either the egg is not bought, which takes a while to change and is
+    // worth backing right off for, or a single click went astray, which is worth
+    // retrying at once. They are not distinguishable from here, so they are told
+    // apart by persistence: a few quick retries first, and only then the long wait.
+    //
+    // Getting this wrong was expensive. One missed click used to mean ten minutes of
+    // sitting still, which looks exactly like being broken.
+    const RETRY_MS = 5000
+    const RECHECK_MS = 5 * 60 * 1000
+    const MISSES_BEFORE_BACKOFF = 3
 
     // pets per visit, and how often a visit is made just to pet
     const PETS_PER_VISIT = 8
@@ -64,6 +76,7 @@
     let lastActionAt = 0
     let lastSwitchAt = 0
     let missingAt = 0
+    let misses = 0
     let lastPetAt = 0
     let lastLogAt = 0
     let lastLogged = ''
@@ -112,14 +125,21 @@
     }
 
     //* owned
-    // how many of a building there are. The save carries the count exactly, and the
-    // product face is only a fallback for when it cannot be trusted, which is the
-    // same order of preference the rest of the extension uses.
+    // how many of a building there are, from the store face first and the save only
+    // as a fallback.
+    //
+    // That is the opposite of the usual order here, and it is the difference between
+    // training taking a couple of minutes and taking most of an hour. The save is
+    // written on autosave, up to a minute behind, so reading building counts from it
+    // means the hundredth cursor is bought and the dragon does not notice for another
+    // minute. Fourteen rungs of that is a quarter of an hour of standing still while
+    // the buildings are sitting right there on screen, which is exactly what it felt
+    // like. The count on the product face is exact and immediate.
     function owned(index) {
-        const record = save.building(index)
-        if (record && Number.isFinite(record.amount)) return record.amount
         const product = live.readProducts().find(p => p.index === index)
-        return product && Number.isFinite(product.owned) ? product.owned : 0
+        if (product && Number.isFinite(product.owned)) return product.owned
+        const record = save.building(index)
+        return record && Number.isFinite(record.amount) ? record.amount : 0
     }
 
     //! Scoring inputs
@@ -222,9 +242,12 @@
         try {
             const opened = await act.dragon.open()
             if (!opened) {
+                misses++
                 missingAt = Date.now()
                 return
             }
+            misses = 0
+            missingAt = 0
             await work()
             await act.dragon.close()
         } finally {
@@ -232,11 +255,31 @@
         }
     }
 
-    function busy(dragon) {
-        if (window.Alakazam.buffs.hasProductionBuff()) return 'a buff is running'
+    //* waiting
+    // why this is not acting, or the empty string when it is.
+    //
+    // Two things used to be on this list and are not any more, because between them
+    // they were most of a run.
+    //
+    // A production buff was one. Training sacrifices a hundred of one building tier
+    // and the drain loop buys them back within seconds, so the cost of doing it under
+    // a frenzy is a few multiplied seconds of one tier. The cost of waiting for a
+    // quiet moment, on a save that clicks every golden cookie and is therefore buffed
+    // a good share of the time, was measured in rungs not taken. Radiant Appetite
+    // doubles production for the rest of the run: nothing on this ladder is worth
+    // delaying for a tidier moment to climb it.
+    //
+    // The post-ascension buy-all sweep was the other, and it was worse: it blocked
+    // the first five minutes of every run, which is precisely when the cookie rungs
+    // become affordable on a mature save.
+    function waiting(dragon) {
+        // a golden cookie is worth more than any rung, and a panel visit holds the
+        // clicker still for a moment. This one costs nothing: shimmers are clicked
+        // within milliseconds and the next tick is two seconds away.
         if (live.readShimmers().length > 0) return 'a golden cookie is on screen'
         const d = debug()
-        if (d.buyAll && d.buyAll.sweeping) return 'the store is being swept'
+        // the end of a run is loans on a forty second timer and a prompt to confirm.
+        // Opening menus in the middle of that is the one genuinely risky moment.
         if (d.ascend && d.ascend.phase && d.ascend.phase !== 'watching') return 'a run is ending'
         if (dragon.level === 0 && !affordable(dragon.step)) return 'waiting for the first million'
         return ''
@@ -260,10 +303,11 @@
         publish(dragon, choice)
         logOccasionally(dragon, choice)
 
-        const why = busy(dragon)
-        if (why) return
+        if (waiting(dragon)) return
         if (Date.now() - lastActionAt < ACTION_MS) return
-        if (missingAt && Date.now() - missingAt < RECHECK_MS) return
+        // a few quick retries after a missed click, then the long back off
+        const quiet = misses < MISSES_BEFORE_BACKOFF ? RETRY_MS : RECHECK_MS
+        if (missingAt && Date.now() - missingAt < quiet) return
 
         const canTrain = dragon.level < MAX_LEVEL && affordable(dragon.step)
         const canSwitch = wantsAura(dragon, choice, inputs)
@@ -272,17 +316,34 @@
 
         lastActionAt = Date.now()
         await withPanel(async () => {
-            missingAt = 0
-            if (canTrain && act.dragon.train()) {
-                console.log(`Alakazam: training the dragon, ${describe(dragon)}`)
-                return
-            }
-            if (canSwitch) {
-                await switchAuras(dragon, choice)
-                return
-            }
+            if (canTrain) climb(dragon)
+            if (canSwitch) await switchAuras(dragon, choice)
             if (canPet) await petting()
         })
+    }
+
+    //* climb
+    // as far up the ladder as the game will let us in one visit. Each rung redraws
+    // the panel, so the next one is read back off it rather than worked out here, and
+    // the greyed out cost is the game's own answer to whether it can be paid.
+    //
+    // Doing one rung per visit was the difference between a dragon that grows while
+    // you watch and one that takes a tick, a cooldown and a fresh panel for every
+    // hundred cursors it eats.
+    function climb(dragon) {
+        let climbed = 0
+        while (climbed < RUNGS_PER_VISIT) {
+            const step = act.dragon.nextStep()
+            if (!step || !step.affordable) break
+            if (!act.dragon.train()) break
+            climbed++
+            // a golden cookie that appeared mid-climb is worth more than the rest of
+            // the ladder, and the ladder will still be there in two seconds
+            if (live.readShimmers().length > 0) break
+        }
+        if (climbed > 0) {
+            console.log(`Alakazam: trained the dragon ${climbed} time(s) from ${describe(dragon)}`)
+        }
     }
 
     async function switchAuras(dragon, choice) {
@@ -325,7 +386,7 @@
             wanted2: dragon.slot2 ? nameOf(choice.secondary) : null,
             why: choice.why,
             next: describe(dragon),
-            waiting: busy(dragon),
+            waiting: waiting(dragon),
             drops: dropsSeen.length,
             table: choice.table
         }

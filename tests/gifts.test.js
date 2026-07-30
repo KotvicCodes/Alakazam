@@ -165,17 +165,40 @@ test('the game is the judge of the code, and a bad one is dropped', async () => 
     assert.equal(state.log.indexOf('redeemed a gift'), -1, 'the button stayed disabled')
     assert.equal(h.A.gifts.heldCode(), null, 'so the code is thrown away rather than retried')
     assert.equal(h.A.store.get('giftRedeemedAt', 0), 0)
+    // and it does not turn round and wrap a fresh one, which would cost an hour of
+    // "Gifted out" for a code likely to be refused in the same way
+    assert.ok(h.A.store.get('giftCheckedAt', 0) > 0)
+    assert.equal(state.log.filter(l => l === 'wrapped a gift').length, 0)
 })
 
-test('a code is typed into the field rather than assumed into it', async () => {
+test('the whole redeem happens in one tick, not one click a minute', async () => {
+    // the tick is a minute apart, so a step per tick meant menu, wait, Redeem, wait,
+    // type, wait: minutes of the options menu sitting open over the game
     const h = await heldBoot({ validCode: 'TESTCODE123456' })
-    const mod = h.A.registry.get('gifts')
-    await mod.tick() // opens the options menu
-    await mod.tick() // clicks Redeem
-    const input = h.game.doc.getElementById('giftCode')
-    assert.ok(input, 'the prompt is up')
-    await mod.tick()
-    assert.equal(h.game.state.log.indexOf('redeemed a gift') !== -1, true)
+    await h.A.registry.get('gifts').tick()
+    assert.ok(h.game.state.log.indexOf('redeemed a gift') !== -1)
+    assert.equal(h.game.doc.getElementById('prefsButton').classList.contains('selected'), false)
+})
+
+test('the whole wrap happens in one tick too', async () => {
+    const h = giftBoot({ giftCode: 'TESTCODE123456' })
+    await h.A.store.ready('t')
+    await h.A.registry.get('gifts').tick()
+    assert.ok(h.game.state.log.indexOf('wrapped a gift') !== -1)
+    assert.equal(h.A.gifts.heldCode().code, 'TESTCODE123456')
+})
+
+test('once the achievement has been had, gifting stops for good', async () => {
+    const h = await heldBoot({ validCode: 'TESTCODE123456' })
+    await h.A.registry.get('gifts').tick()
+    assert.ok(h.A.store.get('giftRedeemedAt', 0) > 0)
+    // no held code any more, and eligible must still say no: otherwise it wraps a
+    // fresh gift every time the last one expires, forever, for nothing
+    assert.equal(h.A.gifts.heldCode(), null)
+    assert.equal(h.A.gifts.eligible(), false)
+    const before = h.game.state.log.length
+    await ticks(h, 3)
+    assert.equal(h.game.state.log.length, before, 'and it does not touch the game again')
 })
 
 test('a redeem already done is never done again', async () => {
