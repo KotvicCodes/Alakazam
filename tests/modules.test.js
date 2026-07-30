@@ -83,6 +83,80 @@ test('selling works and leaves the store back in buy mode', async () => {
     assert.equal(h.A.act.store.currentMode(), 'buy')
 })
 
+//! Buy all, early in a run
+
+const SWEEP_CRATES = [
+    { name: 'Reinforced index finger', price: 100, body: 'clicking gains +1% of your CpS' },
+    { name: 'Forwards from grandma', price: 1000, body: 'grandmas are twice as efficient' },
+    { name: 'One mind', price: 500, body: 'research', section: 'techUpgrades' }
+]
+
+function sweeper({ startedMinutesAgo = 0, buyAll = true, bank = 1e6 } = {}) {
+    return boot({
+        save: fx.save({ startDate: Date.now() - startedMinutesAgo * 60000 }).raw,
+        game: { buyAll, bank, crates: SWEEP_CRATES }
+    })
+}
+
+test('a new run has its store swept with the game own buy all button', async () => {
+    const h = sweeper()
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), true)
+    assert.equal(h.A.purchase.buyAll(), true)
+    assert.ok(h.game.state.log.includes('buy all'))
+    assert.ok(h.game.state.log.includes('buy upgrade Reinforced index finger'))
+})
+
+test('the sweep cannot reach the research that starts the grandmapocalypse', async () => {
+    // Game.storeBuyAll skips the tech pool outright, so this holds for the whole
+    // window rather than only while the research is still slow to arrive
+    const h = sweeper()
+    await h.A.store.ready('t')
+    h.A.purchase.buyAll()
+    assert.ok(!h.game.state.log.includes('buy upgrade One mind'))
+})
+
+test('the sweep stops once the run is no longer new', async () => {
+    const h = sweeper({ startedMinutesAgo: 20 })
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), false)
+    assert.equal(h.A.purchase.buyAll(), false)
+    assert.ok(!h.game.state.log.includes('buy all'))
+})
+
+test('the sweep is rate limited rather than pressed every tick', async () => {
+    const h = sweeper()
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.buyAll(), true)
+    assert.equal(h.A.purchase.buyAll(), false)
+    assert.equal(h.game.state.log.filter(l => l === 'buy all').length, 1)
+})
+
+test('a save without Inspired checklist has no button and is left alone', async () => {
+    const h = sweeper({ buyAll: false })
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), true)
+    assert.equal(h.A.purchase.buyAll(), false)
+})
+
+test('a save that cannot be read is not treated as a new run', async () => {
+    // no start date means no way to tell a fresh run from an established one, and
+    // sweeping an established store is the case the window exists to stay out of
+    const h = boot({ save: 'not a save at all', game: { buyAll: true, crates: SWEEP_CRATES } })
+    await h.A.store.ready('t')
+    assert.equal(h.A.purchase.inBuyAllWindow(), false)
+    assert.equal(h.A.purchase.buyAll(), false)
+})
+
+test('the drain loop presses it on its own tick', async () => {
+    const h = sweeper()
+    await h.A.store.ready('t')
+    await h.A.registry.get('purchase').tick({ budget: h.A.scheduler.budget(60) })
+    assert.ok(h.game.state.log.includes('buy all'))
+    assert.equal(h.debug().buyAll.sweeping, true)
+    assert.ok(h.debug().buyAll.minutesLeft > 4)
+})
+
 //! Live measurement
 
 test('the live pass reads prices without touching the tooltip', () => {

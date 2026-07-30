@@ -347,6 +347,12 @@
         }
         if (debug.identity) html += row('save id', debug.identity.legacyId)
 
+        // only while it is actually running: the rest of a run is the ordinary
+        // one-at-a-time buying and needs no row of its own
+        if (debug.buyAll && debug.buyAll.sweeping) {
+            html += row('buying', `all upgrades, ${debug.buyAll.minutesLeft.toFixed(1)}m left`)
+        }
+
         if (debug.lumps) {
             html += section('sugar lumps')
             html += row('banked', debug.lumps.lumps)

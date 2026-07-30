@@ -174,8 +174,36 @@ function build(opts = {}) {
     let nextUpgradeId = 0
     const perSection = {}
 
+    // ---- buy all ----
+    // Only present once "Inspired checklist" is owned. Game.storeBuyAll walks the
+    // store cheapest first and buys anything that is not vaulted and not in the
+    // toggle or tech pools, which is why the research that starts the
+    // grandmapocalypse is out of its reach.
+    const buyAllTargets = []
+    if (opts.buyAll) {
+        const wrap = new El('div', { id: 'storeBuyAll', class: 'storePre' })
+        const button = new El('div', { id: 'storeBuyAllButton', class: 'storePreButton' })
+        button.addEventListener('click', () => {
+            state.log.push('buy all')
+            buyAllTargets
+                .slice()
+                .sort((a, b) => a.price - b.price)
+                .forEach(c => {
+                    if (state.bank < c.price) return
+                    state.bank -= c.price
+                    state.log.push(`buy upgrade ${c.name}`)
+                })
+        })
+        wrap.append(button)
+        store.append(wrap)
+    }
+
     CRATES.forEach(c => {
         const where = c.section || 'upgrades'
+        // the vault and the two excluded pools are exactly what Buy all skips
+        if (where === 'upgrades' || where === 'techUpgrades') {
+            if (where === 'upgrades') buyAllTargets.push(c)
+        }
         const box = sections[where]
         perSection[where] = perSection[where] || 0
         const id = nextUpgradeId++

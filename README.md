@@ -170,6 +170,13 @@ protects.
   a save with all of them has lost the lump by hour 21. Spends them on the four
   minigame unlocks first, then the garden's full plot, then click levels, and
   banks a hundred for the production bonus.
+- **After an ascension** — for the first five minutes of a new run the store is
+  swept with the game's own "Buy all upgrades" button rather than picked through
+  one upgrade at a time. A returning run buys back a whole run's worth of
+  upgrades faster than anything can read them, and while everything on offer is
+  trivially cheap the order hardly matters. It needs the heavenly upgrade
+  "Inspired checklist", and it cannot buy the research that starts the
+  grandmapocalypse: the game's own button skips the tech pool.
 - **Garden** — reads the plot and seed log from the save, hunts the next reachable
   mutation, harvests anything that unlocks a seed or pays out, and switches to
   wood chips to triple mutation chances while hunting.

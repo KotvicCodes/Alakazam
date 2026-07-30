@@ -191,9 +191,30 @@ another. Kitten angels has gone from the list entirely —
 `Game.AssignPermanentSlot` only ever offers the plain and cookie pools, so a
 heavenly upgrade could never have appeared there.
 
+## Coming back from one
+
+The other half of an ascension is the run that follows it, which buys back a
+whole run's worth of upgrades and does it fast, because the prestige just paid
+for. Scoring one upgrade costs a tooltip hover, so the ordinary buying loop
+spends those minutes reading crates while the cookies pile up unspent, and there
+are far too many to keep up with.
+
+For the first five minutes of a run the store is swept with the game's own **Buy
+all upgrades** button instead. Inside that window it is very nearly the same
+answer: everything on offer is trivially cheap against what the run is earning,
+so cheapest-first is as good an order as any. After it, ordering starts to matter
+again and `strategy/score.js` goes back to weighing each upgrade against a
+building.
+
+It needs "Inspired checklist", which is entry eight of the plan, and without it
+nothing changes. It also cannot start the grandmapocalypse: `Game.storeBuyAll`
+skips the vault, the toggle pool and the tech pool, and the research that starts
+it is tech — so that holds for the whole window rather than resting on it being
+short.
+
 ## Verification
 
-`npm test` — 208 tests under `node --test`, green. New coverage: the prestige
+`npm test` — 215 tests under `node --test`, green. New coverage: the prestige
 formula against the guide's milestones, target selection and the doubling fallback,
 buying in plan order, never touching a ghosted or off-plan crate, refusing an
 unnamed prompt, the stale-save guard, loan ordering, ascending inside the loan
@@ -203,7 +224,8 @@ form localStorage really holds it in, the real 55 field scalar layout against a
 drifted one, measuring a shortened lump lifespan and
 harvesting inside it, spending a lump on the row badge, answering only the
 prompt that names itself, never clicking an upgrade the save already owns, and
-ranking the permanent slot by price.
+ranking the permanent slot by price, and
+sweeping a new run's store without ever reaching the tech pool.
 
 The fake Cookie Clicker grew an ascension screen, a heavenly tree with
 prerequisites and refusals, a permanent slot picker, named prompts, buffs with real
