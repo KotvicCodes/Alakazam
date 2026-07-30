@@ -101,9 +101,12 @@
         }
 
         // what is already in place, scored the same way, so a swap is only spent on
-        // a difference that is worth one
+        // a difference that is worth one. Until the measurements have settled there
+        // is no honest difference to report, so there is none: the preset standing in
+        // for a scored layout is not something to spend swaps chasing.
         const held = window.Alakazam.strategy.pantheon.score(current, target.inputs)
         const total = Math.max(1, target.inputs.cps + target.inputs.clickCps)
+        const gain = target.settled ? target.gain - held.gain : 0
 
         return {
             unlocked: true,
@@ -115,8 +118,8 @@
             why: target.why,
             settled: target.settled,
             promoted: target.inputs.promoted,
-            gain: target.gain - held.gain,
-            worthIt: target.gain - held.gain > RESLOT_MARGIN * total
+            gain,
+            worthIt: gain > RESLOT_MARGIN * total
         }
     }
 

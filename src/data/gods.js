@@ -32,6 +32,17 @@
     // budget with it. It is excluded from every preset on purpose.
     const UNUSABLE = [0]
 
+    //* Cyclius cannot be chased
+    // Its bonus is a sine wave: +15% at the top of the cycle and -15% at the bottom,
+    // over three hours in the diamond slot and a day in jade. Riding it means
+    // slotting and unslotting on that cycle, and there are three worship swaps a day
+    // at the very best. So it would be picked while the wave was up and then paid for
+    // in full while it was down, with no swap left to escape.
+    //
+    // It is scored anyway, at whatever the wave is worth right now, so the console
+    // table says what it would have paid. It is simply never chosen.
+    const VOLATILE = [3]
+
     //* Presets
     // clicker: Alakazam bursts thousands of clicks a second, so Muridal's click
     //   bonus is worth more than the 3% of building output it costs.
@@ -113,6 +124,7 @@
         SLOTS,
         PRESETS,
         UNUSABLE,
+        VOLATILE,
         EFFECTS,
         TIERS,
         effectsOf,

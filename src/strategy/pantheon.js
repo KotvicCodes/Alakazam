@@ -25,7 +25,7 @@
     // dragon and the temple, and it is why `promoted` is an input here rather than a
     // separate table.
 
-    const { GODS, UNUSABLE, effectsOf, TIERS, nameOf } = window.Alakazam.data.gods
+    const { GODS, UNUSABLE, VOLATILE, effectsOf, TIERS, nameOf } = window.Alakazam.data.gods
 
     // the same stated assumption strategy/dragon.js makes about kittens, for the
     // same reason: the milk multiplier is not rendered anywhere
@@ -34,8 +34,14 @@
     // Cyclius swings this far either side of nothing over its cycle
     const CYCLIUS_SWING = 0.15
 
+    //* usable
+    // who is a candidate at all. Holobore unslots itself on the first golden cookie
+    // and Cyclius would need a swap every few hours to be worth anything; both are
+    // still scored, so the table says what they would have paid, and neither is ever
+    // picked. See data/gods.js for the reasoning behind each.
     function usable() {
-        return GODS.filter(g => UNUSABLE.indexOf(g.id) === -1).map(g => g.id)
+        const out = UNUSABLE.concat(VOLATILE)
+        return GODS.filter(g => out.indexOf(g.id) === -1).map(g => g.id)
     }
 
     //* termGain
