@@ -72,33 +72,25 @@ test('projection survives a save with nothing in it', () => {
 
 //! Targets
 
-test('targets come from the guide, picked by prestige already banked', () => {
-    assert.equal(S.targetFor(0), 365)
-    assert.equal(S.targetFor(364), 365)
-    assert.equal(S.targetFor(365), 2185)
-    assert.equal(S.targetFor(2185), 12301)
-    assert.equal(S.targetFor(100000), 127776)
+test('what the plan still wants comes from what has been spent on it', () => {
+    assert.equal(S.stillToBuy(0), 365)
+    assert.equal(S.stillToBuy(100), 265)
+    // the first entry is paid off, so the bar is the second entry's list
+    assert.equal(S.stillToBuy(365), 2185)
+    // and part way into the second, only the rest of it
+    assert.equal(S.stillToBuy(1365), 1185)
 })
 
-test('a save whose ascension count ran ahead still gets a reachable target', () => {
-    // twenty ascensions and 40 million chips is an ordinary shape for a save
-    // that ascended a few times before it ever read a guide. Indexed by the
-    // reset count that asked for 22 quadrillion, which is several ascensions
-    // away, so the planner never fired again.
-    const banked = S.cookiesFor(40e6)
-    const d = S.worthAscending({
-        cookiesReset: banked,
-        cookiesEarned: S.cookiesFor(220e6) - banked,
-        resets: 20
-    })
-    assert.equal(d.target, 210266660)
-    assert.equal(d.ready, true)
+test('the whole plan bought leaves nothing to aim at', () => {
+    const total = H.CUMULATIVE[H.CUMULATIVE.length - 1]
+    assert.equal(S.stillToBuy(total), null)
+    assert.equal(S.stillToBuy(total * 2), null)
 })
 
-test('past the top of the guide there is no target', () => {
-    const top = Math.max(...H.PLAN.map(p => p.chips))
-    assert.equal(S.targetFor(top), null)
-    assert.equal(S.targetFor(top * 2), null)
+test('the cumulative table is the running total of the guide entries', () => {
+    assert.equal(H.CUMULATIVE[0], 365)
+    assert.equal(H.CUMULATIVE[1], 365 + 2185)
+    assert.equal(H.CUMULATIVE.length, H.PLAN.length)
 })
 
 //! The decision
@@ -129,23 +121,71 @@ test('overshooting the target still ascends', () => {
     assert.equal(d.target, 365)
 })
 
-test('the second ascension aims at the second target, not the first', () => {
-    // 365 already banked; reaching 365 again is not enough, 2185 is the bar
+test('the second ascension aims at what is left of the plan', () => {
+    // the first entry was bought outright, so 2185 more chips are wanted
     const banked = S.cookiesFor(365)
     const short = S.worthAscending({
         cookiesReset: banked,
         cookiesEarned: S.cookiesFor(2000) - banked,
+        heavenlyChipsSpent: 365,
         resets: 1
     })
     assert.equal(short.ready, false)
-    assert.equal(short.target, 2185)
+    assert.equal(short.chipsNeeded, 2185)
+    assert.equal(short.target, 365 + 2185)
 
     const enough = S.worthAscending({
         cookiesReset: banked,
-        cookiesEarned: S.cookiesFor(2185) - banked,
+        cookiesEarned: S.cookiesFor(365 + 2185) - banked,
+        heavenlyChipsSpent: 365,
         resets: 1
     })
     assert.equal(enough.ready, true)
+})
+
+test('upgrades already bought from the next entry lower the bar', () => {
+    // the run overshot and the shopping pass carried on into the second entry,
+    // buying 1000 chips worth of it. Asking for the full 2185 again would be
+    // asking for chips that are already spent.
+    const banked = S.cookiesFor(1365)
+    const d = S.worthAscending({
+        cookiesReset: banked,
+        cookiesEarned: S.cookiesFor(1365 + 1185) - banked,
+        heavenlyChipsSpent: 1365,
+        resets: 1
+    })
+    assert.equal(d.chipsNeeded, 1185)
+    assert.equal(d.ready, true)
+})
+
+test('chips already banked count toward what the plan wants', () => {
+    // 2000 chips sitting unspent and 185 to go, not 2185
+    const banked = S.cookiesFor(2365)
+    const d = S.worthAscending({
+        cookiesReset: banked,
+        cookiesEarned: S.cookiesFor(2365 + 185) - banked,
+        heavenlyChipsSpent: 365,
+        heavenlyChips: 2000,
+        resets: 1
+    })
+    assert.equal(d.chipsNeeded, 2185)
+    assert.equal(d.chipsShort, 185)
+    assert.equal(d.ready, true)
+})
+
+test('a save that already holds enough still has to earn a chip', () => {
+    // the bank covers the whole of the next entry, but ascending for nothing at
+    // all is still a loss
+    const banked = S.cookiesFor(365)
+    const idle = S.worthAscending({
+        cookiesReset: banked,
+        cookiesEarned: 0,
+        heavenlyChipsSpent: 365,
+        heavenlyChips: 5000,
+        resets: 1
+    })
+    assert.equal(idle.ready, false)
+    assert.match(idle.why, /no chips yet/)
 })
 
 test('past the guide it falls back to doubling prestige', () => {
@@ -157,15 +197,17 @@ test('past the guide it falls back to doubling prestige', () => {
     const short = S.worthAscending({
         cookiesReset: banked,
         cookiesEarned: S.cookiesFor(top * 1.65) - banked,
+        heavenlyChipsSpent: H.CUMULATIVE[H.CUMULATIVE.length - 1],
         resets: H.PLAN.length
     })
     assert.equal(short.ready, false)
     assert.equal(short.target, null)
-    assert.match(short.why, /past the plan/)
+    assert.match(short.why, /whole plan is bought/)
 
     const enough = S.worthAscending({
         cookiesReset: banked,
         cookiesEarned: S.cookiesFor(top * 2.2) - banked,
+        heavenlyChipsSpent: H.CUMULATIVE[H.CUMULATIVE.length - 1],
         resets: H.PLAN.length
     })
     assert.equal(enough.ready, true)
@@ -214,9 +256,32 @@ test('names are matched however the game capitalises them', () => {
     assert.ok(Number.isFinite(H.priority('Milkhelp® lactose intolerance relief tablets')))
 })
 
-test('permanent slot picks put kittens first', () => {
-    assert.equal(H.PERMANENT_PICKS[0], 'kitten angels')
+test('permanent slot picks are kittens, strongest first', () => {
+    // the game's own tier order. The old list ran experts before specialists and
+    // stopped at analysts, so a save owning any of the four strongest was handed
+    // one from five tiers down, which was the first name it recognised.
+    const order = [
+        'kitten strategists',
+        'kitten admins',
+        'kitten executives',
+        'kitten analysts',
+        'kitten marketeers',
+        'kitten assistants to the regional manager',
+        'kitten consultants',
+        'kitten experts',
+        'kitten specialists',
+        'kitten accountants',
+        'kitten managers',
+        'kitten overseers',
+        'kitten engineers',
+        'kitten workers',
+        'kitten helpers'
+    ]
+    assert.deepEqual(H.PERMANENT_PICKS.slice(0, order.length), order)
     assert.ok(H.PERMANENT_PICKS.indexOf('kitten helpers') < H.PERMANENT_PICKS.indexOf('heavenly key'))
+    // Game.AssignPermanentSlot only lists the plain and cookie pools, so a
+    // heavenly upgrade can never be on offer
+    assert.equal(H.PERMANENT_PICKS.indexOf('kitten angels'), -1)
 })
 
 //! The planner module
@@ -242,7 +307,9 @@ test('the planner reads the run straight out of the save', () => {
     assert.equal(s.chipsGained, 2)
     assert.equal(s.chipsBanked, 3)
     assert.equal(s.ascensions, 0)
-    assert.equal(s.target, 365)
+    // the plan wants 365 and three are already banked, so the run has 362 to earn
+    assert.equal(s.chipsNeeded, 365)
+    assert.equal(s.target, 362)
     assert.equal(s.ready, false)
 })
 
@@ -462,6 +529,87 @@ test('a permanent slot is filled from the preference list', async () => {
     )
     // kittens outrank the mouse, and the grandma upgrade is not a candidate at all
     assert.equal(state.permanent, 'Kitten helpers')
+})
+
+test('an owned permanent slot is never clicked again', async () => {
+    // Game.Upgrade.buy ends with "if (this.bought && this.activateFunction)
+    // this.activateFunction()", outside the branch that checks whether anything
+    // was purchased. A slot's activateFunction opens its picker, so clicking one
+    // you already own reopens the picker for free. The shopping pass filled it,
+    // came round, found the same affordable crate and clicked it again: a loop
+    // that spends nothing, never reports itself finished, and so never
+    // reincarnates. Which is exactly what the run did.
+    const state = await pump(
+        ascender({ chips: 1000, permanentChoices: [{ id: 91, name: 'Kitten helpers' }] })
+    )
+    assert.equal(state.permanent, 'Kitten helpers')
+    const pickers = state.log.filter(l => l.indexOf('picker ') === 0)
+    assert.equal(pickers.length, 1, `opened the slot picker ${pickers.length} times`)
+    assert.deepEqual(
+        state.log.filter(l => l.indexOf('RECLICK') === 0),
+        []
+    )
+    assert.ok(state.log.indexOf('reincarnated') !== -1, 'never got to Reincarnate')
+})
+
+test('an upgrade already owned is left alone entirely', async () => {
+    // bought crates stay on the tree carrying `enabled`. Clicking one is a wasted
+    // click at best and, for anything with an activateFunction, a loop.
+    const h = ascender({ chips: 20 })
+    h.game.state.heavenlyBought.push('Legacy')
+    h.game.drawTree()
+    const state = await pump(h)
+    assert.deepEqual(
+        state.log.filter(l => l.indexOf('RECLICK') === 0),
+        []
+    )
+    assert.equal(state.log.filter(l => l === 'heavenly Legacy').length, 0, 'bought it twice')
+    // and the ones behind it still get bought
+    assert.ok(state.heavenlyBought.indexOf('Heavenly cookies') !== -1)
+})
+
+test('the dearest kitten on offer takes the slot', async () => {
+    // kitten tiers are three orders of magnitude apart, so the price the crate's
+    // own tooltip quotes ranks them without a table to keep in step with the game
+    const state = await pump(
+        ascender({
+            chips: 1000,
+            permanentChoices: [
+                { id: 90, name: 'Kitten helpers', price: 9e6 },
+                { id: 91, name: 'Kitten admins', price: 9e47 },
+                { id: 92, name: 'Kitten experts', price: 9e29 },
+                { id: 93, name: 'Plastic mouse', price: 50000 }
+            ]
+        })
+    )
+    assert.equal(state.permanent, 'Kitten admins')
+})
+
+test('a kitten the pick list has never heard of still wins on price', async () => {
+    // the list cannot stay ahead of the game; the price can
+    const state = await pump(
+        ascender({
+            chips: 1000,
+            permanentChoices: [
+                { id: 90, name: 'Kitten experts', price: 9e29 },
+                { id: 91, name: 'Kitten researchers', price: 9e53 }
+            ]
+        })
+    )
+    assert.equal(state.permanent, 'Kitten researchers')
+})
+
+test('with no prices to compare, the named order decides', async () => {
+    const state = await pump(
+        ascender({
+            chips: 1000,
+            permanentChoices: [
+                { id: 90, name: 'Kitten helpers' },
+                { id: 91, name: 'Kitten managers' }
+            ]
+        })
+    )
+    assert.equal(state.permanent, 'Kitten managers')
 })
 
 test('a permanent slot with nothing worth taking is left empty', async () => {

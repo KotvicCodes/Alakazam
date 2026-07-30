@@ -23,7 +23,7 @@
     // exactly "what would prestige be if that addition happened now", and the chips
     // it pays are the difference. Nothing is estimated.
 
-    const { PLAN } = window.Alakazam.data.heavenly
+    const { CUMULATIVE } = window.Alakazam.data.heavenly
 
     // the divisor in the game's own prestige formula
     const COOKIES_PER_CHIP_BASE = 1e12
@@ -85,28 +85,40 @@
         }
     }
 
-    //* targetFor
-    // the prestige level the guide wants before this ascension, picked from the
-    // prestige already banked.
+    //! stillToBuy
+    // How many heavenly chips the plan is still waiting for.
     //
-    // It used to index the table by the ascension count, which assumes the save
-    // has followed the guide from its first ascension, exactly one entry per
-    // reset. No real save does. Ascend a few times early, the way everybody does
-    // before they read a guide, or import a save, and the count runs ahead of the
-    // progress. The table's tenth entry then asks a save for 1.6 billion chips
-    // when it has yet to earn the 210 million the ninth wanted, and the planner
-    // sits waiting for a number several ascensions away, forever.
+    // This is the whole of the "when" question, and it used to be asked in the
+    // wrong currency. The plan was read as a ladder of prestige levels and the
+    // target was the next rung above the save, which ignores two things that are
+    // always true by the time an ascension comes round.
     //
-    // The prestige level is the thing the entries are really a ladder of, so the
-    // target is the first rung above where the save already stands. A save that
-    // did follow the guide gets the same entry the reset count would have given.
+    // A run does not stop the moment the target is met. It waits out whatever
+    // boost is running, takes three loans and earns under them, so it arrives on
+    // the ascension screen with more chips than the entry asked for. The shopping
+    // pass spends the surplus on the next entry's list, which is the guide's own
+    // advice. So the next ascension does not need a whole entry's worth again: it
+    // needs what is left of the plan.
     //
-    // Past the top of the table there is nothing left to aim at, and the caller
-    // uses the doubling rule instead; that is what the null means.
-    function targetFor(prestige) {
-        const at = number(prestige)
-        for (const step of PLAN) {
-            if (step.chips > at) return step.chips
+    // And chips that were not spent stay banked. A run that came up short of an
+    // expensive centrepiece carries the difference forward, and asking it to earn
+    // the full price a second time is asking for chips it already has.
+    //
+    // Both are answered by the same two numbers, and the save carries both.
+    // heavenlyChipsSpent is exactly how far down the plan the purchases have got,
+    // because Alakazam never buys anything off it; heavenlyChips is the rest.
+    //
+    // Returns null once the entire plan has been bought, which is the caller's
+    // signal to fall back on the doubling rule.
+    //
+    // The one thing that can mislead it is chips spent off-plan by hand, which
+    // read as progress they did not buy. The result is ascending a little early
+    // with the difference still to earn, which the next pass simply asks for
+    // again.
+    function stillToBuy(chipsSpent) {
+        const spent = number(chipsSpent)
+        for (const total of CUMULATIVE) {
+            if (total > spent) return total - spent
         }
         return null
     }
@@ -114,11 +126,13 @@
     //! worthAscending
     // The decision, and the only place the two rules live.
     //
-    // Inside the guide's table the target is absolute: reach that prestige level.
-    // This is better than a relative rule because the table is not a smooth curve.
-    // It is shaped around what each tier of heavenly upgrades costs, so stopping
-    // short of an entry means ascending for chips that cannot buy the thing the
-    // entry exists to buy.
+    // Inside the guide's table the question is whether ascending now would put
+    // enough chips in hand to buy what the plan still wants. That is better than a
+    // rule about prestige levels because the table is not a smooth curve: it is
+    // shaped around what each tier of heavenly upgrades costs, so stopping short of
+    // an entry means ascending for chips that cannot buy the thing the entry exists
+    // to buy. It is also the only form of the question that a save part way through
+    // a tier, or sitting on unspent chips, can answer correctly.
     //
     // Past the table the doubling rule takes over, because there is nothing left to
     // aim at and the cube root makes "twice the level" the only scale-free answer.
@@ -128,32 +142,43 @@
     // for a long time.
     function worthAscending(scalars) {
         const p = projected(scalars)
-        if (p.chipsGained < 1) {
-            return {
-                ...p,
-                target: targetFor(p.current),
-                ready: false,
-                why: 'no chips yet'
-            }
-        }
+        const banked = number(scalars && scalars.heavenlyChips)
+        const needed = stillToBuy(scalars && scalars.heavenlyChipsSpent)
+        const earned = p.chipsGained >= 1
 
-        const target = targetFor(p.current)
-        if (target === null) {
-            const ready = p.prestige >= p.current * DOUBLING
+        if (needed === null) {
+            const ready = earned && p.prestige >= p.current * DOUBLING
             return {
                 ...p,
                 target: null,
+                chipsNeeded: 0,
+                chipsShort: 0,
                 ready,
-                why: ready ? 'would double prestige' : 'past the plan, saving for double'
+                why: !earned
+                    ? 'no chips yet'
+                    : ready
+                      ? 'the whole plan is bought, and this would double prestige'
+                      : 'the whole plan is bought, saving for double'
             }
         }
 
-        const ready = p.prestige >= target
+        // chips the plan wants that the bank cannot already cover, and so the
+        // prestige level that has to be reached: a level is a chip
+        const short = Math.max(0, needed - banked)
+        const target = p.current + short
+        const ready = earned && p.prestige >= target
+
         return {
             ...p,
             target,
+            chipsNeeded: needed,
+            chipsShort: short,
             ready,
-            why: ready ? `plan target ${target} reached` : `saving for ${target}`
+            why: !earned
+                ? 'no chips yet'
+                : ready
+                  ? `the plan's next ${Math.round(needed)} chips are covered`
+                  : `saving for ${Math.round(needed)} chips, ${Math.round(banked + p.chipsGained)} so far`
         }
     }
 
@@ -167,7 +192,7 @@
         prestigeFor,
         cookiesFor,
         projected,
-        targetFor,
+        stillToBuy,
         worthAscending,
         HC_FACTOR,
         DOUBLING

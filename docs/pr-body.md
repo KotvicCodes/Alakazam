@@ -32,17 +32,19 @@ downpayment is a share of a bank about to be discarded, and spending never reduc
 ## When, and what it buys
 
 `prestige = floor((lifetime cookies / 1e12) ^ (1/3))`, the game's own formula, kept
-pure and unit tested in `strategy/ascend.js`. Targets come from the guide, all 23
-entries in `data/heavenly.js`: 365 chips, then 2185, then 12301. The one it aims
-at is the first rung above where the save already stands, so a save that has
-ascended more times than it has worked through the table still gets a target it
-can reach. Past the table it falls back to the guide's own rule, ascend when the
-run would double the prestige already banked.
+pure and unit tested in `strategy/ascend.js`. The plan is the guide's, all 23
+entries in `data/heavenly.js`: 365 chips, then 2185, then 12301. What it waits
+for is **the chips the plan still wants** — the running total of the entries,
+less what has already been spent on them, less what is already banked. Past the
+table it falls back to the guide's own rule, ascend when the run would double the
+prestige already banked.
 
-The shopping list is the guide's, flattened into one order. Anything not on it is
-never bought, because chips spent off-plan are chips the next tier's centrepiece
-does not get. Permanent slots are filled from a preference list, kittens first,
-and cancelled out of rather than filled blindly.
+The shopping list is the guide's, flattened into one order, and it keeps going as
+long as the chips last: an entry is not a stopping point, so a run that overshoots
+carries straight on into the next one's list. Anything not on the list is never
+bought, because chips spent off-plan are chips the next tier's centrepiece does
+not get. Permanent slots take the dearest kitten on offer, and are cancelled out
+of rather than filled blindly.
 
 ## Two things that had to be got right
 
@@ -142,16 +144,56 @@ start. It is one pass now, on screen for a frame. And it refused to run at all o
 a save whose clones already had a look, which is declining an achievement over a
 hairstyle: it earns it and puts the look straight back.
 
-**Ascension targets were indexed by the ascension count**, which assumes a save
-followed the guide from its first reset, one entry per ascension. Ascend a few
-times early, or import a save, and the count runs ahead of the progress: the
-table's tenth entry asks for 1.6 billion chips from a save that has not earned
-the 210 million the ninth wanted, and the planner waits forever. The target is
-now the first rung above where the save actually stands.
+**Ascension targets were asked for in the wrong currency.** They were indexed by
+the ascension count, which assumes a save followed the guide from its first
+reset, one entry per ascension — so a save that ascended a few times early, or
+was imported, is handed a target several ascensions away and waits forever. But
+the deeper problem was reading the plan as a ladder of prestige levels at all,
+because two things are always true by the time an ascension comes round and
+neither fits that shape.
+
+A run does not stop when its target is met: it waits out the running boost, takes
+three loans and earns under them, so it reaches the ascension screen with more
+chips than the entry asked for, and the shopping pass carries the surplus into
+the next entry's list. And chips it could not spend stay banked. Asking for a
+whole entry's worth again is asking for chips that are already spent, or already
+in hand.
+
+So the question is now "what does the plan still want", answered from the two
+numbers the save already carries: `heavenlyChipsSpent` is exactly how far down
+the plan the purchases have got, because Alakazam never buys off it, and
+`heavenlyChips` is the rest.
+
+**The shopping pass never finished, so it never reincarnated.** `Game.Upgrade.buy`
+ends with
+
+```js
+if (this.bought && this.activateFunction) this.activateFunction();
+```
+
+outside the branch that checks whether anything was actually purchased. Every
+permanent upgrade slot has an `activateFunction` that opens its picker, and a
+bought heavenly upgrade stays on the tree. So the pass bought the slot, filled
+its picker, came round, found the same affordable crate still sitting there,
+clicked it, and reopened the picker — spending nothing, never reporting itself
+finished, and so never clicking Reincarnate. A crate on that tree carries
+`enabled` if and only if it is already owned, so it is dropped now, which also
+saves a click and a redraw on every upgrade the save already has.
+
+**The permanent slot took a weaker kitten than it should have.** The preference
+list was mis-ordered (experts before specialists, analysts before marketeers) and
+stopped four tiers short of the top, so a save owning Kitten admins was handed
+Kitten specialists — the first name the list recognised. It is complete and in
+the game's own order now, but the ranking no longer depends on that: kitten tiers
+are three orders of magnitude apart in price, so the picker takes the dearest one
+on offer, read from the crate's own tooltip, and stays right when the game adds
+another. Kitten angels has gone from the list entirely —
+`Game.AssignPermanentSlot` only ever offers the plain and cookie pools, so a
+heavenly upgrade could never have appeared there.
 
 ## Verification
 
-`npm test` — 200 tests under `node --test`, green. New coverage: the prestige
+`npm test` — 208 tests under `node --test`, green. New coverage: the prestige
 formula against the guide's milestones, target selection and the doubling fallback,
 buying in plan order, never touching a ghosted or off-plan crate, refusing an
 unnamed prompt, the stale-save guard, loan ordering, ascending inside the loan
@@ -159,14 +201,17 @@ window, a frenzy holding the sequence back, buff naming and pie-timer decoding, 
 likeness condition and the deliberate final step, every gift gate, the save in the escaped
 form localStorage really holds it in, the real 55 field scalar layout against a
 drifted one, measuring a shortened lump lifespan and
-harvesting inside it, spending a lump on the row badge, and answering only the
-prompt that names itself.
+harvesting inside it, spending a lump on the row badge, answering only the
+prompt that names itself, never clicking an upgrade the save already owns, and
+ranking the permanent slot by price.
 
 The fake Cookie Clicker grew an ascension screen, a heavenly tree with
 prerequisites and refusals, a permanent slot picker, named prompts, buffs with real
 pie timers, the three loan slots, the clone customizer with the game's own check,
-the options menu with gift prompts, and a sugar lump drawn from its own sprite
-sheet with the level badges in the building rows.
+the options menu with gift prompts, a sugar lump drawn from its own sprite sheet
+with the level badges in the building rows, and a heavenly tree that keeps its
+bought crates on screen and re-runs a slot's activate function when one is
+clicked, which is what made the loop reproducible.
 
 Everything above except the market's loan buttons is now checked against the
 shipped `main.js` rather than assumed: the save format field by field, the lump
