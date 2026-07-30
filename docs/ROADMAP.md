@@ -156,15 +156,18 @@ and very testable, since the answer is checkable against what actually happens.
 
 ---
 
-## 7. Krumblor, the cookie dragon
+## 7. Krumblor, the cookie dragon  *(built)*
 
-Levelled by sacrificing buildings; grants two aura slots at full growth. Auras
-cover production, golden cookie frequency, click power, and reduced spell costs.
+Trained by sacrificing buildings, and worth doing: Radiant Appetite doubles all
+production and is reachable fourteen rungs up the ladder. `Game.Reset` zeroes
+`dragonLevel` and both auras on **every** ascension, not only on a hard reset, so
+this is a cost paid again every run rather than a one-time investment.
 
-`dragonLevel`, `dragonAura` and `dragonAura2` are parsed from the save already.
-The work is the training click path and an aura policy: production auras for idle,
-click auras during a combo, Supreme Intellect when the grimoire matters. Aura
-swapping mid-combo is part of the combo sequence above.
+`src/modules/dragon.js` climbs the ladder, keeps the best aura in the slots and
+pets for drops; `src/strategy/dragon.js` scores every aura against measured income;
+`src/act/dragon.js` reaches the panel, whose tab is painted on a canvas rather than
+built as an element. Aura swapping mid-combo is still part of the combo sequence
+above, and is the obvious next use of it.
 
 ---
 
