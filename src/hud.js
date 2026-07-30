@@ -395,6 +395,11 @@
                 html += row('prestige', `${format(debug.ascend.current)} lvl`)
                 html += row('chips banked', format(debug.ascend.chipsBanked))
                 html += row('ascending pays', `${format(debug.ascend.chipsGained)} chips`)
+                // what the plan still wants, which is the whole of the decision:
+                // it comes down as upgrades are bought and as chips are banked
+                if (debug.ascend.chipsNeeded > 0) {
+                    html += row('plan wants', `${format(debug.ascend.chipsNeeded)} chips`)
+                }
                 // the target is the plan's, and past the plan there is not one to
                 // name; the reason line says which rule is in force either way
                 html += row('plan', debug.ascend.why)

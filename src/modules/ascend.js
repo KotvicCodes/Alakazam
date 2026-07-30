@@ -29,7 +29,7 @@
 
     const { save, store, registry, catalog, buffs } = window.Alakazam
     const { worthAscending, cookiesFor } = window.Alakazam.strategy.ascend
-    const { priority, COST, PERMANENT_PICKS, normalise } = window.Alakazam.data.heavenly
+    const { priority, COST, PERMANENT_PICKS, KITTEN, normalise } = window.Alakazam.data.heavenly
     const loanData = window.Alakazam.data.loans
     const act = window.Alakazam.act.ascend
     const loanAct = window.Alakazam.act.loans
@@ -173,21 +173,36 @@
         const s = save.get()
         const version = (s && s.version) || 'unknown'
         const held = store.get('heavenlyNames', null)
-        if (!held || held.version !== version) return { version, names: {} }
+        // `prices` came later than `names`, so a cache without one is an old shape
+        // and is rebuilt rather than read half way
+        if (!held || held.version !== version || !held.prices) {
+            return { version, names: {}, prices: {} }
+        }
         return held
     }
 
-    async function nameOf(crate) {
+    //* describe
+    // a crate's name and the price its tooltip quotes, both cached together. The
+    // price is what ranks the permanent slot picker: see fillSlot.
+    async function describe(crate) {
         const cache = nameCache()
-        if (cache.names[crate.id]) return cache.names[crate.id]
+        if (cache.names[crate.id]) {
+            return { name: cache.names[crate.id], price: cache.prices[crate.id] }
+        }
 
         const tip = await catalog.readTooltip(crate.element)
         // the hover mutex is held by the catalog module; try again next tick
         if (!tip || !tip.name) return null
 
         cache.names[crate.id] = normalise(tip.name)
+        cache.prices[crate.id] = Number.isFinite(tip.price) ? tip.price : null
         store.set('heavenlyNames', cache)
-        return cache.names[crate.id]
+        return { name: cache.names[crate.id], price: cache.prices[crate.id] }
+    }
+
+    async function nameOf(crate) {
+        const found = await describe(crate)
+        return found ? found.name : null
     }
 
     //! Shopping
@@ -239,27 +254,57 @@
         return new Promise(resolve => setTimeout(resolve, ms))
     }
 
+    //* bestPermanent
+    // Which of the offered upgrades to make permanent.
+    //
+    // The dearest kitten wins. Kittens multiply production by a figure that grows
+    // with milk, milk grows with achievements, and achievements are the one thing
+    // an ascension never takes away, so a kitten is worth strictly more in every
+    // future run than it was in this one. Which kitten is the strongest depends
+    // entirely on how far the save has come, and their tiers are three orders of
+    // magnitude apart in price, so the price the crate's own tooltip quotes ranks
+    // them without a table to keep up to date.
+    //
+    // The named list is the fallback, for the click multipliers and for a save
+    // whose prices could not be read.
+    function bestPermanent(choices) {
+        // a price of zero is a tooltip that had nothing to say, not a free upgrade
+        const priced = choices.filter(c => KITTEN.test(c.name) && c.price > 0)
+        if (priced.length > 0) {
+            return priced.reduce((best, c) => (c.price > best.price ? c : best))
+        }
+        for (const want of PERMANENT_PICKS) {
+            const hit = choices.find(c => c.name === want)
+            if (hit) return hit
+        }
+        return null
+    }
+
     //* fillSlot
-    // A permanent upgrade slot opens a picker instead of buying anything. Take the
-    // first preference that is on offer; if none of them are, cancel out rather
-    // than committing the slot to whatever happened to be first in the list, since
-    // the slot can be reassigned at any later ascension but not this run.
-    async function fillSlot() {
+    // A permanent upgrade slot opens a picker instead of buying anything. Rank
+    // what is on offer and take the best; if nothing on offer is worth a slot,
+    // cancel out rather than committing it to whatever happened to be first in the
+    // list, since the slot can be reassigned at any later ascension but not this
+    // run.
+    //
+    // Every choice has to be named before any of them can be ranked, and a name
+    // costs a hover. On a first ascension there are a great many of them, so this
+    // shares the caller's time slice and simply comes back next tick with whatever
+    // it learned cached.
+    async function fillSlot(until) {
         if (!act.promptIs('permanent')) return false
 
-        const choices = act.permanentChoices()
-        let picked = null
-        for (const want of PERMANENT_PICKS) {
-            for (const choice of choices) {
-                const name = await nameOf(choice)
-                if (name === want) {
-                    picked = choice
-                    break
-                }
-            }
-            if (picked) break
+        const choices = []
+        for (const choice of act.permanentChoices()) {
+            if (Date.now() > until) return false
+            const found = await describe(choice)
+            // the hover lock is held elsewhere. Ranking a partial list would pick
+            // a weaker upgrade than the one we have not looked at yet.
+            if (!found) return false
+            choices.push({ ...choice, ...found })
         }
 
+        const picked = bestPermanent(choices)
         if (!picked) {
             console.log('Alakazam: no preferred permanent upgrade on offer, leaving the slot empty')
             // back out rather than leaving the picker open. It is modal as far as
@@ -295,7 +340,7 @@
         while (Date.now() < until) {
             // a picker left open from the previous purchase blocks everything else
             if (act.promptIs('permanent')) {
-                await fillSlot()
+                await fillSlot(until)
                 await wait(REDRAW_MS)
                 continue
             }
@@ -321,7 +366,9 @@
             if (Number.isFinite(after) && after < before) {
                 bought.push(scan.crate.name)
                 any = true
-            } else if (!act.promptIs('permanent')) {
+            } else {
+                // it looked buyable and refused. Whatever the reason, going back to
+                // it is how a shopping pass turns into a loop that never finishes.
                 skipped.add(scan.crate.id)
             }
         }

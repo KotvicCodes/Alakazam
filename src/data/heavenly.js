@@ -275,6 +275,13 @@
         }
     ]
 
+    //* CUMULATIVE
+    // what the plan has cost in total up to and including each entry. This is how
+    // far along the plan a save is: heavenlyChipsSpent is the only record of that
+    // which survives a page reload, and it is exact as long as nothing off-plan
+    // has ever been bought, which is Alakazam's own rule.
+    const CUMULATIVE = []
+
     //* ORDER
     // Every upgrade in the plan, flattened, in the order the guide buys them. This
     // is the shopping list on the ascend screen.
@@ -287,7 +294,10 @@
     // that a lookup rather than a special case.
     const ORDER = []
     const COST = {}
+    let running = 0
     for (const step of PLAN) {
+        running += step.chips
+        CUMULATIVE.push(running)
         for (const [name, cost] of step.upgrades) {
             const key = normalise(name)
             if (ORDER.indexOf(key) === -1) ORDER.push(key)
@@ -319,6 +329,17 @@
             .toLowerCase()
     }
 
+    //* KITTEN
+    // A permanent slot should hold the dearest kitten the player owns, and which
+    // one that is depends on how far the save has come. Rather than keep a list in
+    // step with the game, the picker matches on this and compares the prices the
+    // crates' own tooltips report: kitten tiers are three orders of magnitude
+    // apart, so dearest is unambiguous and stays right when Orteil adds another.
+    //
+    // The list below is still the tie-break and the fallback, in case a price
+    // cannot be read.
+    const KITTEN = /^kitten /i
+
     //* PERMANENT_PICKS
     // What to put in a permanent upgrade slot, best first. A permanent slot keeps
     // one upgrade across ascensions, so it is worth the strongest thing that would
@@ -328,19 +349,31 @@
     // achievements, and achievements are the one thing ascension never takes away:
     // a kitten is therefore worth strictly more in every future run than it was in
     // this one. Below them are the click multipliers, which a run cannot buy early.
+    //
+    // The kittens are in the game's own tier order, dearest first, which the old
+    // list was not: it ran experts before specialists and analysts before
+    // marketeers, and it stopped at analysts. The four strongest of all were
+    // missing outright, so a save that owned Kitten admins was handed Kitten
+    // specialists, five tiers weaker, because that was the first entry it
+    // recognised. Kitten angels has gone: it is a heavenly upgrade, and
+    // Game.AssignPermanentSlot only ever lists the plain and cookie pools, so it
+    // could never have been on offer.
     const PERMANENT_PICKS = [
-        'Kitten angels',
-        'Kitten specialists',
-        'Kitten experts',
-        'Kitten managers',
-        'Kitten accountants',
-        'Kitten assistants to the regional manager',
-        'Kitten marketeers',
+        'Kitten strategists',
+        'Kitten admins',
+        'Kitten executives',
         'Kitten analysts',
-        'Kitten engineers',
+        'Kitten marketeers',
+        'Kitten assistants to the regional manager',
+        'Kitten consultants',
+        'Kitten experts',
+        'Kitten specialists',
+        'Kitten accountants',
+        'Kitten managers',
         'Kitten overseers',
-        'Kitten helpers',
+        'Kitten engineers',
         'Kitten workers',
+        'Kitten helpers',
         'Heavenly key',
         'Lucky day',
         'Serendipity',
@@ -353,5 +386,14 @@
 
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.data = window.Alakazam.data || {}
-    window.Alakazam.data.heavenly = { PLAN, ORDER, COST, PERMANENT_PICKS, priority, normalise }
+    window.Alakazam.data.heavenly = {
+        PLAN,
+        ORDER,
+        COST,
+        CUMULATIVE,
+        PERMANENT_PICKS,
+        KITTEN,
+        priority,
+        normalise
+    }
 })()

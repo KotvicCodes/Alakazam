@@ -323,18 +323,32 @@ function build(opts = {}) {
         ascendUpgrades.children = []
         // the tree draws one decorative crate with no data-id behind the real ones
         ascendUpgrades.append(new El('div', { class: 'crate upgrade heavenly' }))
+        // A bought upgrade stays on the tree, carrying `enabled`. That matters:
+        // Game.Upgrade.buy runs the upgrade's activateFunction whenever it is
+        // clicked and already owned, outside the branch that checks whether
+        // anything was actually purchased, so clicking an owned permanent slot
+        // reopens its picker for free, forever.
         HEAVENLY.forEach(u => {
-            if (state.heavenlyBought.indexOf(u.name) !== -1) return
-            const locked = u.needs && state.heavenlyBought.indexOf(u.needs) === -1
+            const owned = state.heavenlyBought.indexOf(u.name) !== -1
+            const locked = !owned && u.needs && state.heavenlyBought.indexOf(u.needs) === -1
             const crate = new El('div', {
                 id: 'heavenlyUpgrade' + u.id,
-                class: locked ? 'crate upgrade heavenly ghosted' : 'crate upgrade heavenly'
+                class: locked
+                    ? 'crate upgrade heavenly ghosted'
+                    : owned
+                      ? 'crate upgrade heavenly enabled'
+                      : 'crate upgrade heavenly'
             })
             crate.setAttribute('data-id', String(u.id))
             crate.addEventListener('mouseover', () => setTooltip(u.name, fmt(u.cost), u.name))
             if (!locked) {
                 crate.addEventListener('click', () => {
-                    if (u.slot) return openSlotPicker(u)
+                    if (owned) {
+                        // no chips move, but the slot's activateFunction still runs
+                        state.log.push(`RECLICK ${u.name}`)
+                        if (u.slot) openSlotPicker(u, false)
+                        return
+                    }
                     // the game checks affordability inside its own handler, so a
                     // crate can look buyable and quietly refuse
                     if (state.chips < u.cost) {
@@ -344,18 +358,17 @@ function build(opts = {}) {
                     state.chips -= u.cost
                     state.heavenlyBought.push(u.name)
                     state.log.push(`heavenly ${u.name}`)
-                    drawTree()
+                    // buying a slot opens its picker straight away, same function
+                    if (u.slot) openSlotPicker(u, true)
+                    else drawTree()
                 })
             }
             ascendUpgrades.append(crate)
         })
     }
 
-    function openSlotPicker(slot) {
-        if (state.chips < slot.cost) return
-        state.chips -= slot.cost
-        state.heavenlyBought.push(slot.name)
-        state.log.push(`heavenly ${slot.name}`)
+    function openSlotPicker(slot, justBought) {
+        state.log.push(`picker ${slot.name}`)
         let chosen = null
         prompt(
             'PickPermaUpgrade',
@@ -377,7 +390,9 @@ function build(opts = {}) {
                         class: 'crate upgrade'
                     })
                     crate.setAttribute('data-id', String(c.id))
-                    crate.addEventListener('mouseover', () => setTooltip(c.name, '0', c.name))
+                    crate.addEventListener('mouseover', () =>
+                        setTooltip(c.name, fmt(c.price || 0), c.name)
+                    )
                     crate.addEventListener('click', () => {
                         chosen = c.name
                     })
@@ -605,7 +620,22 @@ function build(opts = {}) {
 function fmt(n) {
     n = Math.round(n)
     if (n < 1e6) return n.toLocaleString('en-US')
+    // the game's own ladder. It has to run this far up because kitten prices do:
+    // the strongest are past 1e50, and a permanent slot is picked by comparing them
     const units = [
+        [1e63, 'vigintillion'],
+        [1e60, 'novemdecillion'],
+        [1e57, 'octodecillion'],
+        [1e54, 'septendecillion'],
+        [1e51, 'sexdecillion'],
+        [1e48, 'quindecillion'],
+        [1e45, 'quattuordecillion'],
+        [1e42, 'tredecillion'],
+        [1e39, 'duodecillion'],
+        [1e36, 'undecillion'],
+        [1e33, 'decillion'],
+        [1e30, 'nonillion'],
+        [1e27, 'octillion'],
         [1e24, 'septillion'],
         [1e21, 'sextillion'],
         [1e18, 'quintillion'],

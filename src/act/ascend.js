@@ -135,18 +135,36 @@
     }
 
     //* crates
-    // every heavenly upgrade the tree is currently offering.
+    // every heavenly upgrade the tree is currently offering that is worth clicking.
     //
     // A ghosted crate is one whose prerequisites are not met: the game renders it as
     // a plain div with no click handler at all, so clicking it does nothing and only
-    // costs a hover to find that out. They are dropped here rather than in the
-    // caller so no consumer can forget.
+    // costs a hover to find that out.
+    //
+    //! Never click one you already own
+    // A crate on this tree carries `enabled` if and only if it is already bought:
+    // Game.crate sets it from `me.bought` in the ascend context. Clicking one is not
+    // merely wasted, it is actively harmful, because Game.Upgrade.buy ends with
+    //
+    //   if (this.bought && this.activateFunction) this.activateFunction();
+    //
+    // outside the branch that checks whether anything was purchased. Every permanent
+    // upgrade slot has an activateFunction that opens its picker. So clicking an
+    // owned slot reopens the picker, the shopping pass fills it in, comes round,
+    // finds the same affordable crate still on offer, and clicks it again: a loop
+    // that spends nothing, never reports itself finished, and therefore never
+    // reincarnates. That is why the run sat on the ascension screen.
+    //
+    // Both of these are dropped here rather than in the caller so no consumer can
+    // forget.
     function crates() {
         const out = []
         const tree = el('ascendUpgrades')
         if (!tree || !tree.querySelectorAll) return out
         for (const node of tree.querySelectorAll('.crate.upgrade.heavenly')) {
-            if (node.classList && node.classList.contains('ghosted')) continue
+            if (!node.classList) continue
+            if (node.classList.contains('ghosted')) continue
+            if (node.classList.contains('enabled')) continue
             const id = node.getAttribute ? node.getAttribute('data-id') : null
             // the tree draws a decorative crate with no id behind the real ones
             if (!id) continue
