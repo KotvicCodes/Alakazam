@@ -556,6 +556,11 @@
             if (!act.onAscendScreen()) {
                 setPhase('watching')
                 announced = false
+                // The run starts now, and the save will not say so for up to a
+                // minute. Anything that keys off how old the run is has to hear it
+                // from here or it spends that minute treating a brand new run as
+                // an old one: see runAge in modules/purchase.js.
+                store.set('runStartedAt', Date.now())
                 return
             }
             if (act.promptIs('reincarnate')) {
