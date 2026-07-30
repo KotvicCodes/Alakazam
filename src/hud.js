@@ -447,14 +447,12 @@
             }
         }
 
-        // the code is the deliverable, so it gets its own section and the whole
-        // string: it is meant to be selected and pasted back into the game
+        // a held code is now redeemed here rather than by hand, so this says where
+        // the sequence has got to rather than instructing anyone
         if (debug.gifts && debug.gifts.code) {
             html += section('gift code')
-            html += row('redeem in', 'Options -> Redeem')
-            html += row('after', 'your next ascension')
+            html += row('redeeming', debug.gifts.redeemable ? 'now' : 'once the gifted out hour is up')
             html += row('expires in', `${debug.gifts.expiresInHours}h`)
-            html += row('code', debug.gifts.code)
         }
 
         if (debug.wrinklers && debug.wrinklers.active > 0) {

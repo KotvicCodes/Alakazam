@@ -8,19 +8,21 @@
     // present": redeem a cookie gift code from a friend (or from yourself, we don't
     // judge).
     //
-    //! Why this only does half of it
-    // Redeeming your own code is the usual way to get that achievement, and it is
-    // deliberately a two step job with a wait in the middle. Sending applies a one
-    // hour "Gifted out" buff which blocks redeeming, and buffs do not survive an
-    // ascension, so the sequence is: send, ascend, redeem. Codes last a day or two,
-    // which is plenty of room.
+    //! Both halves, and the wait in the middle
+    // Redeeming your own code is the usual way to get that achievement, and the game
+    // makes it a two step job on purpose: sending applies a one hour "Gifted out"
+    // buff which blocks redeeming. Buffs do not survive an ascension, so either wait
+    // the hour out or ascend, whichever comes first, and codes last a day or two so
+    // there is plenty of room for either.
     //
-    // Alakazam does the sending and remembers the code. It does not do the
-    // redeeming, because redeeming means typing a code into the game's own text
-    // field, and every action this extension takes is a pointer event on something
-    // already on screen. Writing into an input is a different kind of act and not
-    // one to slip in quietly. So the code goes in the panel with a line saying what
-    // to do with it, and the last step is the player's.
+    // So Alakazam sends, keeps the code, and redeems it once the buff is gone.
+    // Redeeming means writing into one of the game's own text fields, which is the
+    // one thing here that a pointer could not do on its own. It is the same thing the
+    // achievement hunt already does to set a bakery name, it lives in the input layer
+    // next to the click contract so that it is as visible as every click, and the
+    // game validates whatever it is handed either way: the Redeem button stays
+    // disabled until the code parses, which is what this waits for rather than
+    // deciding for itself that a code is good.
     //
     //! Gating
     // The buttons only exist when the upgrade is owned, the run is not a challenge
@@ -31,7 +33,7 @@
     // way, by opening the options menu and seeing whether the buttons are there,
     // and the cheap checks come first so that hardly ever happens.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick, typeInto } = window.Alakazam.input
     const { live, save, store, buffs, registry } = window.Alakazam
 
     const INTERVAL_MS = 60000
@@ -52,6 +54,13 @@
 
     const CODE_KEY = 'giftCode'
     const CHECKED_KEY = 'giftCheckedAt'
+
+    // the achievement is once per save, and the buff blocks a second redeem for an
+    // hour anyway, so once it is done this stops looking
+    const REDEEMED_KEY = 'giftRedeemedAt'
+
+    // the hour the game makes you wait between sending and redeeming
+    const GIFTED_OUT_MS = 60 * 60 * 1000
 
     const GIFTED_OUT = /^gifted out$/i
 
@@ -106,6 +115,14 @@
         return box.querySelectorAll('a.option')[0] || null
     }
 
+    //* redeemButton
+    // the second of the two, by the same reasoning
+    function redeemButton() {
+        const box = el('giftStuff')
+        if (!box || !box.querySelectorAll) return null
+        return box.querySelectorAll('a.option')[1] || null
+    }
+
     function promptIs(name) {
         return !!el('promptContent' + name)
     }
@@ -140,11 +157,11 @@
             const input = el('giftCode')
             const code = input && input.value ? String(input.value) : ''
             if (code) {
-                store.set(CODE_KEY, { code, at: Date.now() })
+                store.set(CODE_KEY, { code, at: Date.now(), runId: runId() })
                 console.log(
-                    'Alakazam: wrapped a gift. Redeem this code yourself after your next ' +
-                        'ascension for the "No time like the present" achievement, from ' +
-                        `Options then Redeem:\n${code}`
+                    'Alakazam: wrapped a gift. It will be redeemed here once the ' +
+                        '"Gifted out" hour is up, or straight after the next ascension, ' +
+                        `whichever comes first:\n${code}`
                 )
             }
             // "Done" is this prompt's only option
@@ -177,14 +194,106 @@
         simulateClick(send)
     }
 
+    //! Redeeming
+
+    //* redeemable
+    // the same conditions the game puts on the button, minus the ones a held code
+    // already proves. The wait after sending is the one that matters, and it is
+    // checked two ways: the buff itself, which is the truth, and the clock, which is
+    // known even before the buff has been read off a tooltip. Buffs do not survive an
+    // ascension, so a code wrapped in a previous run is clear whatever the clock says.
+    function redeemable() {
+        if (store.get(REDEEMED_KEY, 0)) return false
+        const held = heldCode()
+        if (!held) return false
+        const s = save.get()
+        if (!s.ok || !s.scalars || s.stale) return false
+        if (s.scalars.ascensionMode !== 0) return false
+        if (live.readGlobals().cookies < MIN_BANK) return false
+        if (buffs.named(GIFTED_OUT).length > 0) return false
+        if (held.runId && held.runId !== runId()) return true
+        return Date.now() - held.at >= GIFTED_OUT_MS
+    }
+
+    function runId() {
+        const identity = window.__alakazam && window.__alakazam.identity
+        return identity ? identity.runId : ''
+    }
+
+    //* redeemStep
+    // one step per tick, recognised from the screen like the sending half.
+    //
+    // The prompt has two elements with the id promptOption0: the game writes its own
+    // Redeem button inside the prompt's content and Game.Prompt appends a Cancel
+    // option with the same id afterwards. getElementById returns the first, which
+    // happens to be the right one, but relying on that is a trap for whoever reads
+    // this next, so the button is taken from inside the named content instead.
+    function redeemStep(held) {
+        if (promptIs('GiftRedeem')) {
+            const input = el('giftCode')
+            if (!input) return
+            typeInto(input, held.code)
+
+            // the game validates on the events typeInto fires and only then clears
+            // `disabled`, so the class is its verdict on the code, not ours
+            const button = document.querySelector('#promptContentGiftRedeem #promptOption0')
+            const disabled = !button || String(button.className || '').indexOf('disabled') !== -1
+            if (!disabled) {
+                simulateClick(button)
+                store.set(REDEEMED_KEY, Date.now())
+                store.forget(CODE_KEY)
+                console.log('Alakazam: redeemed a gift code, for "No time like the present"')
+                return
+            }
+
+            // the game will not take it: expired, or from a save that has moved on.
+            // Drop it and get out of the prompt rather than sitting in it.
+            store.forget(CODE_KEY)
+            dismissPrompt()
+            return
+        }
+
+        if (!menuOpen()) {
+            toggleMenu()
+            return
+        }
+
+        const redeem = redeemButton()
+        if (!redeem) {
+            store.set(CHECKED_KEY, Date.now())
+            closeOurMenu()
+            return
+        }
+        simulateClick(redeem)
+    }
+
+    //* dismissPrompt
+    // the darkened backdrop closes any prompt that allows closing, which avoids
+    // having to pick the right one of two same-id options
+    function dismissPrompt() {
+        const darken = el('darken')
+        if (darken) simulateClick(darken)
+    }
+
     function tick() {
         const held = heldCode()
         window.__alakazam.gifts = held
-            ? { code: held.code, expiresInHours: hoursLeft(held) }
-            : { code: null }
+            ? { code: held.code, expiresInHours: hoursLeft(held), redeemable: redeemable() }
+            : { code: null, redeemed: !!store.get(REDEEMED_KEY, 0) }
+
+        if (held) {
+            if (redeemable()) {
+                redeemStep(held)
+                return
+            }
+            // waiting out the hour, or waiting for a bank: nothing to do, and no
+            // reason to leave our own menu open while we wait
+            closeOurMenu()
+            return
+        }
 
         // never leave our own options menu open once there is nothing left to do
-        if (held || !eligible()) {
+        if (!eligible()) {
             closeOurMenu()
             return
         }
@@ -198,5 +307,5 @@
 
     registry.register({ name: 'gifts', interval: INTERVAL_MS, tick })
 
-    window.Alakazam.gifts = { heldCode, eligible, step }
+    window.Alakazam.gifts = { heldCode, eligible, step, redeemable, redeemStep }
 })()
