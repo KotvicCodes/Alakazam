@@ -645,6 +645,75 @@ test('a research upgrade gets catalogued and bought like any other', async () =>
 
 //! HUD
 
+test('the panel does not repeat what the game already shows', async () => {
+    const h = boot({ save: fx.save({ dragonLevel: 19, dragonAura: 15 }).raw })
+    await h.A.store.ready('t')
+    await h.A.registry.get('saveWatch').tick()
+    await h.A.registry.get('dragon').tick()
+    await h.A.registry.get('hud').setup()
+    h.A.hud.render()
+    const html = h.game.doc.getElementById('alakazam-hud-body').innerHTML
+
+    // the bank and CpS are rendered by the game a few inches above the panel, and
+    // the rest of these are either visible in game or console material
+    for (const gone of [
+        '>cookies<',
+        '>per second<',
+        '>catalog<',
+        '>version<',
+        '>save id<',
+        '>ascending pays<',
+        '>plan<'
+    ]) {
+        assert.equal(html.indexOf(gone), -1, `${gone} should be gone from the panel`)
+    }
+
+    // what is left is what the game does not show anywhere
+    assert.ok(html.indexOf('>dragon<') !== -1, 'the dragon gets one row')
+    assert.ok(html.indexOf('Radiant Appetite') !== -1, 'and it says what is worn')
+    assert.ok(html.indexOf('>read<') !== -1, 'the save read age stays')
+})
+
+test('the ascension section says what is planned, once', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    h.debug().ascend = {
+        current: 100,
+        chipsBanked: 50,
+        chipsGained: 10,
+        chipsNeeded: 365,
+        why: 'the plan wants five hundred chips',
+        phase: 'watching',
+        cookiesToTarget: 0,
+        wrinklerHoard: 0
+    }
+    await h.A.registry.get('hud').setup()
+    h.A.hud.render()
+    const html = h.game.doc.getElementById('alakazam-hud-body').innerHTML
+    assert.ok(html.indexOf('>planned<') !== -1)
+    assert.equal(html.indexOf('>plan wants<'), -1, 'renamed, not duplicated')
+    assert.equal(html.indexOf('the plan wants five hundred chips'), -1, 'the sentence is a log line')
+})
+
+test('the pantheon has no panel section of its own any more', async () => {
+    const h = boot({
+        save: fx.save({
+            levels: { 6: 1 },
+            amounts: { 6: 100 },
+            minigames: { 6: fx.pantheon({ slots: [7, 8, 5], swaps: 2 }) }
+        }).raw
+    })
+    await h.A.store.ready('t')
+    await h.A.registry.get('saveWatch').tick()
+    await h.A.registry.get('pantheon').tick()
+    assert.ok(h.debug().pantheon, 'the state is still published for the console')
+    await h.A.registry.get('hud').setup()
+    h.A.hud.render()
+    const html = h.game.doc.getElementById('alakazam-hud-body').innerHTML
+    assert.equal(html.indexOf('>swaps<'), -1)
+    assert.equal(html.indexOf('>slots wrong<'), -1)
+})
+
 test('dragging the panel ignores the autoclicker synthetic events', async () => {
     const h = boot({})
     await h.A.store.ready('t')

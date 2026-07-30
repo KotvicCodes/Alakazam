@@ -38,6 +38,9 @@ function save(opts = {}) {
     scalars[26] = opts.heavenlyChips || 0
     scalars[27] = opts.heavenlyChipsSpent || 0
     scalars[29] = opts.ascensionMode || 0 // 0 is an ordinary run, anything else a challenge
+    scalars[35] = opts.dragonLevel || 0 // the dragon, which resets on every ascension
+    scalars[36] = opts.dragonAura || 0
+    scalars[37] = opts.dragonAura2 || 0
     scalars[40] = opts.shinyWrinklers || 0 // shiny wrinklers, then what they hold
     scalars[41] = opts.shinyWrinklerHoard || 0
     scalars[42] = opts.lumps != null ? opts.lumps : 0

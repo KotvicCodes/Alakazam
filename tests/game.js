@@ -226,7 +226,23 @@ function build(opts = {}) {
     })
 
     const buffsEl = new El('div', { id: 'buffs' })
-    doc.body.append(new El('div', { id: 'shimmers' }), buffsEl, new El('div', { id: 'wrinklers' }))
+    const shimmersEl = new El('div', { id: 'shimmers' })
+    doc.body.append(shimmersEl, buffsEl, new El('div', { id: 'wrinklers' }))
+
+    //* addShimmer
+    // a golden cookie on the screen. The extension reads the type off the second
+    // class, the way the game writes it.
+    function addShimmer(type = 'golden') {
+        const sh = new El('div', {
+            id: 'shimmer' + shimmersEl.children.length,
+            class: `shimmer ${type}`
+        })
+        shimmersEl.append(sh)
+        return sh
+    }
+    function clearShimmers() {
+        shimmersEl.children = []
+    }
 
     // ---- buffs ----
     // A real buff is an icon crate with a pie timer inside it and no text at all:
@@ -310,13 +326,23 @@ function build(opts = {}) {
 
     const legacy = new El('div', { id: 'legacyButton' })
     const promptAnchor = new El('div', { id: 'promptAnchor' })
+    const darken = new El('div', { id: 'darken' })
     const promptContent = new El('div', { id: 'promptContent' })
     promptAnchor.append(promptContent)
     const ascendUpgrades = new El('div', { id: 'ascendUpgrades' })
     const ascendHCs = new El('div', { id: 'ascendHCs' })
     const ascendPrestige = new El('div', { id: 'ascendPrestige' })
     const ascendButton = new El('a', { id: 'ascendButton' })
-    doc.body.append(legacy, promptAnchor, ascendUpgrades, ascendHCs, ascendPrestige, ascendButton)
+    doc.body.append(
+        legacy,
+        promptAnchor,
+        darken,
+        ascendUpgrades,
+        ascendHCs,
+        ascendPrestige,
+        ascendButton
+    )
+    darken.addEventListener('click', () => closePrompt())
 
     //* prompt
     // mirrors Game.Prompt: the content is wrapped in a div named after the prompt,
@@ -471,6 +497,38 @@ function build(opts = {}) {
         const box = new El('div', { id: 'giftStuff', class: 'optionBox' })
         const send = new El('a', { class: 'option', text: 'Send' })
         const redeem = new El('a', { class: 'option', text: 'Redeem' })
+        // The redeem prompt is the one place the game writes two elements with the
+        // same id: its own Redeem button inside the content, and the Cancel option
+        // that Game.Prompt appends. Reproduced here, duplicate and all, because that
+        // is what the extension has to pick its way through.
+        redeem.addEventListener('click', () => {
+            let button = null
+            prompt('GiftRedeem', [['Cancel']], inner => {
+                const input = new El('input', { id: 'giftCode' })
+                button = new El('a', {
+                    id: 'promptOption0',
+                    class: 'option smallFancyButton disabled',
+                    text: 'Redeem'
+                })
+                const check = () => {
+                    const good =
+                        opts.validCode === undefined
+                            ? String(input.value).length > 5
+                            : input.value === opts.validCode
+                    if (good) button.classList.remove('disabled')
+                    else button.classList.add('disabled')
+                }
+                input.addEventListener('input', check)
+                input.addEventListener('change', check)
+                button.addEventListener('click', () => {
+                    if (button.classList.contains('disabled')) return
+                    state.log.push('redeemed a gift')
+                    gainBuff('Gifted out', 0)
+                    closePrompt()
+                })
+                inner.append(input, button)
+            })
+        })
         send.addEventListener('click', () => {
             prompt('GiftSend', [
                 [
@@ -497,6 +555,187 @@ function build(opts = {}) {
         if (open) prefsButton.classList.remove('selected')
         else prefsButton.classList.add('selected')
         drawMenu()
+    })
+
+    // ---- Krumblor ----
+    // The dragon's tab is painted onto the left background canvas and hit-tested
+    // against the mouse position, so what is modelled here is the canvas and the hit
+    // box rather than an element the tab does not have. opts.dragon absent means the
+    // crumbly egg is not bought and there is no tab at all.
+    const dragon = {
+        level: (opts.dragon && opts.dragon.level) || 0,
+        aura: (opts.dragon && opts.dragon.aura) || 0,
+        aura2: (opts.dragon && opts.dragon.aura2) || 0,
+        pets: 0,
+        drops: [],
+        selecting: -1
+    }
+    state.dragon = dragon
+
+    const leftCanvas = new El('canvas', { id: 'backgroundLeftCanvas' })
+    leftCanvas.width = 300
+    leftCanvas.height = 600
+    const canvasScale = (opts.dragon && opts.dragon.scale) || 1
+    leftCanvas.getBoundingClientRect = () => ({
+        left: 0,
+        top: 0,
+        width: leftCanvas.width * canvasScale,
+        height: leftCanvas.height * canvasScale
+    })
+    const specialPopup = new El('div', { id: 'specialPopup' })
+    doc.body.append(leftCanvas, specialPopup)
+
+    let dragonOpen = false
+
+    function dragonCost(level) {
+        if (level <= 4) return { kind: 'cookies', amount: 1e6 * Math.pow(2, level) }
+        if (level <= 24) return { kind: 'building', building: level - 5, amount: 100 }
+        if (level <= 26) return { kind: 'everyOf', amount: level === 25 ? 50 : 200 }
+        return { kind: 'none' }
+    }
+
+    function dragonAffordable() {
+        if (opts.dragon && opts.dragon.trainable !== undefined) return opts.dragon.trainable
+        const cost = dragonCost(dragon.level)
+        if (cost.kind === 'cookies') return state.bank >= cost.amount
+        if (cost.kind === 'building') return (state.owned[cost.building] || 0) >= cost.amount
+        if (cost.kind === 'everyOf') return state.owned.every(n => n >= cost.amount)
+        return false
+    }
+
+    function payDragon(cost) {
+        if (cost.kind === 'cookies') state.bank -= cost.amount
+        else if (cost.kind === 'building') state.owned[cost.building] -= cost.amount
+        else if (cost.kind === 'everyOf') {
+            state.owned = state.owned.map(n => n - cost.amount)
+        }
+        refresh()
+    }
+
+    function trainLabel(level) {
+        if (level < 3) return 'Chip it'
+        if (level === 3) return 'Hatch it'
+        if (level <= 24) return `Train aura ${level - 3}`
+        if (level === 25) return 'Bake dragon cookie'
+        return 'Train secondary aura'
+    }
+
+    function auraCrate(slot) {
+        const crate = new El('div', { class: 'crate enabled' })
+        crate.setAttribute('onclick', `Game.SelectDragonAura(${slot})`)
+        crate.addEventListener('click', () => openAuraPicker(slot))
+        return crate
+    }
+
+    //* openAuraPicker
+    // one square per aura the dragon knows, minus whatever the other slot holds, so
+    // the nth square is not aura n. Picking one redraws the whole prompt, exactly as
+    // the game does, which is why nothing read before a pick is still live after it.
+    function openAuraPicker(slot, update) {
+        // the game only takes the current aura as the starting selection the first
+        // time; a redraw after picking keeps what was picked
+        if (!update) dragon.selecting = slot === 0 ? dragon.aura : dragon.aura2
+        const draw = inner => {
+            const other = slot === 0 ? dragon.aura2 : dragon.aura
+            for (let id = 0; id <= 21; id++) {
+                if (dragon.level < id + 4) continue
+                if (id !== 0 && id === other) continue
+                const crate = new El('div', { class: 'crate enabled' })
+                crate.setAttribute('onclick', `Game.SetDragonAura(${id},${slot})`)
+                crate.addEventListener('click', () => {
+                    dragon.selecting = id
+                    openAuraPicker(slot, 1)
+                })
+                inner.append(crate)
+            }
+        }
+        prompt(
+            'PickDragonAura',
+            [
+                [
+                    'Confirm',
+                    () => {
+                        if (slot === 0) dragon.aura = dragon.selecting
+                        else dragon.aura2 = dragon.selecting
+                        // switching sacrifices one of the highest building owned
+                        for (let i = state.owned.length - 1; i >= 0; i--) {
+                            if (state.owned[i] > 0) {
+                                state.owned[i]--
+                                break
+                            }
+                        }
+                        state.log.push(`set dragon aura ${dragon.selecting}`)
+                        refresh()
+                        drawDragon()
+                    }
+                ],
+                ['Cancel']
+            ],
+            draw
+        )
+    }
+
+    function drawDragon() {
+        specialPopup.children = []
+        if (!dragonOpen) return
+
+        const pic = new El('div', { id: 'specialPic' })
+        pic.setAttribute('style', `background:url(img/dragon.png?v=2.058)`)
+        pic.addEventListener('click', () => {
+            if (dragon.level < 4) return
+            dragon.pets++
+            const drop = opts.dragon && opts.dragon.dropOnPet
+            if (drop && dragon.drops.indexOf(drop) === -1) dragon.drops.push(drop)
+        })
+        const close = new El('div', { class: 'close', text: 'x' })
+        close.addEventListener('click', () => {
+            dragonOpen = false
+            drawDragon()
+        })
+        specialPopup.append(pic, close, new El('h3', { text: 'Krumblor' }))
+
+        if (dragon.level >= 5) specialPopup.append(auraCrate(0))
+        if (dragon.level >= 27) specialPopup.append(auraCrate(1))
+
+        const cost = dragonCost(dragon.level)
+        if (cost.kind === 'none') return
+        const box = new El('div', { class: 'optionBox' })
+        const button = new El('a', { class: 'option framed large title' })
+        const costCell = new El('div', { text: 'sacrifice' })
+        const costInner = new El('div', { text: 'a price' })
+        // the game greys the cost out when it cannot be paid, which is the only
+        // affordability signal the extension needs
+        if (!dragonAffordable()) costInner.setAttribute('style', 'color:#777;')
+        costCell.append(costInner)
+        button.append(
+            new El('div', { text: trainLabel(dragon.level) }),
+            new El('div', { text: '|' }),
+            costCell
+        )
+        button.addEventListener('click', () => {
+            if (!dragonAffordable()) return
+            payDragon(cost)
+            dragon.level++
+            state.log.push('trained dragon')
+            drawDragon()
+        })
+        box.append(button)
+        specialPopup.append(box)
+    }
+
+    leftCanvas.addEventListener('click', ev => {
+        // the game only accepts the click when the canvas itself was the target
+        if (ev.target !== leftCanvas) return
+        if (!opts.dragon) return
+        const rect = leftCanvas.getBoundingClientRect()
+        const x = (ev.clientX - rect.left) / (rect.width / leftCanvas.width)
+        const y = (ev.clientY - rect.top) / (rect.height / leftCanvas.height)
+        // santa, when he exists, is listed first, so the dragon is always last
+        const tabs = opts.dragon.santa ? 2 : 1
+        const dragonY = leftCanvas.height - 24 - 48 * tabs + 48 * (tabs - 1)
+        if (Math.abs(x - 24) > 24 || Math.abs(y - dragonY) > 24) return
+        dragonOpen = !dragonOpen
+        drawDragon()
     })
 
     // ---- sugar lumps ----
@@ -641,7 +880,13 @@ function build(opts = {}) {
         GENE_IDS,
         drawLumps,
         lumpsEl,
-        levelBadges
+        levelBadges,
+        dragon,
+        drawDragon,
+        addShimmer,
+        clearShimmers,
+        leftCanvas,
+        specialPopup
     }
 }
 
