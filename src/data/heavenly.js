@@ -340,6 +340,18 @@
     // cannot be read.
     const KITTEN = /^kitten /i
 
+    //* SLOT_NAMES
+    // The five permanent slots, in the order the game names them. Every one of them
+    // reopens its picker when its crate is clicked, owned or not, which is what makes
+    // reassigning them at a later ascension possible at all.
+    const SLOT_NAMES = [
+        'Permanent upgrade slot I',
+        'Permanent upgrade slot II',
+        'Permanent upgrade slot III',
+        'Permanent upgrade slot IV',
+        'Permanent upgrade slot V'
+    ].map(normalise)
+
     //* PERMANENT_PICKS
     // What to put in a permanent upgrade slot, best first. A permanent slot keeps
     // one upgrade across ascensions, so it is worth the strongest thing that would
@@ -386,14 +398,25 @@
 
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.data = window.Alakazam.data || {}
+    //* permanentRank
+    // where a name sits in PERMANENT_PICKS, lower being better, and Infinity for
+    // anything the list does not know. Used to compare what a slot is holding against
+    // what is on offer, since the game never lists a slot's current occupant.
+    function permanentRank(name) {
+        const at = PERMANENT_PICKS.indexOf(normalise(name))
+        return at === -1 ? Infinity : at
+    }
+
     window.Alakazam.data.heavenly = {
         PLAN,
         ORDER,
         COST,
         CUMULATIVE,
         PERMANENT_PICKS,
+        SLOT_NAMES,
         KITTEN,
         priority,
+        permanentRank,
         normalise
     }
 })()

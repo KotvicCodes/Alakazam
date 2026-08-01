@@ -233,6 +233,13 @@ closer. Past that limit it buys the best thing it can actually afford.
   heavenly tree. It never
   leaves in the middle of a boost, because the cookies a running frenzy would have
   made count toward prestige and pulling the lever early throws them away.
+- **Permanent upgrade slots** — reassigned at every ascension rather than filled
+  once and forgotten. A slot is worth revisiting because the best thing to put in
+  one moves with the save: kittens scale with milk, milk scales with achievements,
+  and achievements are the one thing an ascension never takes away. It reads what
+  each slot is already holding before it opens the picker, because the game never
+  offers a slot its own occupant, and taking the best of what is left would quietly
+  swap the strongest kitten out for the second strongest.
 - **Loans** — the bank's three loans are a bad deal in an ordinary run and close
   to free immediately before an ascension, because the penalty belongs to the run
   and the run is about to end. All three are taken, the forty second one last, and

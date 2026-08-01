@@ -67,6 +67,25 @@ names the exception. The game stays the judge of the code: its Redeem button is
 disabled until the code parses, and a code it refuses is dropped rather than
 retried.
 
+## Permanent upgrade slots, reassigned
+
+A permanent slot could always be reassigned at any ascension, and Alakazam only
+ever filled one at the moment it was bought. A slot bought at the third ascension
+was still holding a third-ascension kitten twenty runs later, and every run since
+had been paying for it.
+
+Now, once the heavenly tree is bought out and before reincarnating, the owned slots
+are walked and any that can be improved are reassigned. Two things make it more
+than a loop. The picker never lists a slot's own occupant, so taking the best of
+what is offered would swap the strongest kitten on the save out for the second
+strongest: what a slot holds is read from its own tooltip and compared by rank
+first, and a slot holding something this version cannot name is left alone on the
+grounds that an unknown upgrade is likelier to be newer than worse. And owned
+crates are deliberately excluded from the shopping pass, because clicking one
+reopens its picker and that once turned shopping into a loop that never
+reincarnated, so this is a separate bounded walk that runs only after shopping
+reports itself done.
+
 ## The panel
 
 Thinned to what the game does not already show: gone are the bank, CpS, the
@@ -92,7 +111,7 @@ string anybody remembered adding to a hand-maintained list. The list is gone;
 
 ## Tests
 
-224 → 275, including the pantheon module, which had none at all: the training
+224 → 283, including the pantheon module, which had none at all: the training
 ladder, aura availability, the canvas coordinate maths at two zoom levels, a click
 the game credits to something else, the greyed-out cost gate, aura ids read from
 the crate's own handler rather than its position, the scorers at several income

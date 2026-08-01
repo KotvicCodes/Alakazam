@@ -38,6 +38,10 @@ function save(opts = {}) {
     scalars[26] = opts.heavenlyChips || 0
     scalars[27] = opts.heavenlyChipsSpent || 0
     scalars[29] = opts.ascensionMode || 0 // 0 is an ordinary run, anything else a challenge
+    // the five permanent slots, by upgrade id, -1 for empty
+    ;(opts.permanentSlots || []).forEach((id, i) => {
+        scalars[30 + i] = id
+    })
     scalars[35] = opts.dragonLevel || 0 // the dragon, which resets on every ascension
     scalars[36] = opts.dragonAura || 0
     scalars[37] = opts.dragonAura2 || 0

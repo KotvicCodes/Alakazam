@@ -173,6 +173,25 @@
         return out
     }
 
+    //* ownedCrates
+    // The bought ones, which crates() drops on purpose. Only one thing wants them:
+    // a permanent upgrade slot is reassignable at any ascension, and reassigning it
+    // means clicking the crate that is already owned. Anything walking this list has
+    // to know what it is doing, which is why it is a second function rather than a
+    // flag on the first.
+    function ownedCrates() {
+        const out = []
+        const tree = el('ascendUpgrades')
+        if (!tree || !tree.querySelectorAll) return out
+        for (const node of tree.querySelectorAll('.crate.upgrade.heavenly')) {
+            if (!node.classList || !node.classList.contains('enabled')) continue
+            const id = node.getAttribute ? node.getAttribute('data-id') : null
+            if (!id) continue
+            out.push({ id, element: node })
+        }
+        return out
+    }
+
     function buy(crate) {
         if (!crate || !crate.element) return false
         simulateClick(crate.element)
@@ -225,6 +244,7 @@
         prestige,
         crates,
         buy,
+        ownedCrates,
         permanentChoices,
         pickPermanent,
         reincarnate,

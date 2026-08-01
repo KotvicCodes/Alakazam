@@ -321,8 +321,11 @@ function build(opts = {}) {
     // anything if a test can put the wrong prompt up.
     const HEAVENLY = opts.heavenly || []
     state.chips = opts.chips != null ? opts.chips : 0
-    state.heavenlyBought = []
+    state.heavenlyBought = (opts.heavenlyBought || []).slice()
     state.permanent = null
+    // what each slot is holding, by slot name. The game keeps five of these and any
+    // of them can be reassigned at any ascension.
+    state.permanents = { ...(opts.permanents || {}) }
 
     const legacy = new El('div', { id: 'legacyButton' })
     const promptAnchor = new El('div', { id: 'promptAnchor' })
@@ -394,7 +397,12 @@ function build(opts = {}) {
                       : 'crate upgrade heavenly'
             })
             crate.setAttribute('data-id', String(u.id))
-            crate.addEventListener('mouseover', () => setTooltip(u.name, fmt(u.cost), u.name))
+            // a filled permanent slot prints what it is holding above its own
+            // description, which is the only place that is ever said
+            crate.addEventListener('mouseover', () => {
+                const held = u.slot ? state.permanents[u.name] : null
+                setTooltip(u.name, fmt(u.cost), held ? `Current: ${held}` : u.name)
+            })
             if (!locked) {
                 crate.addEventListener('click', () => {
                     if (owned) {
@@ -430,28 +438,36 @@ function build(opts = {}) {
                 [
                     'Confirm',
                     () => {
-                        state.permanent = chosen
-                        state.log.push(`permanent ${chosen}`)
+                        // confirming with nothing picked keeps what was in there,
+                        // the way the game preselects the current occupant
+                        if (chosen) {
+                            state.permanent = chosen
+                            state.permanents[slot.name] = chosen
+                            state.log.push(`permanent ${chosen}`)
+                        }
                         drawTree()
                     }
                 ],
                 ['Cancel', () => drawTree()]
             ],
             inner => {
-                ;(opts.permanentChoices || []).forEach(c => {
-                    const crate = new El('div', {
-                        id: 'upgradeForPermanent' + c.id,
-                        class: 'crate upgrade'
+                const slotted = Object.keys(state.permanents).map(k => state.permanents[k])
+                ;(opts.permanentChoices || [])
+                    .filter(c => slotted.indexOf(c.name) === -1)
+                    .forEach(c => {
+                        const crate = new El('div', {
+                            id: 'upgradeForPermanent' + c.id,
+                            class: 'crate upgrade'
+                        })
+                        crate.setAttribute('data-id', String(c.id))
+                        crate.addEventListener('mouseover', () =>
+                            setTooltip(c.name, fmt(c.price || 0), c.name)
+                        )
+                        crate.addEventListener('click', () => {
+                            chosen = c.name
+                        })
+                        inner.append(crate)
                     })
-                    crate.setAttribute('data-id', String(c.id))
-                    crate.addEventListener('mouseover', () =>
-                        setTooltip(c.name, fmt(c.price || 0), c.name)
-                    )
-                    crate.addEventListener('click', () => {
-                        chosen = c.name
-                    })
-                    inner.append(crate)
-                })
             }
         )
     }

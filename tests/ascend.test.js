@@ -289,13 +289,22 @@ test('permanent slot picks are kittens, strongest first', () => {
 //* ascendSave
 // a save at a given lifetime total and reset count. cookiesEarned carries the
 // current run, cookiesReset everything banked before it.
-function ascendSave({ earned = 0, reset = 0, resets = 0, chips = 0, version, drifted } = {}) {
+function ascendSave({
+    earned = 0,
+    reset = 0,
+    resets = 0,
+    chips = 0,
+    version,
+    drifted,
+    permanentSlots
+} = {}) {
     return fx.save({
         cookiesEarned: earned,
         cookiesReset: reset,
         resets,
         heavenlyChips: chips,
         driftedScalars: drifted,
+        permanentSlots,
         version
     }).raw
 }
@@ -433,10 +442,15 @@ const TREE = [
 
 function ascender(opts = {}) {
     const h = boot({
-        save: ascendSave({ earned: S.cookiesFor(opts.prestige || 365) }),
+        save: ascendSave({
+            earned: S.cookiesFor(opts.prestige || 365),
+            permanentSlots: opts.permanentSlots
+        }),
         game: {
             chips: opts.chips != null ? opts.chips : 13,
             heavenly: opts.heavenly || TREE,
+            heavenlyBought: opts.heavenlyBought,
+            permanents: opts.permanents,
             permanentChoices: opts.permanentChoices
         }
     })
@@ -531,7 +545,7 @@ test('a permanent slot is filled from the preference list', async () => {
     assert.equal(state.permanent, 'Kitten helpers')
 })
 
-test('an owned permanent slot is never clicked again', async () => {
+test('the shopping pass never loops on an owned permanent slot', async () => {
     // Game.Upgrade.buy ends with "if (this.bought && this.activateFunction)
     // this.activateFunction()", outside the branch that checks whether anything
     // was purchased. A slot's activateFunction opens its picker, so clicking one
@@ -543,11 +557,16 @@ test('an owned permanent slot is never clicked again', async () => {
         ascender({ chips: 1000, permanentChoices: [{ id: 91, name: 'Kitten helpers' }] })
     )
     assert.equal(state.permanent, 'Kitten helpers')
+    // The slot is opened twice and no more: once when it is bought, and once by the
+    // reassignment pass that runs after shopping is finished, which finds nothing
+    // better on offer and cancels straight out. The bug this guards against is
+    // unbounded, so the count is what matters.
     const pickers = state.log.filter(l => l.indexOf('picker ') === 0)
-    assert.equal(pickers.length, 1, `opened the slot picker ${pickers.length} times`)
-    assert.deepEqual(
-        state.log.filter(l => l.indexOf('RECLICK') === 0),
-        []
+    assert.equal(pickers.length, 2, `opened the slot picker ${pickers.length} times`)
+    assert.equal(
+        state.log.filter(l => l.indexOf('RECLICK') === 0).length,
+        1,
+        'and the owned crate is clicked once, deliberately, not in a loop'
     )
     assert.ok(state.log.indexOf('reincarnated') !== -1, 'never got to Reincarnate')
 })
@@ -905,4 +924,89 @@ test('a buff that has not been identified yet also holds the sequence back', asy
     for (let i = 0; i < 6; i++) await planner.tick()
     assert.equal(h.game.state.loansTaken.length, 0, 'acted on a buff it could not name')
     assert.equal(h.A.ascend.state().phase, 'ready')
+})
+
+//! Reassigning permanent slots
+// A slot is not a decision made once: the game reopens its picker whenever the
+// crate is clicked, owned or not, and the run that just ended nearly always owns a
+// stronger kitten than the run that filled the slot did.
+
+const OWNED_SLOT = { heavenlyBought: ['Legacy', 'Permanent upgrade slot I'] }
+
+test('a slot holding a weaker kitten is reassigned at the next ascension', async () => {
+    const state = await pump(
+        ascender({
+            ...OWNED_SLOT,
+            chips: 1000,
+            permanents: { 'Permanent upgrade slot I': 'Kitten helpers' },
+            permanentSlots: [90, -1, -1, -1, -1],
+            permanentChoices: [
+                { id: 91, name: 'Kitten admins', price: 9e47 },
+                { id: 92, name: 'Kitten experts', price: 9e29 }
+            ]
+        })
+    )
+    assert.equal(state.permanents['Permanent upgrade slot I'], 'Kitten admins')
+    assert.ok(state.log.indexOf('reincarnated') !== -1, 'and the run still ends')
+})
+
+test('a slot already holding the best thing on the save is left alone', async () => {
+    // the game never lists a slot's own occupant, so without checking what is in
+    // there this would take the best of what is left and swap the strongest kitten
+    // out for the second strongest
+    const state = await pump(
+        ascender({
+            ...OWNED_SLOT,
+            chips: 1000,
+            permanents: { 'Permanent upgrade slot I': 'Kitten admins' },
+            permanentSlots: [91, -1, -1, -1, -1],
+            permanentChoices: [
+                { id: 90, name: 'Kitten helpers', price: 9e6 },
+                { id: 92, name: 'Kitten experts', price: 9e29 }
+            ]
+        })
+    )
+    assert.equal(state.permanents['Permanent upgrade slot I'], 'Kitten admins')
+    assert.ok(state.log.indexOf('reincarnated') !== -1)
+})
+
+test('an ordinary owned upgrade is never clicked while looking for slots', async () => {
+    const state = await pump(
+        ascender({
+            heavenlyBought: ['Legacy', 'Heavenly cookies', 'Permanent upgrade slot I'],
+            chips: 1000,
+            permanents: { 'Permanent upgrade slot I': 'Kitten helpers' },
+            permanentSlots: [90, -1, -1, -1, -1],
+            permanentChoices: [{ id: 91, name: 'Kitten admins', price: 9e47 }]
+        })
+    )
+    assert.equal(state.log.indexOf('RECLICK Heavenly cookies'), -1)
+    assert.ok(state.log.indexOf('RECLICK Permanent upgrade slot I') !== -1)
+})
+
+test('a slot holding something unrecognised is left exactly as it is', async () => {
+    // an upgrade this version has never heard of is likelier to be newer than worse
+    const state = await pump(
+        ascender({
+            ...OWNED_SLOT,
+            chips: 1000,
+            permanents: { 'Permanent upgrade slot I': 'Kitten quantum theorists' },
+            permanentSlots: [95, -1, -1, -1, -1],
+            permanentChoices: [{ id: 90, name: 'Kitten helpers', price: 9e6 }]
+        })
+    )
+    assert.equal(state.permanents['Permanent upgrade slot I'], 'Kitten quantum theorists')
+    assert.equal(state.log.indexOf('RECLICK Permanent upgrade slot I'), -1, 'not even opened')
+})
+
+test('an owned slot the save calls empty is filled rather than skipped', async () => {
+    const state = await pump(
+        ascender({
+            ...OWNED_SLOT,
+            chips: 1000,
+            permanentSlots: [-1, -1, -1, -1, -1],
+            permanentChoices: [{ id: 91, name: 'Kitten admins', price: 9e47 }]
+        })
+    )
+    assert.equal(state.permanents['Permanent upgrade slot I'], 'Kitten admins')
 })
