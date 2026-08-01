@@ -24,7 +24,7 @@
     // only a few, and only after a cooldown. A routine whose menu is not even
     // drawn yet costs nothing and is simply looked at again next tick.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick, typeInto } = window.Alakazam.input
     const { save, store, registry } = window.Alakazam
 
     const INTERVAL_MS = 3000
@@ -77,15 +77,6 @@
     // each declares what has to exist before it is worth trying. `run` is async so
     // it can let a menu draw before reaching into it, which the synchronous
     // versions of these never did.
-
-    //* typeInto
-    // fill a text field the way a user would: set the value and fire input/change
-    function typeInto(el, text) {
-        if (!el) return
-        el.value = text
-        el.dispatchEvent(new Event('input', { bubbles: true }))
-        el.dispatchEvent(new Event('change', { bubbles: true }))
-    }
 
     function statsButton() {
         return document.querySelector('#statsButton div')

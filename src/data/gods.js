@@ -32,6 +32,17 @@
     // budget with it. It is excluded from every preset on purpose.
     const UNUSABLE = [0]
 
+    //* Cyclius cannot be chased
+    // Its bonus is a sine wave: +15% at the top of the cycle and -15% at the bottom,
+    // over three hours in the diamond slot and a day in jade. Riding it means
+    // slotting and unslotting on that cycle, and there are three worship swaps a day
+    // at the very best. So it would be picked while the wave was up and then paid for
+    // in full while it was down, with no swap left to escape.
+    //
+    // It is scored anyway, at whatever the wave is worth right now, so the console
+    // table says what it would have paid. It is simply never chosen.
+    const VOLATILE = [3]
+
     //* Presets
     // clicker: Alakazam bursts thousands of clicks a second, so Muridal's click
     //   bonus is worth more than the 3% of building output it costs.
@@ -42,6 +53,59 @@
         clicker: { diamond: 6, ruby: 7, jade: 8, why: 'clicks dominate while the autoclicker runs' },
         idle: { diamond: 7, ruby: 8, jade: 5, why: 'production only, no clicking' },
         combo: { diamond: 2, ruby: 8, jade: 6, why: 'selling buildings for click power' }
+    }
+
+    //* Effects
+    // What each spirit does, per slot, diamond first. These are the temple's own
+    // numbers, and they are here rather than in prose so strategy/pantheon.js can
+    // price a layout instead of choosing between three hand-written ones.
+    //
+    // `kind` says what the number multiplies, and a negative value is a penalty: the
+    // pantheon is built out of trade-offs and half of what matters about a layout is
+    // what it gives up. Jeremy and Mokalsium both make golden cookies rarer, which
+    // for a bot that clicks every one of them is a real cost and was priced at zero
+    // for as long as the presets were fixed.
+    const EFFECTS = {
+        0: [{ kind: 'production', values: [0.15, 0.1, 0.05] }],
+        1: [
+            { kind: 'goldenDuration', values: [0.07, 0.05, 0.02] },
+            { kind: 'production', values: [-0.07, -0.05, -0.02] }
+        ],
+        2: [{ kind: 'clickPerSale', values: [0.01, 0.005, 0.0025] }],
+        3: [{ kind: 'cycle', values: [3, 12, 24] }],
+        4: [{ kind: 'seasonal', values: [1, 0.5, 0.25] }],
+        5: [
+            { kind: 'buildingCost', values: [0.07, 0.05, 0.02] },
+            { kind: 'prestige', values: [-0.3, -0.2, -0.1] }
+        ],
+        6: [
+            { kind: 'click', values: [0.15, 0.1, 0.05] },
+            { kind: 'production', values: [-0.03, -0.02, -0.01] }
+        ],
+        7: [
+            { kind: 'production', values: [0.1, 0.06, 0.03] },
+            { kind: 'goldenRate', values: [-0.1, -0.06, -0.03] }
+        ],
+        8: [
+            { kind: 'milk', values: [0.1, 0.05, 0.03] },
+            { kind: 'goldenRate', values: [-0.15, -0.1, -0.05] }
+        ],
+        9: [
+            { kind: 'wrinklerRate', values: [1.5, 1, 0.5] },
+            { kind: 'wrinklerDigest', values: [0.15, 0.1, 0.05] }
+        ],
+        10: [{ kind: 'lumps', values: [60, 40, 20] }]
+    }
+
+    //* Supreme Intellect promotes the slots
+    // With the dragon aura equipped the temple reads the ruby slot as a diamond and
+    // the jade slot as a ruby, so the same three spirits are worth more and the best
+    // layout is not necessarily the same one. This is the tier each slot pays out at,
+    // with the aura and without.
+    const TIERS = { plain: [0, 1, 2], promoted: [0, 0, 1] }
+
+    function effectsOf(id) {
+        return EFFECTS[id] || []
     }
 
     function byId(id) {
@@ -55,5 +119,16 @@
 
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.data = window.Alakazam.data || {}
-    window.Alakazam.data.gods = { GODS, SLOTS, PRESETS, UNUSABLE, byId, nameOf }
+    window.Alakazam.data.gods = {
+        GODS,
+        SLOTS,
+        PRESETS,
+        UNUSABLE,
+        VOLATILE,
+        EFFECTS,
+        TIERS,
+        effectsOf,
+        byId,
+        nameOf
+    }
 })()

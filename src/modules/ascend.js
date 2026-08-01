@@ -29,7 +29,8 @@
 
     const { save, store, registry, catalog, buffs } = window.Alakazam
     const { worthAscending, cookiesFor } = window.Alakazam.strategy.ascend
-    const { priority, COST, PERMANENT_PICKS, KITTEN, normalise } = window.Alakazam.data.heavenly
+    const { priority, COST, PERMANENT_PICKS, SLOT_NAMES, KITTEN, permanentRank, normalise } =
+        window.Alakazam.data.heavenly
     const loanData = window.Alakazam.data.loans
     const act = window.Alakazam.act.ascend
     const loanAct = window.Alakazam.act.loans
@@ -47,6 +48,9 @@
     // one tick never spends longer than this on the tree, so a slow game cannot
     // turn a shopping pass into a frozen page
     const SLICE_MS = 2000
+
+    // slices the permanent slot pass may take before reincarnating anyway
+    const REPICK_SLICES = 4
 
     //* ASCEND_MARGIN_S
     // How much of the shortest loan window to leave unspent.
@@ -287,11 +291,16 @@
     // list, since the slot can be reassigned at any later ascension but not this
     // run.
     //
+    // `holding` is what the slot already contains, when it contains anything. The
+    // game never lists a slot's own occupant among the choices, so without this a
+    // reassignment pass would take the best of what is left and quietly swap the
+    // strongest kitten on the save out for the second strongest.
+    //
     // Every choice has to be named before any of them can be ranked, and a name
     // costs a hover. On a first ascension there are a great many of them, so this
     // shares the caller's time slice and simply comes back next tick with whatever
     // it learned cached.
-    async function fillSlot(until) {
+    async function fillSlot(until, holding) {
         if (!act.promptIs('permanent')) return false
 
         const choices = []
@@ -305,6 +314,12 @@
         }
 
         const picked = bestPermanent(choices)
+        if (picked && holding && permanentRank(picked.name) >= permanentRank(holding)) {
+            // everything on offer is weaker than what is in there already, which is
+            // the normal answer for a slot that was filled well the last time
+            act.cancelPrompt('permanent')
+            return false
+        }
         if (!picked) {
             console.log('Alakazam: no preferred permanent upgrade on offer, leaving the slot empty')
             // back out rather than leaving the picker open. It is modal as far as
@@ -316,7 +331,108 @@
 
         act.pickPermanent(picked)
         await wait(REDRAW_MS)
-        return act.confirmPrompt('permanent')
+        const done = act.confirmPrompt('permanent')
+        if (done) {
+            console.log(
+                holding
+                    ? `Alakazam: permanent slot ${holding} -> ${picked.name}`
+                    : `Alakazam: ${picked.name} made permanent`
+            )
+        }
+        return done
+    }
+
+    //! Reassigning the slots
+    // A permanent slot is not a decision made once. It is reassignable at every
+    // ascension, and what belongs in it changes with the save: kittens multiply
+    // production by a figure that grows with milk, milk grows with achievements, and
+    // achievements never go away. So the run that just ended nearly always owns a
+    // stronger kitten than the run that filled the slot did.
+    //
+    // Until now a slot was only ever filled at the moment it was bought, so a slot
+    // bought at the third ascension was still holding a third-ascension kitten twenty
+    // ascensions later. Every run since had been paying for that.
+    //
+    // It has to happen here, on the ascension screen, before reincarnating: the game
+    // offers "all the upgrades you've purchased last playthrough", and after the
+    // reset there is no last playthrough to offer.
+
+    // slots seen this ascension, so a pass that runs over several ticks does not
+    // reopen a picker it has already been through
+    let slotsDone = new Set()
+
+    // how many time slices the reassignment pass gets before the run is allowed to
+    // end without it
+    let repickTries = 0
+
+    //* readSlot
+    // what a tree crate is, and what it is holding. One hover answers both: the
+    // tooltip names the slot, and a filled one prints its occupant above the
+    // description. Returns null when the hover lock is held elsewhere.
+    async function readSlot(crate, index) {
+        const tip = await catalog.readTooltip(crate.element)
+        if (!tip || !tip.name) return null
+        const name = normalise(tip.name)
+        const slot = SLOT_NAMES.indexOf(name)
+        if (slot === -1) return { name, slot: -1, holding: null }
+
+        // A filled slot prints its occupant by name above its own description, so the
+        // best-ranked name in the tooltip is what it is holding. Nothing else in a
+        // slot's description is an upgrade name.
+        //
+        // The tooltip is asked before the save, and the order matters: the tree
+        // redraws the moment a slot is assigned, while the save takes up to a minute
+        // to admit it. Trusting the save first would mean a slot filled two seconds
+        // ago still reading as empty, and this pass would fill it again from a list
+        // that no longer contains what was just put in it, swapping the best kitten
+        // on the save out for the second best.
+        // both sides normalised, the way every other name comparison here is: the
+        // tree renders display names and the lists are folded flat
+        const text = normalise(tip.text || '')
+        for (const pick of PERMANENT_PICKS) {
+            if (text.indexOf(pick) !== -1) return { name, slot, holding: pick, empty: false }
+        }
+
+        // nothing recognisable in the tooltip. The save settles it: a slot it says is
+        // empty gets filled, and one holding something this version cannot name is
+        // left alone, since an unknown upgrade is likelier to be newer than worse.
+        const scalars = (save.get() || {}).scalars || {}
+        const held = scalars['permanentUpgrade' + slot]
+        const empty = held === -1 || held === undefined
+        return { name, slot, holding: null, empty }
+    }
+
+    //* repickSlots
+    // one pass over the owned slots. Returns whether it got all the way through, so
+    // the caller can come back for another slice rather than reincarnating early.
+    async function repickSlots(until) {
+        for (const crate of act.ownedCrates()) {
+            if (Date.now() > until) return false
+            if (slotsDone.has(crate.id)) continue
+
+            const found = await readSlot(crate, crate.id)
+            if (!found) return false
+            if (found.slot === -1) {
+                // an ordinary heavenly upgrade, owned. Nothing to do with it, and
+                // nothing to gain by looking at it again this ascension.
+                slotsDone.add(crate.id)
+                continue
+            }
+            if (!found.empty && !found.holding) {
+                // it is holding something this version has never heard of, which is
+                // more likely to be newer than better-known. Leave it be.
+                slotsDone.add(crate.id)
+                continue
+            }
+
+            // clicking an owned slot runs its activateFunction and reopens the picker
+            act.buy(crate)
+            await wait(REDRAW_MS)
+            await fillSlot(until, found.holding)
+            slotsDone.add(crate.id)
+            await wait(REDRAW_MS)
+        }
+        return true
     }
 
     //! shop
@@ -521,6 +637,8 @@
             if (act.onAscendScreen()) {
                 skipped = new Set()
                 bought = []
+                slotsDone = new Set()
+                repickTries = 0
                 setPhase('shopping')
                 return
             }
@@ -543,6 +661,16 @@
             }
             // only 'done' reincarnates: see the note on shop()
             if ((await shop()) !== 'done') return
+
+            // the tree is bought out; before leaving, look at what the permanent
+            // slots are holding. This is the only moment the game will offer the
+            // run's own upgrades, and it gets a couple of slices before the run is
+            // allowed to end without it: a slot left as it was costs a little, and a
+            // run that never reincarnates costs everything.
+            if (repickTries < REPICK_SLICES && !(await repickSlots(Date.now() + SLICE_MS))) {
+                repickTries++
+                return
+            }
             console.log(
                 bought.length > 0
                     ? `Alakazam: bought ${bought.join(', ')}, reincarnating.`

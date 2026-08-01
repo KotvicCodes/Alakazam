@@ -32,6 +32,7 @@
         lumps: true,
         grimoire: true,
         pantheon: true,
+        dragon: true,
         garden: true,
         achievements: true,
         marketTrading: true,

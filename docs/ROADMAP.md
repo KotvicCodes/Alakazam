@@ -156,15 +156,18 @@ and very testable, since the answer is checkable against what actually happens.
 
 ---
 
-## 7. Krumblor, the cookie dragon
+## ~~7. Krumblor, the cookie dragon~~ (built, v1.3.0)
 
-Levelled by sacrificing buildings; grants two aura slots at full growth. Auras
-cover production, golden cookie frequency, click power, and reduced spell costs.
+Trained by sacrificing buildings, and worth doing: Radiant Appetite doubles all
+production and is reachable fourteen rungs up the ladder. `Game.Reset` zeroes
+`dragonLevel` and both auras on **every** ascension, not only on a hard reset, so
+this is a cost paid again every run rather than a one-time investment.
 
-`dragonLevel`, `dragonAura` and `dragonAura2` are parsed from the save already.
-The work is the training click path and an aura policy: production auras for idle,
-click auras during a combo, Supreme Intellect when the grimoire matters. Aura
-swapping mid-combo is part of the combo sequence above.
+`src/modules/dragon.js` climbs the ladder, keeps the best aura in the slots and
+pets for drops; `src/strategy/dragon.js` scores every aura against measured income;
+`src/act/dragon.js` reaches the panel, whose tab is painted on a canvas rather than
+built as an element. Aura swapping mid-combo is still part of the combo sequence
+above, and is the obvious next use of it.
 
 ---
 
@@ -200,22 +203,21 @@ enough with the result to pay for the production penalty.
 
 ---
 
-## 10. Redeeming gift codes
+## ~~10. Redeeming gift codes~~ (built, v1.3.0)
 
-`modules/gifts.js` does half of "No time like the present": once Wrapping paper is
-owned it wraps a gift, keeps the code, and shows it in the panel. Redeeming it is
-still yours to do, from Options then Redeem, after the next ascension clears the
-one hour `Gifted out` buff.
+`modules/gifts.js` now does both halves of "No time like the present": it wraps a
+gift, keeps the code, and redeems it once the hour the game makes you wait is up,
+or once an ascension has cleared the buff early.
 
-**Why it stops there.** Redeeming means putting a code into `#giftCode`, and
-everything Alakazam does is a pointer event on something already on screen.
-Writing into a text field is a different kind of act, and it deserves a decision
-rather than being slipped in. The mechanics are otherwise known: set the value,
-dispatch `keyup` so the game's own listener re-validates and enables
-`#promptOption0`, then click it.
+**The question it was waiting on** was whether writing into one of the game's own
+text fields belongs in a bot whose every other action is a pointer event. It was
+already answered and nobody had noticed: the achievement hunt has been typing a
+bakery name since it was written. So `typeInto` moved into `src/input.js` next to
+`simulateClick`, where the exception is as countable as the rule, and the fair-play
+contract in the README names it.
 
-The same question governs the Import button in the clone customizer and the
-bakery name field, so answering it once would settle three things.
+The Import button in the clone customizer is the last thing this would have
+settled, and it is still untouched.
 
 ---
 
@@ -232,16 +234,25 @@ Alakazam deliberately *not* doing things.
 
 ---
 
-## 12. Re-picking permanent upgrade slots
+## ~~12. Re-picking permanent upgrade slots~~ (built, v1.3.2)
 
-A permanent slot can be reassigned at any ascension, and what belongs in it changes
-as the run gets deeper: the best kitten this run is not the best kitten in ten
-runs' time. `modules/ascend.js` fills an empty slot from a fixed preference list in
-`data/heavenly.js` and never revisits a filled one.
+Every ascension, once the tree is bought out, `modules/ascend.js` walks the owned
+slots and reassigns any it can improve. A slot is worth revisiting because what
+belongs in it moves with the save: kittens multiply production by a figure that
+grows with milk, milk grows with achievements, and achievements are the one thing
+an ascension never takes away, so the run that just ended nearly always owns a
+stronger kitten than the run that filled the slot did.
 
-Doing better means reading what is already in each slot (`permanentUpgrade0..4` are
-parsed from the save) and comparing it against what the picker is offering, which
-is a hover per candidate.
+**Two things made it more than a loop.** The picker never lists a slot's own
+occupant, so taking the best of what is offered would have swapped the strongest
+kitten on the save out for the second strongest; what a slot is holding is read
+from its own tooltip and compared by rank first. And `act/ascend.js` drops owned
+crates on purpose, because clicking one reopens its picker and that once turned the
+shopping pass into a loop that never reincarnated, so the reassignment pass is a
+separate, bounded walk that runs only after shopping reports itself finished.
+
+It has to happen on the ascension screen: the game offers "all the upgrades you've
+purchased last playthrough", and after the reset there is no last playthrough.
 
 ---
 

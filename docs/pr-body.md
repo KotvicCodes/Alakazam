@@ -1,278 +1,119 @@
-# Ascension
+# Krumblor
 
-Alakazam played a run competently and had never finished one. This branch builds
-the ascension loop end to end, following the wiki's
-[ascension guide](https://cookieclicker.wiki.gg/wiki/Ascension_guide), and closes
-roadmap items 2 and 3.
+Alakazam has never touched the cookie dragon, and it has been choosing pantheon
+spirits from a single question: "is the autoclicker on". This branch builds the
+dragon end to end and replaces both that question and the aura equivalent with
+scoring functions over what the run has actually earned. It closes roadmap item 7.
 
-## The rule that shapes it
+## The thing that makes this different from the guides
 
-**Never leave in the middle of a boost.** A frenzy is minutes of multiplied
-production, and those cookies count toward prestige, so ascending mid-frenzy
-throws them away. A met target waits.
+The game registers about **three clicks a second**, however many are dispatched,
+and Alakazam takes every golden cookie within milliseconds of it appearing. Both
+facts quietly demolish most of the received wisdom about auras and spirits:
 
-**Loans invert that, which is the whole trick.** A bank loan is a big multiplier
-now paid for with a worse one later, and the penalty belongs to the run. Ending
-the run before it lands is how the trade is won rather than lost, and it is the
-game's own "Debt evasion" achievement. So the sequence is: wait out whatever is
-running, take every loan, earn under the stack, and ascend in the last seconds
-before the shortest window closes.
+| what the guides rank highly | why it is worth less here |
+|---|---|
+| Dragon's Fortune, +123% CpS per golden cookie on screen | there is almost never one on screen: they are clicked at once |
+| Dragonflight, ×1111 click power for ten seconds | ten seconds is thirty clicks, not the hundreds a human gets |
+| Dragon Cursor, +5% clicking | 5% of a small share of income |
+| Muridal in the diamond slot, +15% clicking for -3% production | only wins while click income is above about two thirds of production, which after the opening minutes it never is |
+| Jeremy and Mokalsium, the idle pantheon | between them they make golden cookies about a fifth rarer, which was never priced |
 
-| | boost | for | then | for | downpayment |
-|---|---|---|---|---|---|
-| 1 modest | ×1.5 | 120 min | ×0.25 | 240 min | 20% of bank |
-| 2 pawnshop | ×2 | **40 s** | ×0.1 | 40 min | 40% of bank |
-| 3 retirement | ×1.2 | 48 h | ×0.8 | 5 days | 50% of bank |
+So neither choice is hard-coded any more. `src/strategy/dragon.js` and
+`src/strategy/pantheon.js` score every candidate in cookies per second against
+measured production, click income and golden cookie income, and return the terms
+behind each number. Radiant Appetite still wins, comfortably, on any ordinary save,
+which is the point: it is now a result rather than an assertion.
 
-They are taken **1, 3, 2**, not in order: the pawnshop loan is the strongest and
-much the shortest, so going last leaves the widest window to ascend inside. The
-downpayment is a share of a bank about to be discarded, and spending never reduces
-`cookiesEarned`, so it costs nothing that counts.
-
-## When, and what it buys
-
-`prestige = floor((lifetime cookies / 1e12) ^ (1/3))`, the game's own formula, kept
-pure and unit tested in `strategy/ascend.js`. The plan is the guide's, all 23
-entries in `data/heavenly.js`: 365 chips, then 2185, then 12301. What it waits
-for is **the chips the plan still wants** — the running total of the entries,
-less what has already been spent on them, less what is already banked. Past the
-table it falls back to the guide's own rule, ascend when the run would double the
-prestige already banked.
-
-The shopping list is the guide's, flattened into one order, and it keeps going as
-long as the chips last: an entry is not a stopping point, so a run that overshoots
-carries straight on into the next one's list. Anything not on the list is never
-bought, because chips spent off-plan are chips the next tier's centrepiece does
-not get. Permanent slots take the dearest kitten on offer, and are cancelled out
-of rather than filled blindly.
-
-## Two things that had to be got right
-
-**Confirming the wrong prompt.** Every confirmation in Cookie Clicker is
-`#promptOption0`. So is "Really wipe save". `Game.Prompt` also stamps the prompt's
-name into the DOM (`<id Ascend>` becomes `#promptContentAscend`), so `act/ascend.js`
-refuses to confirm anything unless the prompt on screen names itself. There is a
-test that puts a wipe prompt up mid-sequence and checks it is not clicked.
-
-**The save is stale.** It lags up to a minute. The instant a run ends, the last
-save still describes the run that just finished, still holding a lifetime of
-cookies and still saying the target is met. Acting on that ascends a brand new
-empty run immediately and loops. The reset count from before the ascension is
-remembered and nothing starts again until the save reports a higher one.
-
-## A bug this turned up
-
-`live.readBuffs()` was reading `innerText` off buff elements and matching it
-against a list of names. **A buff has no text.** The game builds it as an icon
-crate containing a pie timer, nothing else, so the match was always against the
-empty string and `hasProductionBuff()` has always returned false. Every decision
-resting on it was running blind: the grimoire never actually timed a Force the Hand
-of Fate against a frenzy, and the shimmer module's "do not click a wrath cookie
-mid-buff" guard never fired.
-
-`measure/buffs.js` reads them the way they are really rendered. The name comes from
-the tooltip and is cached per element, because "Loan 1" and "Loan 1 (interest)"
-share an icon and mean opposite things. The time left is decoded from the pie
-timer's sprite offset, which encodes elapsed fraction in 144 steps: under three
-tenths of a second of resolution on a forty second loan.
-
-## Two achievements
-
-**"In her likeness"** dresses the clones as a grandma. The catch is that the game
-checks for it inside `offsetGene`, the arrow handler, and only on a non-zero step,
-so importing the right appearance wins nothing. `modules/clones.js` walks the
-arrows, then deliberately steps a gene the achievement does not care about so the
-check actually runs, then puts the clones straight back the way it found them. It
-runs once, the first time a You is owned, in a single pass, and never touches
-them again; clones still on the game's default are left on a preset.
-
-**"No time like the present"** needs a gift code redeemed. Alakazam wraps the gift
-and keeps the code, and the panel shows it with what to do. **Redeeming is not
-automated**: it means typing into the game's own text field, which is a different
-kind of act from clicking on something, and it deserves a decision rather than
-being slipped in. It is written up as roadmap item 10.
-
-## What playing it turned up
-
-**The save was never being read at all.** `Game.WriteSave` does not put its
-base64 into localStorage: it stores `escape(base64 + '!END!')`, and `Game.LoadSave`
-calls `unescape` on the way back in before it goes looking for the marker.
-escape() writes '=' as `%3D` and the marker as `%21END%21`, so skipping that step
-finds no marker to strip, hands a string full of percent signs to `atob`, and
-reports a perfectly good save as **"save is not base64"**. On every save, in
-every real browser, since the reader was written. Everything downstream of it —
-the ascension planner, the lump planner, the garden, the market, the pantheon —
-was working from a save that had failed to decode.
-
-The fixtures were the reason this survived a test suite. They stored the base64
-directly, which is the one place a Cookie Clicker save is never stored that way,
-so the reader was only ever tested against a form it would never meet. They
-escape now, and 77 tests fail without the fix.
-
-Everything below is what was waiting behind it.
-
-**The save was also being read two fields out.** `Game.WriteSave` puts the shiny
-wrinkler count and hoard between `volume` and `lumps`, and the parser did not
-know they were there. So `lumps` held the shiny wrinkler count, `lumpT` held the
-lump count and `lumpCurrentType` held a millisecond timestamp. The layout checks
-do their job and refuse to trust any of that, so the ascension planner would
-still not have planned once decoding worked: ascending on a misread
-`cookiesReset` is not undoable. The sugar lump planner would have had nothing to
-spend either, thinking it had as many lumps as it had shiny wrinklers.
-
-The version whitelist went with it. An unrecognised version used to mark a save
-untrusted outright, which means every game patch silently switches off everything
-that needs exact numbers until somebody adds a string. The layout invariants are
-version independent, they are the real check, and they are what caught this.
-
-**Lumps do not live 24 hours.** Stevia Caelestis, Sugar aging process and Rigidel
-each take an hour off the ripening, and the game writes the moment a lump falls
-as exactly an hour after it ripens, so all three reductions move the auto-harvest
-too. On such a save the lump is gone by hour 21 and waiting for hour 23 never
-harvests one. Which upgrades are owned is not readable from a save in any form
-that survives a patch, so the lifespan is measured off the lump's own sprite,
-whose frame and cross-fade encode how far through its life it is — the same trick
-`measure/buffs.js` uses on the pie timer. And levelling never worked at all:
-`.productLevel` is in the building's row, not in the store listing it was being
-looked for in.
-
-**"In her likeness" was being declined rather than earned.** The sequence was
-three stages fifteen seconds apart, which left the game's customizer prompt open
-on the player's screen for the best part of a minute; anything that opened a
-prompt of its own or clicked `#promptOption0` in that window sent it back to the
-start. It is one pass now, on screen for a frame. And it refused to run at all on
-a save whose clones already had a look, which is declining an achievement over a
-hairstyle: it earns it and puts the look straight back.
-
-**Ascension targets were asked for in the wrong currency.** They were indexed by
-the ascension count, which assumes a save followed the guide from its first
-reset, one entry per ascension — so a save that ascended a few times early, or
-was imported, is handed a target several ascensions away and waits forever. But
-the deeper problem was reading the plan as a ladder of prestige levels at all,
-because two things are always true by the time an ascension comes round and
-neither fits that shape.
-
-A run does not stop when its target is met: it waits out the running boost, takes
-three loans and earns under them, so it reaches the ascension screen with more
-chips than the entry asked for, and the shopping pass carries the surplus into
-the next entry's list. And chips it could not spend stay banked. Asking for a
-whole entry's worth again is asking for chips that are already spent, or already
-in hand.
-
-So the question is now "what does the plan still want", answered from the two
-numbers the save already carries: `heavenlyChipsSpent` is exactly how far down
-the plan the purchases have got, because Alakazam never buys off it, and
-`heavenlyChips` is the rest.
-
-**The shopping pass never finished, so it never reincarnated.** `Game.Upgrade.buy`
-ends with
-
-```js
-if (this.bought && this.activateFunction) this.activateFunction();
+``` JavaScript
+window.Alakazam.dragon.explain()    // every aura, scored, with its inputs
+window.Alakazam.pantheon.explain()  // the best layouts, scored
 ```
 
-outside the branch that checks whether anything was actually purchased. Every
-permanent upgrade slot has an `activateFunction` that opens its picker, and a
-bought heavenly upgrade stays on the tree. So the pass bought the slot, filled
-its picker, came round, found the same affordable crate still sitting there,
-clicked it, and reopened the picker — spending nothing, never reporting itself
-finished, and so never clicking Reincarnate. A crate on that tree carries
-`enabled` if and only if it is already owned, so it is dropped now, which also
-saves a click and a redraw on every upgrade the save already has.
+Both also log themselves when the answer changes, so a long session leaves a trail
+that two runs can be compared across.
 
-**The permanent slot took a weaker kitten than it should have.** The preference
-list was mis-ordered (experts before specialists, analysts before marketeers) and
-stopped four tiers short of the top, so a save owning Kitten admins was handed
-Kitten specialists — the first name the list recognised. It is complete and in
-the game's own order now, but the ranking no longer depends on that: kitten tiers
-are three orders of magnitude apart in price, so the picker takes the dearest one
-on offer, read from the crate's own tooltip, and stays right when the game adds
-another. Kitten angels has gone from the list entirely —
-`Game.AssignPermanentSlot` only ever offers the plain and cookie pools, so a
-heavenly upgrade could never have appeared there.
+## The dragon
 
-## Coming back from one
+Trained from the egg, **every run**: `Game.Reset` zeroes `dragonLevel` and both
+auras on every ascension, not only on a hard reset, so this is a recurring cost and
+not a one-time setup. The ladder is fixed: five cookie rungs, then a hundred of one
+building per rung walking up the store, then fifty and two hundred of everything.
+Radiant Appetite is rung fourteen of the building section.
 
-The other half of an ascension is the run that follows it, which buys back a
-whole run's worth of upgrades and does it fast, because the prestige just paid
-for. Scoring one upgrade costs a tooltip hover, so the ordinary buying loop
-spends those minutes reading crates while the cookies pile up unspent, and there
-are far too many to keep up with.
+Reaching it is the awkward part. The dragon's tab is painted onto a background
+canvas and hit-tested against the mouse position, so the click has to carry
+coordinates, and the game only accepts it when the last thing clicked was that
+canvas, which the autoclicker overwrites fifteen times a second. So a panel visit
+holds the scheduler still and verifies what appeared instead of assuming.
 
-For the first five minutes of a run the store is swept with the game's own **Buy
-all upgrades** button instead. Inside that window it is very nearly the same
-answer: everything on offer is trivially cheap against what the run is earning,
-so cheapest-first is as good an order as any. After it, ordering starts to matter
-again and `strategy/score.js` goes back to weighing each upgrade against a
-building.
+It also pets for drops, and learns which quarter of the hour yields which drop
+rather than spending pets on a window whose drop is already held.
 
-It needs "Inspired checklist", which is entry eight of the plan, and without it
-nothing changes. It also cannot start the grandmapocalypse: `Game.storeBuyAll`
-skips the vault, the toggle pool and the tech pool, and the research that starts
-it is tech — so that holds for the whole window rather than resting on it being
-short.
+## Supreme Intellect, which is where the two meet
 
-## Three things a long run turned up
+The aura promotes every temple slot a tier, so the same three spirits pay more, and
+the best layout is not necessarily the same one. It also makes spells a tenth
+cheaper: the grimoire had been paying full price and casting late, with a comment
+saying the aura was unreadable, while `dragonAura` had been in the save all along.
 
-**No store upgrade had been bought since "Inspired checklist".** `classifyUpgrade`
-screened the whole tooltip for a handful of words, one of which was "vault". Once
-that heavenly upgrade is owned the game appends its own hint to the bottom of
-every upgrade tooltip in the store:
+## Gift codes, finished
 
-> Click to purchase. Shift-click to vault.
+Wrapping a gift was already automated; redeeming it was left to you because it
+means typing into one of the game's own text fields. That line was already untrue,
+since the achievement hunt types a bakery name, so `typeInto` has moved into the
+input layer next to `simulateClick` and the fair-play contract in the README now
+names the exception. The game stays the judge of the code: its Redeem button is
+disabled until the code parses, and a code it refuses is dropped rather than
+retried.
 
-So from that ascension onward every upgrade matched, every upgrade was classified
-`skip`, and not one was ever bought again — cookie upgrades, golden cookie
-upgrades, the lot. It screens on the name now. Nothing is lost by narrowing it:
-toggles, pledges and anything the player has vaulted live in store sections
-`measure/live.js` does not read at all, and the three doors into the
-grandmapocalypse are named outright.
+## Permanent upgrade slots, reassigned
 
-**The engine would sit and save forever.** When the top-ranked building was
-unaffordable, `decide` waited — and never looked at the rest of the list. Cursors
-rank top for most of a run and their price climbs 15% per cursor, so by the seven
-hundredth one they cost thousands of times the bank. The panel read "saving for
-Cursor" for hours with a store full of buildings that could have been bought
-outright many times over.
+A permanent slot could always be reassigned at any ascension, and Alakazam only
+ever filled one at the moment it was bought. A slot bought at the third ascension
+was still holding a third-ascension kitten twenty runs later, and every run since
+had been paying for it.
 
-Waiting is only right while the target is nearly here, because held cookies earn
-nothing while a building bought now starts paying at once and shortens the wait
-rather than lengthening it. Past a minute it buys the best thing actually on the
-shelf.
+Now, once the heavenly tree is bought out and before reincarnating, the owned slots
+are walked and any that can be improved are reassigned. Two things make it more
+than a loop. The picker never lists a slot's own occupant, so taking the best of
+what is offered would swap the strongest kitten on the save out for the second
+strongest: what a slot holds is read from its own tooltip and compared by rank
+first, and a slot holding something this version cannot name is left alone on the
+grounds that an unknown upgrade is likelier to be newer than worse. And owned
+crates are deliberately excluded from the shopping pass, because clicking one
+reopens its picker and that once turned shopping into a loop that never
+reincarnated, so this is a separate bounded walk that runs only after shopping
+reports itself done.
 
-**The buy-all sweep started a minute into a run, not at the top of it.** It read
-the run's age from the save, and the save is rewritten on autosave, so for up to a
-minute after an ascension it still carries the previous run's start date. The
-ascension module notes the moment it reincarnates now, and the younger of the two
-readings wins.
+## The panel
 
-## Verification
+Thinned to what the game does not already show: gone are the bank, CpS, the
+catalog progress, the pantheon section, the save id, the version and its note, what
+ascending would pay, and the plan sentence. "Plan wants" is now "planned", and one
+row was added for the dragon. The per-drain object dump is out of the console too.
 
-`npm test` — 224 tests under `node --test`, green. New coverage: the prestige
-formula against the guide's milestones, target selection and the doubling fallback,
-buying in plan order, never touching a ghosted or off-plan crate, refusing an
-unnamed prompt, the stale-save guard, loan ordering, ascending inside the loan
-window, a frenzy holding the sequence back, buff naming and pie-timer decoding, the
-likeness condition and the deliberate final step, every gift gate, the save in the escaped
-form localStorage really holds it in, the real 55 field scalar layout against a
-drifted one, measuring a shortened lump lifespan and
-harvesting inside it, spending a lump on the row badge, answering only the
-prompt that names itself, never clicking an upgrade the save already owns, and
-ranking the permanent slot by price, and
-sweeping a new run's store without ever reaching the tech pool, buying an upgrade
-whose tooltip carries the game's own vault hint, and buying the best affordable
-building rather than saving forever for one that is hours away.
+The version note deserves its own line: it warned that the game was newer than the
+parser had been read against, and it said that for every game newer than the last
+string anybody remembered adding to a hand-maintained list. The list is gone;
+`scalarsLookSane` was always the real check.
 
-The fake Cookie Clicker grew an ascension screen, a heavenly tree with
-prerequisites and refusals, a permanent slot picker, named prompts, buffs with real
-pie timers, the three loan slots, the clone customizer with the game's own check,
-the options menu with gift prompts, a sugar lump drawn from its own sprite sheet
-with the level badges in the building rows, and a heavenly tree that keeps its
-bought crates on screen and re-runs a slot's activate function when one is
-clicked, which is what made the loop reproducible.
+## Also fixed along the way
 
-Everything above except the market's loan buttons is now checked against the
-shipped `main.js` rather than assumed: the save format field by field, the lump
-timing formula, the customizer's prompt, arrows, gene order and defaults, the
-achievement's own condition, the heavenly crates and every prompt id. Everything
-still fails soft — a missing element is a skipped step, not a throw.
+- **Holobore was never actually banned.** The exclusion list was exported and read
+  by nothing; the only thing keeping him out was that three hand-written presets
+  happened not to name him. One new preset and the first golden cookie click would
+  have burned the entire swap budget.
+- **Cyclius is now excluded too.** Its bonus is a sine wave over three to
+  twenty-four hours and there are three worship swaps a day, so it would be slotted
+  while the wave was up and paid for in full while it was down.
+- Dead output cleared: `chipsShort`, `save.stats().generation`.
+
+## Tests
+
+224 → 283, including the pantheon module, which had none at all: the training
+ladder, aura availability, the canvas coordinate maths at two zoom levels, a click
+the game credits to something else, the greyed-out cost gate, aura ids read from
+the crate's own handler rather than its position, the scorers at several income
+mixes, Supreme Intellect promoting slots in both directions, redeeming end to end
+including a code the game refuses, and the panel rows that are gone.

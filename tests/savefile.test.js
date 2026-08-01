@@ -43,13 +43,15 @@ test('rejects anything that is not a save, without throwing', () => {
     assert.equal(savefile.parse('a|b|c').ok, false)
 })
 
-test('notes an unfamiliar game version without distrusting the save', () => {
+test('an unfamiliar game version is not remarked on at all', () => {
     const { raw } = fx.save({ version: '9.999', minigames: { 2: fx.garden({ unlocked: [0, 1, 2] }) } })
     const parsed = savefile.parse(savefile.decode(raw))
     // the layout is what matters, and it checks out. Refusing to trust a save
-    // purely because the game shipped a patch is how ascension went quiet.
+    // purely because the game shipped a patch is how ascension went quiet, and
+    // warning about it in the panel forever was the same mistake made quietly.
     assert.equal(parsed.stale, false)
-    assert.match(parsed.reason, /newer than this parser/)
+    assert.equal(parsed.reason, '')
+    assert.equal(parsed.version, '9.999')
     // bitfields and minigame saves are self delimiting, so they stay usable
     assert.equal(parsed.buildings[2].minigame.unlocked.filter(Boolean).length, 3)
 })

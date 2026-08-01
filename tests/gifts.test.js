@@ -16,7 +16,8 @@ function giftBoot(opts = {}) {
         game: {
             bank: opts.bank === undefined ? BILLION : opts.bank,
             wrappingPaper: opts.wrappingPaper !== false,
-            giftCode: opts.giftCode
+            giftCode: opts.giftCode,
+            validCode: opts.validCode
         }
     })
 }
@@ -114,4 +115,104 @@ test('gift codes are a module the master switch can stop', () => {
     assert.ok(mod)
     assert.equal(mod.setting, 'gifts')
     assert.equal(h.A.store.DEFAULTS.gifts, true)
+})
+
+//! Redeeming
+// The other half. Sending puts the "Gifted out" buff up for an hour, so a held code
+// waits for that hour or for an ascension, whichever comes first.
+
+const HELD = { code: 'TESTCODE123456', at: Date.now() - 2 * 3600e3 }
+
+async function heldBoot(opts = {}) {
+    const h = giftBoot(opts)
+    await h.A.store.ready('t')
+    h.A.store.set('giftCode', { ...HELD, ...(opts.held || {}) })
+    return h
+}
+
+async function ticks(h, n = 4) {
+    const mod = h.A.registry.get('gifts')
+    for (let i = 0; i < n; i++) await mod.tick()
+    return h.game.state
+}
+
+test('a code held from before the hour is redeemed', async () => {
+    const h = await heldBoot({ validCode: 'TESTCODE123456' })
+    const state = await ticks(h)
+    assert.ok(state.log.indexOf('redeemed a gift') !== -1)
+    assert.ok(h.A.store.get('giftRedeemedAt') > 0)
+    assert.equal(h.A.gifts.heldCode(), null, 'and the code is not kept afterwards')
+})
+
+test('a code wrapped moments ago waits out the hour', async () => {
+    const h = await heldBoot({ held: { at: Date.now() } })
+    assert.equal(h.A.gifts.redeemable(), false)
+    const state = await ticks(h)
+    assert.equal(state.log.indexOf('redeemed a gift'), -1)
+    assert.equal(h.game.doc.getElementById('prefsButton').classList.contains('selected'), false)
+})
+
+test('an ascension lifts the wait early, because buffs do not survive one', async () => {
+    const h = await heldBoot({ held: { at: Date.now(), runId: 'a-previous-run' } })
+    assert.equal(h.A.gifts.redeemable(), true)
+    const state = await ticks(h)
+    assert.ok(state.log.indexOf('redeemed a gift') !== -1)
+})
+
+test('the game is the judge of the code, and a bad one is dropped', async () => {
+    const h = await heldBoot({ validCode: 'SOMETHINGELSE' })
+    const state = await ticks(h)
+    assert.equal(state.log.indexOf('redeemed a gift'), -1, 'the button stayed disabled')
+    assert.equal(h.A.gifts.heldCode(), null, 'so the code is thrown away rather than retried')
+    assert.equal(h.A.store.get('giftRedeemedAt', 0), 0)
+    // and it does not turn round and wrap a fresh one, which would cost an hour of
+    // "Gifted out" for a code likely to be refused in the same way
+    assert.ok(h.A.store.get('giftCheckedAt', 0) > 0)
+    assert.equal(state.log.filter(l => l === 'wrapped a gift').length, 0)
+})
+
+test('the whole redeem happens in one tick, not one click a minute', async () => {
+    // the tick is a minute apart, so a step per tick meant menu, wait, Redeem, wait,
+    // type, wait: minutes of the options menu sitting open over the game
+    const h = await heldBoot({ validCode: 'TESTCODE123456' })
+    await h.A.registry.get('gifts').tick()
+    assert.ok(h.game.state.log.indexOf('redeemed a gift') !== -1)
+    assert.equal(h.game.doc.getElementById('prefsButton').classList.contains('selected'), false)
+})
+
+test('the whole wrap happens in one tick too', async () => {
+    const h = giftBoot({ giftCode: 'TESTCODE123456' })
+    await h.A.store.ready('t')
+    await h.A.registry.get('gifts').tick()
+    assert.ok(h.game.state.log.indexOf('wrapped a gift') !== -1)
+    assert.equal(h.A.gifts.heldCode().code, 'TESTCODE123456')
+})
+
+test('once the achievement has been had, gifting stops for good', async () => {
+    const h = await heldBoot({ validCode: 'TESTCODE123456' })
+    await h.A.registry.get('gifts').tick()
+    assert.ok(h.A.store.get('giftRedeemedAt', 0) > 0)
+    // no held code any more, and eligible must still say no: otherwise it wraps a
+    // fresh gift every time the last one expires, forever, for nothing
+    assert.equal(h.A.gifts.heldCode(), null)
+    assert.equal(h.A.gifts.eligible(), false)
+    const before = h.game.state.log.length
+    await ticks(h, 3)
+    assert.equal(h.game.state.log.length, before, 'and it does not touch the game again')
+})
+
+test('a redeem already done is never done again', async () => {
+    const h = await heldBoot({ validCode: 'TESTCODE123456' })
+    await ticks(h)
+    const first = h.game.state.log.filter(l => l === 'redeemed a gift').length
+    h.A.store.set('giftCode', HELD)
+    await ticks(h)
+    assert.equal(h.game.state.log.filter(l => l === 'redeemed a gift').length, first)
+})
+
+test('the buff the game puts up after a redeem is respected', async () => {
+    const h = await heldBoot({ validCode: 'TESTCODE123456' })
+    h.game.gainBuff('Gifted out', 0.5)
+    await h.A.registry.get('buffs').tick()
+    assert.equal(h.A.gifts.redeemable(), false)
 })
