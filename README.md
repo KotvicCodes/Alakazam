@@ -23,17 +23,27 @@ autoclicker, buying, the garden, the pantheon, and so on. Drag it by its header,
 collapse it with the button, or turn it off entirely. The toolbar popup mirrors
 the same switches.
 
-Everything Alakazam knows is also on `window.__alakazam` in the console.
+Everything Alakazam knows is also on `window.__alakazam` in the extension’s
+content-script console context (see Debugging below).
 
 ## Development
+Use Node **22.22+ (22.x)** or **24.x** and npm. Commit `package-lock.json` when
+changing dependencies; CI installs it with `npm ci`.
+
 ```bash
-npm test              # unit tests, no browser needed
-npm run format:check  # prettier
+npm ci
+npm test                     # unit harness, no browser needed
+npm run format:check         # prettier
+npx playwright install chromium --no-shell
+npm run test:game:fetch       # pinned disposable Cookie Clicker 2.058 mirror
+npm run test:integration      # game DOM tests + unpacked-extension smoke
 ```
 
-Tests run under `node --test` against a small fake document and a fake Cookie
-Clicker, so the content scripts are loaded exactly as the manifest lists them and
-exercised without a browser.
+The unit harness loads content scripts in manifest order into a fake document.
+The Playwright layer uses an ignored game checkout and temporary browser profiles.
+The extension smoke loads a temporary unpacked copy with localhost-only matches;
+production permissions remain in `manifest.json`. See [Testing](docs/TESTING.md)
+for individual commands, fixtures, coverage limits, and regression ownership.
 
 ## Todo
 - Pop wrinklers automatically (they are drawn on a canvas, so this needs hit-testing).
@@ -45,8 +55,14 @@ Everything else that used to be here is done, and the larger plans have moved to
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Debugging
-Everything Alakazam thinks is on `window.__alakazam`, and the two choices that are
-worth arguing with will print their whole comparison table on request:
+Open DevTools on the game tab and select **Alakazam** in the Console’s JavaScript
+context dropdown (usually showing `top`). Content scripts run in an isolated
+world: `window.__alakazam` and `window.Alakazam` belong to that extension context;
+`Game` belongs to the page’s `top` context. An undefined extension global in `top`
+does not mean the extension failed to load. The toolbar popup has its own DevTools
+context, accessible by inspecting the popup.
+
+In the Alakazam context, inspect `window.__alakazam` or request the comparisons:
 
 ``` JavaScript
 window.Alakazam.dragon.explain()    // every aura the dragon knows, scored
@@ -58,7 +74,8 @@ assumption rather than a measurement, so a ranking can be checked against what t
 run actually did rather than taken on trust. They also log themselves whenever the
 answer changes, so a long session leaves a trail.
 
-It is also useful to see how exactly the macro works in different stages of the game. Paste this code to the console to accelerate your progress.
+For disposable game fixtures only, the following changes the game directly. Select
+the page’s **top** console context to use `Game`; it is not an extension action.
 ``` JavaScript 
 for (let i = 0; i < 50; i++) {
     const newShimmer=new Game.shimmer("golden");
@@ -113,7 +130,11 @@ registers itself, so adding one is a file and a manifest line.
 **Core**
 - `src/core/savefile.js` — decodes the `localStorage` save into plain data:
   scalars, per-building records, the upgrade and achievement bitfields, and the
-  garden / stock market / pantheon / grimoire sub-saves. Version gated.
+  garden / stock market / pantheon / grimoire sub-saves. Trust is based on structural
+  and scalar invariants, not a version allowlist. `ok` means decoding/parsing
+  succeeded; `stale` and `reason` flag failed sanity checks. Passing those checks
+  does not prove compatibility with a new game layout; a shifted but plausible
+  value can pass, so browser regressions against the pinned game remain necessary.
 - `src/core/identity.js` — a stable per-save `legacyId` and per-ascension `runId`,
   hashed from the save's seed and timestamps.
 - `src/core/store.js` — `chrome.storage.local`, namespaced per save. Also the
@@ -190,9 +211,10 @@ the elapsed time of clicking singles costs more than the ordering efficiency it
 protects.
 
 It will hold cookies back for something better, but only for about a minute.
-Saving longer than that is a loss: cookies in the bank earn nothing, while a
-building bought now starts paying immediately and brings the expensive one
-closer. Past that limit it buys the best thing it can actually afford.
+This is the current purchase heuristic, not a full economic model: a building
+starts paying immediately, but banked cookies can also increase Lucky and garden
+payouts. Past that limit it buys the best thing it can actually afford; a shared
+reserve policy remains future work.
 
 ## What else it plays
 - **Sugar lumps** — harvests on ripe, where the game guarantees the lump, rather
@@ -239,7 +261,9 @@ closer. Past that limit it buys the best thing it can actually afford.
   and achievements are the one thing an ascension never takes away. It reads what
   each slot is already holding before it opens the picker, because the game never
   offers a slot its own occupant, and taking the best of what is left would quietly
-  swap the strongest kitten out for the second strongest.
+  swap the strongest kitten out for the second strongest. The comparison uses a
+  fixed preference ranking, not a computed milk/CpS model; unknown occupants are
+  left alone. Reassignment is a bounded pass after heavenly shopping.
 - **Loans** — the bank's three loans are a bad deal in an ordinary run and close
   to free immediately before an ascension, because the penalty belongs to the run
   and the run is about to end. All three are taken, the forty second one last, and
@@ -252,17 +276,19 @@ closer. Past that limit it buys the best thing it can actually afford.
   resets it on every ascension. Radiant Appetite doubles all production and is
   fourteen building sacrifices up the ladder, which is a bargain even mid-run. The
   aura is not picked from a guide: every aura the dragon knows is scored against
-  what this save actually earns, and the whole table goes to the console. Three of
-  the auras the guides rank highest are near worthless here, all for the same
-  reason: they pay for clicking or for golden cookies left sitting on screen, and
-  Alakazam clicks three times a second and takes every golden cookie the instant it
-  appears. It also pets the dragon for its drops, and learns which quarter of the
-  hour produces which one rather than wasting the attempt.
+  what this save actually earns, and the whole table goes to the console. Auras
+  paying for clicks depend on measured click income; Dragon’s Fortune depends on
+  golden cookies remaining on screen, which immediate collection discourages.
+  The historical three-clicks-per-second observation came from detail-zero
+  synthetic events in the reviewed mirror, not an unconditional game limit. It
+  also pets the dragon for its drops, and learns which quarter of the hour
+  produces which one rather than wasting the attempt.
 - **Gift codes** — wraps a gift, keeps the code, and redeems it once the hour the
   game makes you wait is up, or once an ascension has cleared it. That is the
   "No time like the present" achievement, start to finish.
 
 ## Future Improvements
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the full list, including wrinkler
-popping, golden cookie combos, the dragon, seasons, the stock market tick oracle,
-and redeeming gift codes.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for remaining work, including wrinkler
+popping, golden cookie combos, seasons, challenge modes, and the stock market tick
+oracle. Dragon automation, gift redemption, and permanent-slot reassignment are
+already implemented; the roadmap records their history.
