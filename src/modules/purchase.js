@@ -18,10 +18,10 @@
     // the cheap one is on this path:
     //   - measure/live.js  every pass, sub-millisecond: bank, CpS, prices
     //   - measure/catalog  whatever the tooltip rotation has read so far
-    //   - measure/save     owned counts, exact and free
+    //   - measure/save     fallback counts when the live count cannot be read
 
     const { simulateClick } = window.Alakazam.input
-    const { decide, sumPrice } = window.Alakazam.strategy
+    const { decide } = window.Alakazam.strategy
     const { live, catalog, save, store, registry, act, clicks } = window.Alakazam
     const { BASE_PRODUCTION } = window.Alakazam.data.buildings
 
@@ -84,10 +84,10 @@
         const globals = live.readGlobals()
         const balance = Number.isFinite(bank) ? Math.min(bank, globals.cookies) : globals.cookies
 
-        const buildings = live.readProducts().map(p => {
+        const buildings = act.store.unitProducts().map(p => {
             const record = save.building(p.index)
-            // the save knows the exact count; the rendered count is the fallback
-            const owned = record ? record.amount : p.owned
+            // autosaves lag purchases; a valid rendered count includes this drain
+            const owned = Number.isInteger(p.owned) && p.owned >= 0 ? p.owned : record?.amount
             return {
                 index: p.index,
                 name: p.name,
@@ -180,48 +180,62 @@
     // skips anything in the vault, anything in the toggle pool, and anything in
     // the tech pool. The research that starts the grandmapocalypse is tech, so the
     // one purchase Alakazam holds back by name is one this button cannot make.
-    function buyAll() {
-        if (!inBuyAllWindow()) return false
-        if (Date.now() - lastBuyAllAt < BUY_ALL_EVERY_MS) return false
-        const button = document.getElementById('storeBuyAllButton')
-        if (!button) return false
-        lastBuyAllAt = Date.now()
-        buyAllPresses++
-        simulateClick(button)
-        return true
+    function buyAll(lease) {
+        const own = !lease
+        lease = lease || window.Alakazam.transactions.acquire('purchase')
+        if (!lease) return false
+        try {
+            if (!lease.valid() || !inBuyAllWindow()) return false
+            if (Date.now() - lastBuyAllAt < BUY_ALL_EVERY_MS) return false
+            const button = document.getElementById('storeBuyAllButton')
+            if (!button) return false
+            lastBuyAllAt = Date.now()
+            buyAllPresses++
+            simulateClick(button)
+            return true
+        } finally {
+            if (own) lease.release()
+        }
     }
 
     //! The drain loop
 
-    async function tick(ctx) {
+    async function drain(ctx, lease) {
         // the sweep goes first: it is one click and it changes what the drain loop
         // below can afford, so reading the bank before it would be reading a number
         // that is about to be spent
-        if (buyAll()) await wait(REDRAW_MS)
+        if (buyAll(lease)) await wait(REDRAW_MS)
 
         const deadline = Date.now() + SLICE_MS
         let balance = live.readGlobals().cookies
         let actions = 0
         let decision = null
 
-        while (actions < MAX_ACTIONS && Date.now() < deadline) {
+        while (lease.valid() && actions < MAX_ACTIONS && Date.now() < deadline) {
+            if (!(await act.store.ready(lease)) || !lease.valid()) break
             if (!ctx.budget.take(1)) break
 
             const view = buildView(balance)
             decision = decide(view)
 
             if (decision.action === 'buyUpgrade') {
-                simulateClick(decision.target.element)
+                const target = live.readUpgradeCrates().find(c => c.key === decision.target.key)
+                if (!target || !lease.valid()) break
+                simulateClick(target.element)
+                const executed = await window.Alakazam.transactions.until(
+                    lease,
+                    () => !live.readUpgradeCrates().some(c => c.key === target.key)
+                )
+                if (!executed) break
                 balance -= decision.target.price
                 bought++
                 actions++
-                await wait(REDRAW_MS)
                 continue
             }
 
             if (decision.action === 'buyBuilding') {
                 const amount = decision.amount || 1
-                const result = await act.store.buy(decision.target, amount, balance)
+                const result = await act.store.buy(decision.target, amount, balance, lease)
                 if (!result.bought) {
                     // the rendered bulk price came in over budget: our estimate was
                     // optimistic. stop here rather than retrying the same number.
@@ -229,7 +243,7 @@
                     break
                 }
                 balance -= result.cost
-                bought += amount
+                bought += result.amount
                 actions++
                 await wait(REDRAW_MS)
                 continue
@@ -244,6 +258,16 @@
             sweeping: inBuyAllWindow() && !!document.getElementById('storeBuyAllButton'),
             minutesLeft: Math.max(0, (BUY_ALL_WINDOW_MS - runAge()) / 60000),
             presses: buyAllPresses
+        }
+    }
+
+    async function tick(ctx) {
+        const lease = window.Alakazam.transactions.acquire('purchase')
+        if (!lease) return
+        try {
+            await act.store.withBulk('buy', 1, () => drain(ctx, lease), lease)
+        } finally {
+            lease.release()
         }
     }
 

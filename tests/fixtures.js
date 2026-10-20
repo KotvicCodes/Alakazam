@@ -52,6 +52,7 @@ function save(opts = {}) {
     scalars[44] = opts.lumpT != null ? opts.lumpT : Date.now()
     scalars[46] = opts.lumpType != null ? opts.lumpType : 0
     scalars[47] = '' // vault, a comma list
+    scalars[51] = opts.rawCps || 0
 
     //* driftedScalars
     // write the section the way a game that did not have shiny wrinklers would:

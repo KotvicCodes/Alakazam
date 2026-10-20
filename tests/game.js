@@ -78,6 +78,7 @@ function build(opts = {}) {
 
     function selectMode(mode) {
         state.mode = mode
+        if (mode === 'buy' && state.amount === 'max') selectAmount(100)
         bulk.storeBulkBuy.classes.delete('selected')
         bulk.storeBulkSell.classes.delete('selected')
         bulk[mode === 'buy' ? 'storeBulkBuy' : 'storeBulkSell'].classes.add('selected')
@@ -755,6 +756,14 @@ function build(opts = {}) {
     })
 
     // ---- sugar lumps ----
+    state.lumps = opts.lumps
+    state.levels = (opts.levels || BUILDINGS.map(() => 0)).slice()
+    let lumpsAmount
+    if (opts.lumps !== undefined) {
+        lumpsAmount = new El('div', { id: 'lumpsAmount', text: String(state.lumps) })
+        doc.body.append(lumpsAmount)
+    }
+
     // The lump itself, the two stacked sprites it is drawn with, and the level
     // badge on each building's row. The badge is deliberately not inside the
     // store product: in the real game it lives in the row over on the other side
@@ -794,13 +803,31 @@ function build(opts = {}) {
     BUILDINGS.forEach((b, i) => {
         const row = new El('div', { class: 'row', id: 'row' + i })
         const badge = new El('div', { id: 'productLevel' + i, class: 'productButton productLevel' })
+        if (opts.levels) badge.innerText = 'lvl ' + state.levels[i]
+        const spend = () => {
+            const cost = state.levels[i] + 1
+            if (state.lumps !== undefined && state.lumps < cost) return
+            if (state.lumps !== undefined) {
+                state.lumps -= cost
+                lumpsAmount.innerText = String(state.lumps)
+            }
+            state.levels[i]++
+            badge.innerText = 'lvl ' + state.levels[i]
+            state.log.push('levelled ' + BUILDINGS[i][0])
+        }
         badge.addEventListener('click', () => {
-            // the game only asks when the "confirm lump spends" preference is on
             if (!opts.askLumps) {
-                state.log.push('levelled ' + BUILDINGS[i][0])
+                spend()
                 return
             }
-            prompt('SpendLump', [['Yes', () => state.log.push('levelled ' + BUILDINGS[i][0])], ['No']])
+            const open = () => {
+                prompt('SpendLump', [['Yes', spend], ['No']], inner => {
+                    inner.innerText = `Do you want to spend ${state.levels[i] + 1} sugar lumps to level up?`
+                })
+                opts.onLumpPrompt?.(doc)
+            }
+            if (opts.lumpPromptDelay) setTimeout(open, opts.lumpPromptDelay)
+            else open()
         })
         row.append(badge)
         levelBadges.push(badge)
@@ -867,7 +894,14 @@ function build(opts = {}) {
         cpsEl.innerText = `per second: ${state.cps}`
         BUILDINGS.forEach((b, i) => {
             const n = state.amount === 'max' ? Math.max(1, maxAffordable(i)) : state.amount
-            priceEls[i].innerText = fmt(sumPrice(i, n))
+            let price = sumPrice(i, n)
+            if (state.mode === 'sell') {
+                price = 0
+                for (let k = 1; k <= Math.min(n, state.owned[i]); k++) {
+                    price += Math.floor(unitPrice(i, -k) * 0.25)
+                }
+            }
+            priceEls[i].innerText = fmt(price)
             ownedEls[i].innerText = String(state.owned[i])
         })
     }
