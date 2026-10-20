@@ -196,7 +196,8 @@
         if (flushTimer) clearTimeout(flushTimer)
         flushTimer = null
         if (inFlight) {
-            await inFlight
+            // this caller owns a retry; a previous failure must not cancel it
+            await inFlight.catch(() => {})
             return flush()
         }
         if (!dirty.size) return

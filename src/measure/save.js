@@ -36,7 +36,7 @@
         if (!connected) return
         const who = identity.fromSave(current)
         if (current.stale || !who.known) {
-            if (!activeIdentity) await store.ready(who)
+            if (!activeIdentity && !store.isReady()) await store.ready(who)
             return
         }
         if (activeIdentity && activeIdentity.runId === who.runId && store.isReady()) return

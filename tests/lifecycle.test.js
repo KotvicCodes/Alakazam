@@ -411,3 +411,100 @@ test('income observes zero-activity revisions and resets its run measurements on
     assert.equal(h.A.income.stats().samples, 0)
     await h.A.store.flush()
 })
+
+test('a waiting flush retries retained records after the preceding write fails', async () => {
+    const h = boot()
+    await h.A.store.ready('one')
+    h.A.store.set('value', 1)
+    const deferred = h.storage.deferNextSet()
+    const writing = h.A.store.flush()
+    const firstFailure = assert.rejects(writing, /temporarily unavailable/)
+    const complete = await deferred
+    h.A.store.set('value', 2)
+    await h.A.store.ready('two')
+    h.A.store.set('other', 3)
+    const retry = h.A.store.flush()
+    h.storage.failNext('set', 'temporarily unavailable')
+    complete()
+    await firstFailure
+    await retry
+    assert.equal(h.A.store.stats().pending, 0)
+    assert.equal(h.A.store.stats().error, '')
+    assert.equal(h.disk[h.A.store.fieldKey('legacy:one', 'value')].value, 2)
+    assert.equal(h.disk[h.A.store.fieldKey('legacy:two', 'other')].value, 3)
+})
+
+test('missing and stale saves load storage once, retry failures, and still discover a valid save', async () => {
+    for (const raw of [null, fx.save({ driftedScalars: true }).raw]) {
+        const h = page({ entries: raw ? { CookieClickerGame: raw } : {} })
+        let reads = 0
+        const get = h.ctx.chrome.storage.local.get
+        h.ctx.chrome.storage.local.get = (...args) => {
+            reads++
+            get(...args)
+        }
+        h.storage.failNext('get', 'temporarily unavailable')
+        await assert.rejects(h.A.save.connect(), /temporarily unavailable/)
+        assert.equal(h.A.store.isReady(), false)
+        await h.tick()
+        assert.equal(reads, 2)
+        assert.equal(h.A.store.isReady(), true)
+        for (let i = 0; i < 3; i++) await h.tick()
+        assert.equal(reads, 2, 'unchanged missing/stale saves must not reload all storage')
+        h.entries.CookieClickerGame = saved(1750000062000)
+        await h.tick()
+        assert.equal(reads, 3, 'a valid save must still select its family and run')
+        assert.equal(h.debug().identity.runId, h.A.save.stats().runId)
+        await h.A.store.flush()
+    }
+})
+
+test('same-family reconciliation preserves active ascension phases through reload and reincarnation', async () => {
+    for (const phase of ['ascending', 'shopping', 'returning']) {
+        const storage = storageFixture()
+        const h = page({ storage, entries: { CookieClickerGame: saved(1750000002000) } })
+        await h.A.save.connect()
+        h.A.act.ascend.openLegacy()
+        h.A.act.ascend.confirmPrompt('ascend')
+        h.A.store.set('ascendPhase', phase)
+        h.A.store.set('ascendAwaitReset', 0)
+        h.A.store.set('spellsCast', 4)
+        h.A.store.set('clonesStyled', true)
+        h.A.registry.get('ascend').setup()
+        h.entries.CookieClickerGame = saved(1750000062000, {
+            seed: 'other',
+            resets: 1,
+            startDate: 1750000061000
+        })
+        await h.tick()
+        assert.equal(h.A.ascend.state().phase, phase, `${phase} must survive on the ascension screen`)
+        assert.equal(h.A.store.get('ascendPhase'), phase)
+        assert.equal(h.A.store.get('ascendAwaitReset', null), null)
+        assert.equal(h.A.store.get('spellsCast', 0), 0)
+        assert.equal(h.A.store.get('clonesStyled'), true)
+        await h.A.store.flush()
+        const reload = page({ storage, entries: h.entries })
+        reload.A.act.ascend.openLegacy()
+        reload.A.act.ascend.confirmPrompt('ascend')
+        await reload.A.save.connect()
+        assert.equal(reload.A.ascend.state().phase, phase)
+        for (let i = 0; i < 8; i++) await reload.A.registry.get('ascend').tick()
+        assert.equal(reload.game.state.log.filter(item => item === 'reincarnated').length, 1)
+        assert.equal(reload.A.ascend.state().phase, 'watching')
+        await reload.A.store.flush()
+    }
+})
+
+test('an active ascension phase is not copied into an imported different family', async () => {
+    const h = page({ entries: { CookieClickerGame: saved(1750000002000) } })
+    await h.A.save.connect()
+    h.A.act.ascend.openLegacy()
+    h.A.act.ascend.confirmPrompt('ascend')
+    h.A.store.set('ascendPhase', 'shopping')
+    h.A.registry.get('ascend').setup()
+    h.entries.CookieClickerGame = saved(1750000062000, { fullDate: 1750000005000 })
+    await h.tick()
+    assert.equal(h.A.ascend.state().phase, 'watching')
+    assert.equal(h.A.store.get('ascendPhase', null), null)
+    await h.A.store.flush()
+})

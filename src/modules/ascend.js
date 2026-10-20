@@ -747,7 +747,20 @@
         if (phase !== 'watching') await drive(s)
     }
 
-    function reset() {
+    function reset({ previousIdentity, identity } = {}) {
+        // the committed sequence spans runs. Preserve it on the heavenly screen
+        // for this family, while imports into another family start independently.
+        if (
+            previousIdentity &&
+            identity &&
+            previousIdentity.familyId === identity.familyId &&
+            act.onAscendScreen() &&
+            ['ascending', 'shopping', 'returning'].includes(phase)
+        ) {
+            awaitingReset = null
+            store.set('ascendPhase', phase)
+            return
+        }
         phase = 'watching'
         announced = false
         awaitingReset = null

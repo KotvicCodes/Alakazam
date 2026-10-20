@@ -280,7 +280,9 @@ unchanged polls and unreadable saves do not. Check trust before measuring.
 An imported copy with the same creation timestamp and variant deliberately shares
 family state. Importing another family or hard resetting selects a separate family.
 Ascension changes run identity even when counters increase; reloading the same run
-resumes its state. Achievement progress, clone choices, lump timing, gift codes and
+resumes its state. A committed ascension sequence continues across a run change
+while the same family's heavenly screen is open; importing a different family clears
+that sequence. Achievement progress, clone choices, lump timing, gift codes and
 UI preferences belong to the family. Ascension phases, run start, spell/harvest/swap
 counters, wrinkler advice and gift discovery cooldowns belong to the run. Pending
 writes remain attached to their original scope through switches and failures.

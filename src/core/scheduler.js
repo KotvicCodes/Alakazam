@@ -203,10 +203,11 @@
             while ([...state.entries()].some(([name, slot]) => name !== 'saveWatch' && slot.busy)) {
                 await new Promise(resolve => setTimeout(resolve, 10))
             }
+            const previousIdentity = window.__alakazam.identity
             await store.ready(who)
             window.__alakazam.identity = who
             for (const mod of registry.all()) {
-                if (mod.reset) await mod.reset()
+                if (mod.reset) await mod.reset({ previousIdentity, identity: who })
             }
         } finally {
             transitioning = false
