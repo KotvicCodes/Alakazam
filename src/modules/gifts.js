@@ -394,7 +394,14 @@
         return Math.max(0, Math.round((CODE_TTL_MS - (Date.now() - held.at)) / 3600e3))
     }
 
-    registry.register({ name: 'gifts', interval: INTERVAL_MS, tick })
+    registry.register({
+        reset: () => {
+            openedByUs = false
+        },
+        name: 'gifts',
+        interval: INTERVAL_MS,
+        tick
+    })
 
     window.Alakazam.gifts = { heldCode, eligible, step, redeemable, redeemStep }
 })()

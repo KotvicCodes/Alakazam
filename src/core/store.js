@@ -1,28 +1,12 @@
-// wrapped in an IIFE so its top-level names stay private: all content scripts
-// share one scope, so bare top-level declarations across files would collide
+// all content scripts share a scope; keep implementation names private
 ;(function () {
     //! Persistent State
-    // Everything Alakazam wants to remember across page refreshes lives here, in
-    // chrome.storage.local. Two namespaces:
-    //
-    //   settings          global, one set of module toggles for every save
-    //   legacy:<id>:<key> per save file, keyed by the identity module's legacyId
-    //
-    // Reads are synchronous against an in-memory cache that is filled once at
-    // startup; writes go into that cache immediately and are flushed on a debounce
-    // so a busy loop cannot hammer the storage quota.
-    //
-    // chrome.storage.onChanged doubles as the bridge to the popup, which means no
-    // background service worker and no message passing is needed anywhere.
-    //
-    // Nothing here ever stores raw game data: only our own derived state.
-
+    // v2 stores one Chrome storage entry per field. Unrelated tab/popup writes
+    // cannot replace one another. Writes to the same field are last-writer-wins;
+    // update() is a local convenience, not a distributed atomic counter.
     const FLUSH_DELAY_MS = 500
     const SETTINGS_KEY = 'settings'
-
-    //* Default settings
-    // every module checks its own flag before doing anything, so this list is
-    // also the authoritative inventory of what Alakazam can be told to stop doing
+    const PREFIX = 'az2:'
     const DEFAULTS = {
         enabled: true,
         autoclick: true,
@@ -42,157 +26,235 @@
         hud: true
     }
 
-    let namespace = 'legacy:unknown'
-    let cache = {}
-    let settings = { ...DEFAULTS }
+    const RUN_KEYS = new Set([
+        'ascendPhase',
+        'ascendAwaitReset',
+        'runStartedAt',
+        'spellsCast',
+        'pantheonSwaps',
+        'gardenHarvests',
+        'wrinklerAdviceAt',
+        'giftCheckedAt'
+    ])
+    let namespace = 'quarantine:' + Math.random().toString(36).slice(2)
+    let runNamespace = namespace
     let loaded = false
     let flushTimer = null
-    let dirty = new Set()
+    let inFlight = null
+    let loadQueue = Promise.resolve()
+    let loadVersion = 0
+    let lastError = ''
+    const records = new Map()
+    const baselines = new Map()
+    const dirty = new Map()
+    const receivedWhileDirty = new Map()
     const subscribers = []
+    const clone = value => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)))
+    const fieldKey = (scope, key) => PREFIX + encodeURIComponent(scope) + ':' + encodeURIComponent(key)
 
-    //* backend
-    // chrome.storage.local when we are a real extension, an in-memory stand-in
-    // otherwise so the module stays usable in tests and on a plain page.
     function backend() {
-        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-            return chrome.storage.local
-        }
-        return null
+        return typeof chrome !== 'undefined' && chrome.storage ? chrome.storage.local : null
     }
 
-    //! Loading
-
-    //* ready
-    // fills the cache for one save file. safe to call again when the player
-    // ascends into a new run: the legacy id only changes when the save changes.
-    async function ready(legacyId) {
-        namespace = 'legacy:' + (legacyId || 'unknown')
+    function call(method, argument) {
         const api = backend()
-        if (!api) {
-            loaded = true
-            return
-        }
-        const wanted = [SETTINGS_KEY, namespace]
-        const got = await new Promise(resolve => {
+        if (!api) return Promise.resolve({})
+        return new Promise((resolve, reject) => {
             try {
-                api.get(wanted, resolve)
+                api[method](argument, result => {
+                    const error = chrome.runtime && chrome.runtime.lastError
+                    if (error) reject(new Error(error.message))
+                    else resolve(result || {})
+                })
             } catch (err) {
-                resolve({})
+                reject(err)
             }
         })
-        settings = { ...DEFAULTS, ...(got[SETTINGS_KEY] || {}) }
-        cache = got[namespace] || {}
-        loaded = true
-        listen()
+    }
+
+    function report(err) {
+        lastError = err.message || String(err)
+        console.warn('Alakazam: storage failed; pending writes retained for retry', err)
+    }
+
+    //* Loading & Migration
+    // copy only the matching old seed namespace, never delete it. Baseline entries
+    // are per field and separate from user writes, so concurrent migrations cannot
+    // overwrite newer values or unrelated copied fields. Untagged old run state is deliberately not imported.
+    // Unknown startup data is quarantined and never attached to a discovered save.
+    function ready(identity) {
+        const version = ++loadVersion
+        loaded = false
+        const request = async () => {
+            try {
+                const all = await call('get', null)
+                const who = typeof identity === 'object' && identity ? identity : null
+                const target = who
+                    ? who.known
+                        ? 'legacy:' + who.familyId
+                        : namespace
+                    : 'legacy:' + (identity || 'unknown')
+                const runTarget = who && who.known ? 'run:' + who.familyId + ':' + who.runId : target
+                const source = all[target] || (who && all['legacy:' + who.previousLegacyId]) || {}
+                for (const [key, value] of Object.entries(source)) {
+                    if (who && RUN_KEYS.has(key)) continue
+                    const baselineKey = fieldKey(target, '@base:' + key)
+                    if (!all[baselineKey] && !records.has(baselineKey)) {
+                        write(baselineKey, { value: clone(value) })
+                    }
+                }
+                baselines.set(SETTINGS_KEY, clone(all[SETTINGS_KEY] || {}))
+                for (const [key, value] of Object.entries(all)) {
+                    if (key.startsWith(PREFIX) && !dirty.has(key)) records.set(key, clone(value))
+                }
+                namespace = target
+                runNamespace = runTarget
+                loaded = version === loadVersion
+                if (!dirty.size) lastError = ''
+                listen()
+                notify()
+            } catch (err) {
+                report(err)
+                throw err
+            }
+        }
+        const next = loadQueue.then(request, request)
+        loadQueue = next.catch(() => {})
+        return next
+    }
+
+    // For namespaces from earlier ascensions the old hash contains no recoverable
+    // family metadata. An explicit copy is required; never guess from timestamps
+    // or choose the most recently written namespace.
+    async function copyLegacy(sourceId) {
+        if (!loaded || !namespace.startsWith('legacy:v2-')) throw new Error('discover a save first')
+        if (!/^[a-f0-9]{8}$/.test(sourceId)) throw new Error('expected an old legacy hash')
+        const destination = namespace
+        const sourceKey = 'legacy:' + sourceId
+        const all = await call('get', [sourceKey])
+        if (namespace !== destination || !loaded) throw new Error('save changed during copy; retry')
+        if (!all[sourceKey]) throw new Error('legacy namespace not found')
+        for (const [key, value] of Object.entries(all[sourceKey])) {
+            const record = records.get(fieldKey(namespace, key))
+            if (!RUN_KEYS.has(key) && !record && get(key, undefined) === undefined) set(key, value)
+        }
+        await flush()
     }
 
     function isReady() {
         return loaded
     }
-
-    //! Per-save values
-
+    function scopeFor(key) {
+        return RUN_KEYS.has(key) ? runNamespace : namespace
+    }
+    function read(scope, key, fallback) {
+        const record = records.get(fieldKey(scope, key))
+        if (record) return clone(record.deleted ? fallback : record.value)
+        const copied = records.get(fieldKey(scope, '@base:' + key))
+        if (copied) return clone(copied.value)
+        const baseline = baselines.get(scope) || {}
+        return clone(Object.prototype.hasOwnProperty.call(baseline, key) ? baseline[key] : fallback)
+    }
     function get(key, fallback) {
-        return Object.prototype.hasOwnProperty.call(cache, key) ? cache[key] : fallback
+        return read(scopeFor(key), key, fallback)
     }
-
     function set(key, value) {
-        cache[key] = value
-        markDirty(namespace)
+        write(fieldKey(scopeFor(key), key), { value: clone(value) })
     }
-
-    //* update
-    // read-modify-write in one step, for the counters and logs that modules keep
+    function forget(key) {
+        write(fieldKey(scopeFor(key), key), { deleted: true })
+    }
     function update(key, fallback, fn) {
         const next = fn(get(key, fallback))
         set(key, next)
         return next
     }
-
-    function forget(key) {
-        delete cache[key]
-        markDirty(namespace)
-    }
-
-    //! Settings
-
     function setting(name) {
-        return Object.prototype.hasOwnProperty.call(settings, name) ? settings[name] : DEFAULTS[name]
+        return read(SETTINGS_KEY, name, DEFAULTS[name])
     }
-
     function setSetting(name, value) {
-        settings[name] = value
-        markDirty(SETTINGS_KEY)
+        write(fieldKey(SETTINGS_KEY, name), { value: clone(value) })
         notify()
     }
-
     function allSettings() {
-        return { ...settings }
+        return Object.fromEntries(Object.keys(DEFAULTS).map(key => [key, setting(key)]))
     }
-
-    //* moduleEnabled
-    // a module runs only when both the master switch and its own flag are on
     function moduleEnabled(name) {
         return setting('enabled') !== false && setting(name) !== false
     }
 
-    //! Flushing
-
-    function markDirty(which) {
-        dirty.add(which)
+    function write(key, record) {
+        records.set(key, record)
+        dirty.set(key, record)
         if (flushTimer) return
         flushTimer = setTimeout(() => {
             flushTimer = null
-            flush()
+            flush().catch(() => {}) // report() and stats() retain the failure
         }, FLUSH_DELAY_MS)
     }
 
-    //* flush
-    // writes whatever changed since the last flush. resolves even without a
-    // storage backend so callers can always await it.
-    function flush() {
-        const api = backend()
-        const pending = dirty
-        dirty = new Set()
-        if (!api || pending.size === 0) return Promise.resolve()
-
-        const payload = {}
-        if (pending.has(SETTINGS_KEY)) payload[SETTINGS_KEY] = settings
-        if (pending.has(namespace)) payload[namespace] = cache
-
-        return new Promise(resolve => {
+    async function flush() {
+        if (flushTimer) clearTimeout(flushTimer)
+        flushTimer = null
+        if (inFlight) {
+            // this caller owns a retry; a previous failure must not cancel it
+            await inFlight.catch(() => {})
+            return flush()
+        }
+        if (!dirty.size) return
+        const pending = new Map(dirty)
+        const perform = async () => {
             try {
-                api.set(payload, resolve)
+                await call('set', Object.fromEntries(pending))
+                let changed = false
+                for (const [key, record] of pending) {
+                    if (dirty.get(key) !== record) continue
+                    dirty.delete(key)
+                    // events reflect storage order, which may be newer than our
+                    // completed write when its callback was delayed by Chrome.
+                    if (receivedWhileDirty.has(key)) {
+                        applyStored(key, receivedWhileDirty.get(key))
+                        receivedWhileDirty.delete(key)
+                        changed = true
+                    }
+                }
+                lastError = ''
+                if (changed) notify()
             } catch (err) {
-                resolve()
+                report(err)
+                throw err
             }
-        })
+        }
+        inFlight = perform()
+        try {
+            await inFlight
+        } finally {
+            inFlight = null
+        }
     }
 
-    //! Change notification
-    // doubles as the popup bridge: the popup writes a setting, chrome fires
-    // onChanged in the content script, and the module picks it up on its next tick
+    function applyStored(key, record) {
+        if (record === undefined) records.delete(key)
+        else records.set(key, clone(record))
+    }
 
     let listening = false
-
     function listen() {
-        if (listening) return
-        const api = backend()
-        if (!api || !chrome.storage.onChanged) return
+        if (listening || !backend() || !chrome.storage.onChanged) return
         listening = true
         chrome.storage.onChanged.addListener((changes, area) => {
             if (area !== 'local') return
-            if (changes[SETTINGS_KEY] && changes[SETTINGS_KEY].newValue) {
-                settings = { ...DEFAULTS, ...changes[SETTINGS_KEY].newValue }
-                notify()
+            for (const [key, change] of Object.entries(changes)) {
+                if (!key.startsWith(PREFIX)) continue
+                if (dirty.has(key)) receivedWhileDirty.set(key, clone(change.newValue))
+                else applyStored(key, change.newValue)
             }
+            notify()
         })
     }
-
     function subscribe(fn) {
         subscribers.push(fn)
     }
-
     function notify() {
         for (const fn of subscribers) {
             try {
@@ -202,10 +264,13 @@
             }
         }
     }
-
+    function stats() {
+        return { ready: loaded, pending: dirty.size, error: lastError }
+    }
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.store = {
         ready,
+        copyLegacy,
         isReady,
         get,
         set,
@@ -217,6 +282,8 @@
         moduleEnabled,
         subscribe,
         flush,
+        stats,
+        fieldKey,
         DEFAULTS,
         SETTINGS_KEY
     }

@@ -1,20 +1,10 @@
 // wrapped in an IIFE so its top-level names stay private: all content scripts
 // share one scope, so bare top-level declarations across files would collide
 ;(function () {
-    //! Run Identity
-    // Cookie Clicker has no accounts, but every save carries a five-letter `seed`
-    // plus the timestamps for when the save was created and when the current
-    // ascension began. Together those identify a save as well as an account id
-    // would, and they are stable across page refreshes.
-    //
-    //   legacyId -> one save file, survives ascension. namespaces everything we
-    //               remember long term: seed log, settings, achievement work.
-    //   runId    -> one ascension. namespaces anything that resets when the
-    //               player ascends.
-    //
-    // The seed is also what makes the game's random events reproducible, which is
-    // what any future golden cookie prediction would be built on. It is captured
-    // here so that work does not need a second pass over the save.
+    //! Save & Run Identity
+    // fullDate survives ascension, renaming and imports. Imports with the same
+    // creation timestamp deliberately share family state; a hard reset starts a
+    // new family. The seed belongs only to the run. Variant keys stay isolated.
 
     const { savefile } = window.Alakazam
 
@@ -37,19 +27,30 @@
     // pure: derive identity from an already parsed save. exported separately so
     // it can be tested without a browser.
     function fromSave(save) {
-        if (!save || !save.ok || !save.run) {
-            return { known: false, legacyId: 'unknown', runId: 'unknown', seed: '', ascensions: 0 }
+        const run = save && save.run
+        if (
+            !save ||
+            !save.ok ||
+            !run ||
+            !run.seed ||
+            !Number.isFinite(run.fullDate) ||
+            run.fullDate <= 0 ||
+            !Number.isFinite(run.startDate) ||
+            run.startDate <= 0
+        ) {
+            return { known: false, familyId: 'unknown', legacyId: 'unknown', runId: 'unknown' }
         }
-        const run = save.run
-        // fullDate never changes for a save file; startDate changes every ascension
-        const legacyId = hash(run.seed + '|' + run.fullDate)
-        const runId = hash(run.seed + '|' + run.startDate)
+        const variant = save.key || savefile.SAVE_KEY
+        const familyId = 'v2-' + hash(variant + '|' + run.fullDate)
+        const ascensions = save.scalars ? save.scalars.resets : 0
         return {
-            known: run.seed !== '',
-            legacyId,
-            runId,
+            known: true,
+            familyId,
+            legacyId: familyId,
+            previousLegacyId: hash(run.seed + '|' + run.fullDate),
+            runId: hash(familyId + '|' + run.seed + '|' + run.startDate + '|' + ascensions),
             seed: run.seed,
-            ascensions: save.scalars ? save.scalars.resets : 0
+            ascensions
         }
     }
 

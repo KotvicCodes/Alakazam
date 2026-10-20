@@ -650,7 +650,7 @@ test('crate names are cached so a second ascension costs no hovers', async () =>
     await pump(first)
     await first.A.store.flush()
 
-    const cached = disk['legacy:t'].heavenlyNames
+    const cached = disk[first.A.store.fieldKey('legacy:t', 'heavenlyNames')].value
     assert.equal(cached.version, '2.052')
     assert.equal(cached.names['1'], 'legacy')
 
