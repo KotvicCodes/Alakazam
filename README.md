@@ -116,8 +116,14 @@ registers itself, so adding one is a file and a manifest line.
   garden / stock market / pantheon / grimoire sub-saves. Version gated.
 - `src/core/identity.js` — a stable per-save `legacyId` and per-ascension `runId`,
   hashed from the save's seed and timestamps.
-- `src/core/store.js` — `chrome.storage.local`, namespaced per save. Also the
-  bridge to the popup, so there is no background worker.
+- `src/core/store.js` — `chrome.storage.local`, namespaced per save, with global
+  settings shared across all game tabs.
+- `src/core/status.js` / `src/background.js` — status snapshots published even
+  while paused or hidden. The relay assigns browser tab/document IDs and stores
+  records under `status:tab:<id>`; the popup verifies the active document before
+  reading its record. Closed/navigating tabs discard their records.
+- `src/shared/ui.js` / `src/parse.js` — shared labels, groups, defaults, control
+  rendering and formatting, loaded as ordinary scripts in both interfaces.
 - `src/core/registry.js` / `scheduler.js` — modules self-register with their own
   cadence. One frame loop and one millisecond driver run all of them, isolating
   failures and budgeting clicks.

@@ -64,14 +64,53 @@
     // a module runs only when the scheduler is live, the module has not been
     // disabled by repeated failure, and both the master switch and its own
     // settings flag are on
+    const INDEPENDENT = new Set(['autoclick', 'shimmers', 'wrinklers'])
+
+    function language() {
+        try {
+            return (localStorage.getItem('CookieClickerLang') || 'EN').toUpperCase()
+        } catch {
+            return 'unknown'
+        }
+    }
+
+    function restriction(mod) {
+        if (mod.always || INDEPENDENT.has(mod.name)) return ''
+        if (mod.name === 'clicks') return ''
+        if (language() !== 'EN') return `Unsupported language: ${language()} (requires English)`
+        const who = window.__alakazam.identity
+        if (who && !who.known) return 'Save identity unresolved'
+        return ''
+    }
+
+    function moduleState(mod, slot) {
+        const blocked = restriction(mod)
+        let state = 'running'
+        let reason = ''
+        if (slot.disabled) {
+            state = 'failed'
+            reason = slot.lastError || 'Module disabled after failure'
+        } else if (!running) {
+            state = 'stopped'
+        } else if (!mod.always && store.setting(mod.setting) === false) {
+            state = 'off'
+        } else if (blocked) {
+            state = 'blocked'
+            reason = blocked
+        } else if (!mod.always && (paused || store.setting('enabled') === false)) {
+            state = 'paused'
+        } else if (mod.name === 'hud' && store.setting('hud') === false) {
+            state = 'hidden'
+        } else if (slot.busy) {
+            state = 'busy'
+        }
+        return { state, reason, restriction: blocked }
+    }
+
     function shouldRun(mod, slot) {
-        if (!running) return false
-        if (slot.disabled || slot.busy) return false
-        // an `always` module runs through both the master switch and a pause,
-        // because it is the UI those are operated from
-        if (mod.always) return true
-        if (paused) return false
-        return store.moduleEnabled(mod.setting)
+        const { state } = moduleState(mod, slot)
+        // hidden HUD ticks still detect later enabling; status never depends on it
+        return !slot.busy && ['running', 'hidden'].includes(state)
     }
 
     //* runTick
@@ -175,6 +214,8 @@
                 await mod.setup()
             } catch (err) {
                 slot.disabled = true
+                slot.failures++
+                slot.lastError = err && err.message ? err.message : String(err)
                 console.warn(`Alakazam: module "${mod.name}" failed to set up and was switched off`, err)
             }
         }
@@ -215,10 +256,13 @@
     function stats() {
         return registry.all().map(mod => {
             const slot = slotFor(mod)
+            const report = moduleState(mod, slot)
             return {
+                ...report,
                 name: mod.name,
+                setting: mod.setting,
                 interval: mod.interval,
-                enabled: store.moduleEnabled(mod.setting),
+                enabled: ['running', 'busy'].includes(report.state),
                 disabled: slot.disabled,
                 ran: slot.ran,
                 failures: slot.failures,
@@ -228,5 +272,15 @@
     }
 
     window.Alakazam = window.Alakazam || {}
-    window.Alakazam.scheduler = { start, stop, pause, resume, isPaused, stats, budget }
+    window.Alakazam.scheduler = {
+        start,
+        stop,
+        pause,
+        resume,
+        isPaused,
+        isRunning: () => running,
+        stats,
+        budget,
+        language
+    }
 })()
