@@ -1,0 +1,413 @@
+const { test } = require('node:test')
+const assert = require('node:assert/strict')
+const { boot } = require('./harness')
+const { storageFixture } = require('./storage')
+const fx = require('./fixtures')
+
+function page(opts = {}) {
+    const entries = opts.entries || {}
+    const localStorage = {
+        get length() {
+            return Object.keys(entries).length
+        },
+        key: i => Object.keys(entries)[i],
+        getItem: key => entries[key] || null
+    }
+    const h = boot({ ...opts, localStorage })
+    return { ...h, entries, tick: () => h.A.registry.get('saveWatch').tick() }
+}
+const stateOf = h => h.A.identity.fromSave(h.A.save.get())
+
+// explicit saved timestamps make zero-activity autosaves reproducible
+const saved = (lastDate, opts = {}) => fx.save({ lastDate, ...opts }).raw
+
+test('URL selects live or beta when both saves exist; only the selected save advances revision', async () => {
+    for (const [pathname, key, resets] of [
+        ['/cookieclicker/', 'CookieClickerGame', 4],
+        ['/cookieclicker/beta/', 'CookieClickerGameBeta', 9]
+    ]) {
+        const h = page({
+            location: { pathname },
+            entries: {
+                CookieClickerGame: saved(1750000002000, { resets: 4 }),
+                CookieClickerGameBeta: saved(1750000002000, { resets: 9 })
+            }
+        })
+        assert.equal(h.A.save.get().key, key)
+        assert.equal(h.A.save.get().scalars.resets, resets)
+        const before = h.A.save.stats()
+        await h.tick()
+        assert.equal(h.A.save.stats().revision, before.revision)
+        const other = key === 'CookieClickerGame' ? key + 'Beta' : 'CookieClickerGame'
+        h.entries[other] = saved(1750000062000)
+        await h.tick()
+        assert.equal(h.A.save.stats().revision, before.revision)
+        h.entries[key] = saved(1750000062000, { resets })
+        await h.tick()
+        const after = h.A.save.stats()
+        assert.equal(after.revision, before.revision + 1)
+        assert.equal(after.savedAt, 1750000062000)
+        assert.ok(after.changedAt >= before.changedAt)
+        assert.equal(after.runId, before.runId)
+        assert.equal(after.trusted, true)
+    }
+})
+
+test('first autosave discovers identity without copying quarantined unknown state or the other variant', async () => {
+    const h = page({
+        location: { pathname: '/cookieclicker/beta/' },
+        entries: {
+            CookieClickerGame: saved(1750000002000)
+        }
+    })
+    await h.A.save.connect()
+    assert.equal(h.A.save.get().ok, false)
+    h.A.store.set('clonesStyled', true)
+    h.entries.CookieClickerGameBeta = saved(1750000062000, { lumps: -1, lumpsTotal: -1, lumpT: 0 })
+    await h.tick()
+    assert.equal(h.A.save.stats().trusted, true)
+    assert.equal(h.debug().identity.known, true)
+    assert.equal(h.A.store.get('clonesStyled', false), false)
+    await h.A.store.flush()
+})
+
+test('fresh locked lumps are trustworthy; malformed scalars stay unreadable', () => {
+    const h = boot({ save: fx.save({ lumps: -1, lumpsTotal: -1, lumpT: 0, cookieClicks: 5 }).raw })
+    assert.equal(h.A.save.trusted(), true)
+    assert.equal(h.A.save.get().scalars.lumpsState, 'locked')
+    assert.equal(h.A.save.get().scalars.cookieClicks, 5)
+    assert.equal(h.A.lumps.lumpState(), null)
+    assert.equal(
+        boot({ save: fx.save({ lumps: 0, lumpsTotal: 1 }).raw }).A.save.get().scalars.lumpsState,
+        'unlocked'
+    )
+    for (const [field, bad] of [
+        [42, '-2'],
+        [43, '-1'],
+        [43, 'NaN'],
+        [43, 'Infinity'],
+        [2, '5junk'],
+        [25, ''],
+        [22, 'not-a-season'],
+        [44, '9'],
+        [46, '5']
+    ]) {
+        const parts = fx.save().text.split('|')
+        const scalars = parts[4].split(';')
+        scalars[field] = bad
+        parts[4] = scalars.join(';')
+        const parsed = h.A.savefile.parse(parts.join('|'))
+        assert.equal(parsed.stale, true, `${field}=${bad}`)
+        assert.equal(parsed.scalars.lumpsState, 'unreadable')
+    }
+})
+
+test('ascension with changing seed retains family state, resets run state, and survives reload', async () => {
+    const storage = storageFixture()
+    const h = page({ storage, entries: { CookieClickerGame: saved(1750000002000) } })
+    await h.A.save.connect()
+    const first = stateOf(h)
+    h.A.store.set('clonesStyled', true)
+    h.A.store.set('giftRedeemedAt', 123)
+    h.A.store.set('spellsCast', 12)
+    h.A.store.set('ascendPhase', 'ascending')
+    h.entries.CookieClickerGame = saved(1750000062000, {
+        seed: 'zzzzz',
+        startDate: 1750000061000,
+        resets: 1
+    })
+    await h.tick()
+    const next = stateOf(h)
+    assert.equal(next.familyId, first.familyId)
+    assert.notEqual(next.runId, first.runId)
+    assert.equal(h.A.store.get('clonesStyled'), true)
+    assert.equal(h.A.store.get('giftRedeemedAt'), 123)
+    assert.equal(h.A.store.get('spellsCast', 0), 0)
+    assert.equal(h.A.store.get('ascendPhase', 'watching'), 'watching')
+    h.A.store.set('spellsCast', 2)
+    await h.A.store.flush()
+    const reload = page({ storage, entries: h.entries })
+    await reload.A.save.connect()
+    assert.equal(reload.A.store.get('clonesStyled'), true)
+    assert.equal(reload.A.store.get('spellsCast'), 2)
+    assert.equal(reload.A.save.stats().runId, next.runId)
+    await reload.A.store.flush()
+})
+
+test('imports select their family even if counters increase; same-family copies share long-term state', async () => {
+    const h = page({ entries: { CookieClickerGame: saved(1750000002000) } })
+    await h.A.save.connect()
+    h.A.store.set('clonesStyled', true)
+    h.A.store.set('spellsCast', 7)
+    const original = stateOf(h)
+    h.entries.CookieClickerGame = saved(1750000062000, { fullDate: 1750000005000, cookieClicks: 99999 })
+    await h.tick()
+    assert.notEqual(stateOf(h).familyId, original.familyId)
+    assert.equal(h.A.store.get('clonesStyled', false), false)
+    h.entries.CookieClickerGame = saved(1750000122000, { seed: 'xxxxx', cookieClicks: 999999 })
+    await h.tick()
+    assert.equal(stateOf(h).familyId, original.familyId)
+    assert.equal(h.A.store.get('clonesStyled'), true)
+    assert.equal(h.A.store.get('spellsCast', 0), 0)
+    await h.A.store.flush()
+})
+
+test('matching legacy migration copies family fields only, preserves source, and honors tombstones on reload', async () => {
+    const entries = { CookieClickerGame: saved(1750000002000) }
+    const probe = page({ entries })
+    const who = stateOf(probe)
+    const old = { clonesStyled: true, lumpLifeSpan: 123, spellsCast: 40, ascendPhase: 'ascending' }
+    const storage = storageFixture({ ['legacy:' + who.previousLegacyId]: structuredClone(old) })
+    const h = page({ storage, entries })
+    await h.A.save.connect()
+    assert.equal(h.A.store.get('clonesStyled'), true)
+    assert.equal(h.A.store.get('spellsCast', 0), 0)
+    h.A.store.forget('clonesStyled')
+    await h.A.store.flush()
+    assert.deepEqual(storage.disk['legacy:' + who.previousLegacyId], old)
+    const reload = page({
+        storage,
+        entries: { CookieClickerGame: saved(1750000062000, { seed: 'other' }) }
+    })
+    await reload.A.save.connect()
+    assert.equal(reload.A.store.get('clonesStyled', false), false)
+    assert.equal(reload.A.store.get('lumpLifeSpan'), 123)
+    await reload.A.store.flush()
+})
+
+test('pending namespace writes survive switches, callback failures, synchronous throws, and retry', async () => {
+    const storage = storageFixture()
+    const h = boot({ storage })
+    await h.A.store.ready('one')
+    const value = { nested: [1] }
+    h.A.store.set('first', value)
+    value.nested.push(2)
+    await h.A.store.ready('two')
+    h.A.store.set('second', 2)
+    storage.failNext('set', 'quota exceeded')
+    await assert.rejects(h.A.store.flush(), /quota exceeded/)
+    assert.match(h.A.store.stats().error, /quota/)
+    assert.equal(h.A.store.stats().pending, 2)
+    assert.equal(Object.keys(storage.disk).length, 0)
+    const realSet = h.ctx.chrome.storage.local.set
+    h.ctx.chrome.storage.local.set = () => {
+        throw new Error('disconnected')
+    }
+    await assert.rejects(h.A.store.flush(), /disconnected/)
+    h.ctx.chrome.storage.local.set = realSet
+    await h.A.store.flush()
+    assert.equal(h.A.store.stats().error, '')
+    assert.deepEqual(storage.disk[h.A.store.fieldKey('legacy:one', 'first')].value, { nested: [1] })
+    assert.equal(storage.disk[h.A.store.fieldKey('legacy:two', 'second')].value, 2)
+})
+
+test('changes made while a write is in flight stay pending, including after a namespace switch', async () => {
+    const storage = storageFixture()
+    const h = boot({ storage })
+    await h.A.store.ready('one')
+    h.A.store.set('value', 1)
+    const commit = storage.deferNextSet()
+    const writing = h.A.store.flush()
+    const complete = await commit
+    h.A.store.set('value', 2)
+    await h.A.store.ready('two')
+    h.A.store.set('other', 3)
+    complete()
+    await writing
+    assert.equal(h.A.store.stats().pending, 2)
+    await h.A.store.flush()
+    assert.equal(storage.disk[h.A.store.fieldKey('legacy:one', 'value')].value, 2)
+    assert.equal(storage.disk[h.A.store.fieldKey('legacy:two', 'other')].value, 3)
+})
+
+test('competing tabs and settings writers preserve unrelated pending and external values', async () => {
+    const storage = storageFixture({ settings: { hud: false } })
+    const a = boot({ storage }).A.store
+    const b = boot({ storage }).A.store
+    await Promise.all([a.ready('same'), b.ready('same')])
+    a.set('first', 1)
+    b.set('second', 2)
+    a.setSetting('garden', false)
+    b.setSetting('purchase', false)
+    await Promise.all([a.flush(), b.flush()])
+    assert.equal(a.get('second'), 2)
+    assert.equal(b.get('first'), 1)
+    assert.equal(a.setting('purchase'), false)
+    assert.equal(b.setting('garden'), false)
+    assert.equal(a.setting('hud'), false)
+    a.forget('first')
+    b.set('second', 3)
+    await Promise.all([a.flush(), b.flush()])
+    const c = boot({ storage }).A.store
+    await c.ready('same')
+    assert.equal(c.get('first', null), null)
+    assert.equal(c.get('second'), 3)
+    assert.equal(c.setting('garden'), false)
+    assert.equal(c.setting('purchase'), false)
+})
+
+test('failed namespace reads are surfaced and can retry without erasing pending writes', async () => {
+    const h = boot()
+    await h.A.store.ready('one')
+    h.A.store.set('value', 1)
+    h.storage.failNext('get', 'read denied')
+    await assert.rejects(h.A.store.ready('two'), /read denied/)
+    assert.equal(h.A.store.isReady(), false)
+    assert.equal(h.A.store.stats().pending, 1)
+    await h.A.store.ready('two')
+    await h.A.store.flush()
+    assert.equal(h.disk[h.A.store.fieldKey('legacy:one', 'value')].value, 1)
+})
+
+test('unreadable saves invalidate trust without claiming a new accepted revision', async () => {
+    const h = page({ entries: { CookieClickerGame: saved(1750000002000) } })
+    const before = h.A.save.stats()
+    h.entries.CookieClickerGame = 'malformed'
+    await h.tick()
+    assert.equal(h.A.save.stats().trusted, false)
+    assert.equal(h.A.save.stats().revision, before.revision)
+    h.entries.CookieClickerGame = saved(1750000062000)
+    await h.tick()
+    assert.equal(h.A.save.stats().revision, before.revision + 1)
+    assert.equal(h.A.save.stats().trusted, true)
+})
+
+test('copying an older seed namespace requires an explicit request and preserves destination values', async () => {
+    const storage = storageFixture({
+        'legacy:0123abcd': {
+            clonesStyled: true,
+            lumpLifeSpan: 123,
+            spellsCast: 99,
+            ascendPhase: 'ascending',
+            removed: 1
+        }
+    })
+    const h = page({ storage, entries: { CookieClickerGame: saved(1750000002000) } })
+    await h.A.save.connect()
+    assert.equal(h.A.store.get('lumpLifeSpan', 0), 0)
+    h.A.store.set('clonesStyled', false)
+    h.A.store.forget('removed')
+    await h.A.store.copyLegacy('0123abcd')
+    assert.equal(h.A.store.get('clonesStyled'), false)
+    assert.equal(h.A.store.get('lumpLifeSpan'), 123)
+    assert.equal(h.A.store.get('spellsCast', 0), 0)
+    assert.equal(h.A.store.get('removed', null), null)
+    assert.ok(storage.disk['legacy:0123abcd'])
+    await assert.rejects(h.A.store.copyLegacy('unknown'), /old legacy hash/)
+})
+
+test('malformed run metadata cannot establish a trusted measurement or known identity', () => {
+    const h = boot()
+    for (const value of ['', 'NaN', '1750000000000junk']) {
+        const parts = fx.save().text.split('|')
+        const run = parts[2].split(';')
+        run[1] = value
+        parts[2] = run.join(';')
+        const parsed = h.A.savefile.parse(parts.join('|'))
+        assert.equal(parsed.stale, true)
+        assert.equal(h.A.identity.fromSave(parsed).known, false)
+    }
+})
+
+test('real save season strings and locked lump timestamps remain valid', () => {
+    for (const season of ['', 'christmas', 'halloween', 'valentines', 'easter', 'fools']) {
+        const h = boot({ save: fx.save({ season, lumps: -1, lumpsTotal: -1 }).raw })
+        assert.equal(h.A.save.trusted(), true, season)
+        assert.equal(h.A.save.get().scalars.season, season)
+        assert.equal(h.A.lumps.lumpState(), null)
+    }
+})
+
+test('popup uses the same field writer as tabs and reports failed setting writes', async () => {
+    const fs = require('node:fs')
+    const path = require('node:path')
+    const vm = require('node:vm')
+    const { El } = require('./dom')
+    const storage = storageFixture()
+    const tab = boot({ storage }).A.store
+    await tab.ready('game')
+    tab.set('status', { at: Date.now(), cookies: 123, cps: 4, lumps: 0 })
+    await tab.flush()
+    const popup = boot({ storage })
+    const doc = popup.game.doc
+    for (const id of ['status', 'controls', 'gameData', 'cookies', 'cps', 'buildings']) {
+        doc.body.append(new El('div', { id }))
+    }
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'popup.js'), 'utf8'), popup.ctx)
+    await popup.ctx.render()
+    assert.equal(doc.getElementById('cookies').textContent, '123')
+    const purchase = doc.getElementById('controls').children.find(el => el.textContent === 'Buying: on')
+    tab.setSetting('garden', false)
+    storage.failNext('set', 'quota exceeded')
+    await purchase.listeners.click[0]()
+    await popup.ctx.render()
+    assert.match(doc.getElementById('status').textContent, /could not be saved/)
+    assert.equal(popup.A.store.stats().pending, 1)
+    await Promise.all([tab.flush(), popup.A.store.flush()])
+    assert.equal(tab.setting('purchase'), false)
+    assert.equal(popup.A.store.setting('garden'), false)
+    assert.equal(popup.A.store.stats().error, '')
+})
+
+test('migration baselines cannot overwrite concurrent field writes', async () => {
+    const entries = { CookieClickerGame: saved(1750000002000) }
+    const who = stateOf(page({ entries }))
+    const storage = storageFixture({
+        ['legacy:' + who.previousLegacyId]: { clonesStyled: false, lumpLifeSpan: 123 }
+    })
+    const first = page({ storage, entries })
+    const second = page({ storage, entries })
+    await Promise.all([first.A.save.connect(), second.A.save.connect()])
+    first.A.store.set('clonesStyled', true)
+    const delayed = storage.deferNextSet()
+    const migrating = second.A.store.flush()
+    const commit = await delayed
+    await first.A.store.flush()
+    commit()
+    await migrating
+    const reload = page({ storage, entries })
+    await reload.A.save.connect()
+    assert.equal(reload.A.store.get('clonesStyled'), true)
+    assert.equal(reload.A.store.get('lumpLifeSpan'), 123)
+    await reload.A.store.flush()
+})
+
+test('income observes zero-activity revisions and resets its run measurements on imports', async () => {
+    const h = page({
+        entries: { CookieClickerGame: saved(1750000002000, { cookies: 0, cookiesEarned: 0 }) }
+    })
+    let now = 1750000002000
+    h.ctx.Date = class extends Date {
+        static now() {
+            return now
+        }
+    }
+    h.A.live.readGlobals = () => ({ cps: 0 })
+    h.A.live.readShimmers = () => []
+    h.A.buffs.hasProductionBuff = () => false
+    h.A.clicks.stats = () => ({ clickCps: 0 })
+    const tick = h.A.registry.get('income').tick
+    await h.A.save.connect()
+    tick()
+    now += 60000
+    h.entries.CookieClickerGame = saved(now, { cookies: 0, cookiesEarned: 6000 })
+    await h.tick()
+    tick()
+    const active = h.A.income.stats().goldenCps
+    assert.ok(active > 0)
+    now += 60000
+    h.entries.CookieClickerGame = saved(now, { cookies: 0, cookiesEarned: 6000 })
+    await h.tick()
+    tick()
+    assert.ok(h.A.income.stats().goldenCps < active)
+    now += 60000
+    tick() // cached data must not add another saved interval
+    const inactive = h.A.income.stats().goldenCps
+    tick()
+    assert.equal(h.A.income.stats().goldenCps, inactive)
+    h.entries.CookieClickerGame = saved(now + 60000, { fullDate: 1750000005000, cookiesEarned: 1e12 })
+    await h.tick()
+    assert.equal(h.A.income.stats().goldenCps, 0)
+    assert.equal(h.A.income.stats().samples, 0)
+    await h.A.store.flush()
+})

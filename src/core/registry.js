@@ -34,6 +34,7 @@
             // it has to: pausing everything must not freeze the one piece of UI
             // that can unpause it again
             always: mod.always === true,
+            reset: typeof mod.reset === 'function' ? mod.reset : null,
             setup: typeof mod.setup === 'function' ? mod.setup : null,
             tick: mod.tick
         }

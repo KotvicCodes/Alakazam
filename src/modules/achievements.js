@@ -288,7 +288,17 @@
         }
     }
 
-    registry.register({ name: 'achievements', interval: INTERVAL_MS, setup, tick })
+    registry.register({
+        reset: () => {
+            pending = []
+            nextAttemptAt = 0
+            setup()
+        },
+        name: 'achievements',
+        interval: INTERVAL_MS,
+        setup,
+        tick
+    })
 
     window.Alakazam.achievements = { ONE_OFFS, attempts, giveUp, MAX_ATTEMPTS }
 })()

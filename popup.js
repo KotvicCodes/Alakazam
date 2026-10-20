@@ -4,7 +4,8 @@
 // chrome.storage. The HUD writes a status summary every few seconds, and setting
 // changes made here reach the page through chrome.storage.onChanged.
 
-const SETTINGS_KEY = 'settings'
+const store = window.Alakazam.store
+let storageReady = null
 
 const LABELS = {
     enabled: 'Master switch',
@@ -26,11 +27,13 @@ const LABELS = {
 }
 
 function get(keys) {
-    return new Promise(resolve => chrome.storage.local.get(keys, resolve))
-}
-
-function set(obj) {
-    return new Promise(resolve => chrome.storage.local.set(obj, resolve))
+    return new Promise((resolve, reject) =>
+        chrome.storage.local.get(keys, result => {
+            const error = chrome.runtime && chrome.runtime.lastError
+            if (error) reject(new Error(error.message))
+            else resolve(result)
+        })
+    )
 }
 
 //* latestStatus
@@ -39,8 +42,12 @@ function set(obj) {
 function latestStatus(all) {
     let best = null
     for (const key of Object.keys(all)) {
-        if (key.indexOf('legacy:') !== 0) continue
-        const status = all[key] && all[key].status
+        const status =
+            key.startsWith('az2:legacy%3A') && key.endsWith(':status')
+                ? all[key] && all[key].value
+                : key.startsWith('legacy:')
+                  ? all[key] && all[key].status
+                  : null
         if (!status) continue
         if (!best || status.at > best.at) best = status
     }
@@ -83,8 +90,14 @@ function trimZeros(text) {
 }
 
 async function render() {
+    if (!storageReady)
+        storageReady = store.ready('popup').catch(err => {
+            storageReady = null
+            throw err
+        })
+    await storageReady
     const all = await get(null)
-    const settings = all[SETTINGS_KEY] || {}
+    const settings = store.allSettings()
     const status = latestStatus(all)
 
     const statusEl = document.getElementById('status')
@@ -106,6 +119,9 @@ async function render() {
             : `${status.lumps === null || status.lumps === undefined ? '-' : status.lumps} lumps`
     }
 
+    if (store.stats().error) {
+        statusEl.textContent = 'Settings could not be saved. Click Refresh Data to retry.'
+    }
     controls.style.display = ''
     controls.innerHTML = ''
     for (const key of Object.keys(LABELS)) {
@@ -124,10 +140,13 @@ async function render() {
         button.textContent =
             key === 'enabled' ? (on ? 'RUNNING' : 'PAUSED') : `${LABELS[key]}: ${on ? 'on' : 'off'}`
         button.addEventListener('click', async () => {
-            const current = (await get([SETTINGS_KEY]))[SETTINGS_KEY] || {}
-            current[key] = !on
-            await set({ [SETTINGS_KEY]: current })
-            render()
+            store.setSetting(key, store.setting(key) === false)
+            try {
+                await store.flush()
+            } catch (err) {
+                /* shown by render */
+            }
+            safeRender()
         })
         controls.appendChild(button)
     }
@@ -144,10 +163,25 @@ function showVersion() {
     el.textContent = manifest ? `v${manifest.version}` : ''
 }
 
+function safeRender() {
+    return render().catch(err => {
+        document.getElementById('status').textContent =
+            'Storage unavailable. Click Refresh Data to retry.'
+        console.warn('Alakazam: popup storage failed', err)
+    })
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     showVersion()
-    render()
+    safeRender()
     // the page keeps writing status, so refresh while the popup is open
-    setInterval(render, 2000)
-    document.getElementById('refreshBtn').addEventListener('click', render)
+    setInterval(safeRender, 2000)
+    document.getElementById('refreshBtn').addEventListener('click', async () => {
+        try {
+            await store.flush()
+        } catch (err) {
+            /* shown by render */
+        }
+        safeRender()
+    })
 })

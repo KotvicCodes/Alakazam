@@ -9,13 +9,19 @@
     //
     // Nothing here knows the name of a single module.
 
-    const { savefile, identity, store, scheduler } = window.Alakazam
+    const { savefile, identity, scheduler } = window.Alakazam
 
     const STARTUP_DELAY_MS = 3000 // let the game finish loading
 
     console.log('Alakazam: content script loaded')
 
-    setTimeout(boot, STARTUP_DELAY_MS)
+    setTimeout(
+        () =>
+            boot().catch(err => {
+                console.error('Alakazam: startup failed; reload to retry', err)
+            }),
+        STARTUP_DELAY_MS
+    )
 
     async function boot() {
         if (!document.getElementById('bigCookie')) {
@@ -40,7 +46,11 @@
         // the seed and bakery name stay out of the log: only the derived ids
         console.log(`Alakazam: save ${who.legacyId}, run ${who.runId}, ${who.ascensions} ascension(s)`)
 
-        await store.ready(who.legacyId)
+        try {
+            await window.Alakazam.save.connect()
+        } catch (err) {
+            console.warn('Alakazam: storage load failed; save watcher will retry', err)
+        }
         await scheduler.start()
     }
 })()

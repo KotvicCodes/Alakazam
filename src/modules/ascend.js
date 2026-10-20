@@ -747,6 +747,19 @@
         if (phase !== 'watching') await drive(s)
     }
 
+    function reset() {
+        phase = 'watching'
+        announced = false
+        awaitingReset = null
+        skipped = new Set()
+        bought = []
+        taken = []
+        harvestFrom = 0
+        slotsDone = new Set()
+        repickTries = 0
+        setup()
+    }
+
     function setup() {
         // resume whatever phase the last page load left behind
         const saved = store.get('ascendPhase', 'watching')
@@ -755,7 +768,7 @@
         if (typeof pending === 'number') awaitingReset = pending
     }
 
-    registry.register({ name: 'ascend', interval: INTERVAL_MS, setup, tick })
+    registry.register({ name: 'ascend', interval: INTERVAL_MS, setup, reset, tick })
 
     window.Alakazam.ascend = { state, shop, nameOf, loanWindow, takeLoans, PHASES }
 })()

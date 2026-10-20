@@ -755,7 +755,7 @@ test('dragging the panel ignores the autoclicker synthetic events', async () => 
 
     trusted('pointerup', 720, 420)
     await h.A.store.flush()
-    assert.ok(h.disk['legacy:t'].hudPosition, 'the position should stick')
+    assert.ok(h.disk[h.A.store.fieldKey('legacy:t', 'hudPosition')].value, 'the position should stick')
     h.A.scheduler.stop()
 })
 
