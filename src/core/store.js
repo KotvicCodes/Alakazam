@@ -47,6 +47,7 @@
     const records = new Map()
     const baselines = new Map()
     const dirty = new Map()
+    const receivedWhileDirty = new Map()
     const subscribers = []
     const clone = value => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)))
     const fieldKey = (scope, key) => PREFIX + encodeURIComponent(scope) + ':' + encodeURIComponent(key)
@@ -205,10 +206,20 @@
         const perform = async () => {
             try {
                 await call('set', Object.fromEntries(pending))
+                let changed = false
                 for (const [key, record] of pending) {
-                    if (dirty.get(key) === record) dirty.delete(key)
+                    if (dirty.get(key) !== record) continue
+                    dirty.delete(key)
+                    // events reflect storage order, which may be newer than our
+                    // completed write when its callback was delayed by Chrome.
+                    if (receivedWhileDirty.has(key)) {
+                        applyStored(key, receivedWhileDirty.get(key))
+                        receivedWhileDirty.delete(key)
+                        changed = true
+                    }
                 }
                 lastError = ''
+                if (changed) notify()
             } catch (err) {
                 report(err)
                 throw err
@@ -222,6 +233,11 @@
         }
     }
 
+    function applyStored(key, record) {
+        if (record === undefined) records.delete(key)
+        else records.set(key, clone(record))
+    }
+
     let listening = false
     function listen() {
         if (listening || !backend() || !chrome.storage.onChanged) return
@@ -229,10 +245,9 @@
         chrome.storage.onChanged.addListener((changes, area) => {
             if (area !== 'local') return
             for (const [key, change] of Object.entries(changes)) {
-                if (key.startsWith(PREFIX) && !dirty.has(key)) {
-                    if (change.newValue === undefined) records.delete(key)
-                    else records.set(key, clone(change.newValue))
-                }
+                if (!key.startsWith(PREFIX)) continue
+                if (dirty.has(key)) receivedWhileDirty.set(key, clone(change.newValue))
+                else applyStored(key, change.newValue)
             }
             notify()
         })

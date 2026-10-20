@@ -508,3 +508,74 @@ test('an active ascension phase is not copied into an imported different family'
     assert.equal(h.A.store.get('ascendPhase', null), null)
     await h.A.store.flush()
 })
+
+test('external pause received before a delayed write callback is retained and notifies subscribers', async () => {
+    const storage = storageFixture()
+    const a = boot({ storage }).A.store
+    const b = boot({ storage }).A.store
+    await Promise.all([a.ready('same'), b.ready('same')])
+    const notifications = []
+    a.subscribe(settings => notifications.push(settings.enabled))
+    a.setSetting('enabled', true)
+    const delayed = storage.deferNextSetCallback()
+    const writing = a.flush()
+    const acknowledge = await delayed
+    assert.equal(storage.disk[a.fieldKey('settings', 'enabled')].value, true)
+    b.setSetting('enabled', false)
+    await b.flush()
+    assert.equal(storage.disk[a.fieldKey('settings', 'enabled')].value, false)
+    acknowledge()
+    await writing
+    assert.equal(a.setting('enabled'), false)
+    assert.equal(a.moduleEnabled('autoclick'), false)
+    assert.equal(notifications.at(-1), false)
+    assert.equal(a.stats().pending, 0)
+})
+
+test('external overwrites and deletions survive a delayed callback across namespace switches', async () => {
+    for (const remove of [false, true]) {
+        const storage = storageFixture()
+        const a = boot({ storage }).A.store
+        const b = boot({ storage }).A.store
+        await Promise.all([a.ready('same'), b.ready('same')])
+        a.set('value', { count: 1 })
+        const delayed = storage.deferNextSetCallback()
+        const writing = a.flush()
+        const acknowledge = await delayed
+        if (remove) b.forget('value')
+        else b.set('value', { count: 2 })
+        await b.flush()
+        await a.ready('other')
+        a.set('unrelated', 3)
+        await a.ready('same')
+        acknowledge()
+        await writing
+        if (remove) assert.equal(a.get('value', null), null)
+        else assert.equal(a.get('value').count, 2)
+        await a.flush()
+        assert.equal(storage.disk[a.fieldKey('legacy:other', 'unrelated')].value, 3)
+    }
+})
+
+test('new local edits made before acknowledgment stay pending after an external overwrite', async () => {
+    const storage = storageFixture()
+    const a = boot({ storage }).A.store
+    const b = boot({ storage }).A.store
+    await Promise.all([a.ready('same'), b.ready('same')])
+    a.set('value', 1)
+    const delayed = storage.deferNextSetCallback()
+    const writing = a.flush()
+    const acknowledge = await delayed
+    b.set('value', 2)
+    await b.flush()
+    a.set('value', 3)
+    acknowledge()
+    await writing
+    assert.equal(a.get('value'), 3)
+    assert.equal(a.stats().pending, 1)
+    assert.equal(storage.disk[a.fieldKey('legacy:same', 'value')].value, 2)
+    await a.flush()
+    assert.equal(a.get('value'), 3)
+    assert.equal(b.get('value'), 3)
+    assert.equal(a.stats().pending, 0)
+})
