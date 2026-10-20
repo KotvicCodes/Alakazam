@@ -210,6 +210,27 @@ async function run() {
         await page.screenshot({ path: path.join(artifacts, 'hud-1280x800.png') })
         console.log('PASS store access at 1280x800 with expanded and compact HUD')
 
+        // Keep a trusted pointer drag active across several scheduled refreshes.
+        const beforeDrag = await page.locator('#alakazam-hud').boundingBox()
+        await page.mouse.move(beforeDrag.x + 20, beforeDrag.y + 15)
+        await page.mouse.down()
+        await page.mouse.move(500, 300)
+        const duringDrag = await page.locator('#alakazam-hud').boundingBox()
+        assert.notEqual(duringDrag.x, beforeDrag.x)
+        const dragStartedAt = await inPage('Alakazam.status.snapshot().at')
+        await until(
+            async () =>
+                (await records()).some(
+                    record => record.tabId === first.tabId && record.at > dragStartedAt + 2200
+                ),
+            'multiple refreshes during a drag'
+        )
+        assert.deepEqual(await page.locator('#alakazam-hud').boundingBox(), duringDrag)
+        await page.mouse.up()
+        await inPage('Alakazam.hud.render()')
+        assert.deepEqual(await page.locator('#alakazam-hud').boundingBox(), duringDrag)
+        console.log('PASS pointer dragging across periodic refreshes and release')
+
         // keyboard docking is the alternative to pointer dragging
         await page.locator('#alakazam-hud-fold').focus()
         await page.keyboard.press('Enter')

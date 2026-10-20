@@ -3,9 +3,11 @@
     const { store, scheduler, registry, live, save, act, ui, status } = window.Alakazam
     const { formatNumber, formatDuration } = window.Alakazam.parse
     const { text } = ui
-    let root, body, pauseButton, foldButton, stripStatus, controls
+    let root, body, summaryBody, pauseButton, foldButton, stripStatus, controls
     let dock = 'bottom-left'
+    let dragPosition = null
     const cells = new Map()
+    let cellIndex = 0
     let currentSection = ''
     let seen = new Set()
 
@@ -76,6 +78,8 @@
         })
         body.appendChild(dockButton)
         controls = ui.buildControls(body, key => store.setSetting(key, store.setting(key) === false))
+        summaryBody = el('div')
+        body.appendChild(summaryBody)
         root.append(head, body)
         document.body.appendChild(root)
         dock = store.get('hudDock', 'bottom-left')
@@ -90,7 +94,7 @@
         return Math.max(low, Math.min(value, Math.max(low, high)))
     }
 
-    function place(position = store.get('hudPosition', null)) {
+    function place(position = dragPosition || store.get('hudPosition', null)) {
         if (!root) return
         const width = root.offsetWidth
         const height = root.offsetHeight
@@ -123,34 +127,45 @@
             const rect = root.getBoundingClientRect()
             offsetX = event.clientX - rect.left
             offsetY = event.clientY - rect.top
+            dragPosition = { left: rect.left, top: rect.top }
             handle.setPointerCapture(pointer)
             event.preventDefault()
         })
         handle.addEventListener('pointermove', event => {
             if (pointer === null || event.pointerId !== pointer || !event.isTrusted) return
-            place({ left: event.clientX - offsetX, top: event.clientY - offsetY })
+            dragPosition = { left: event.clientX - offsetX, top: event.clientY - offsetY }
+            place()
         })
         const release = event => {
             if (pointer === null || event.pointerId !== pointer) return
             if (handle.hasPointerCapture(pointer)) handle.releasePointerCapture(pointer)
             pointer = null
             remember()
+            dragPosition = null
         }
         handle.addEventListener('pointerup', release)
         handle.addEventListener('pointercancel', release)
     }
 
-    // nodes are created once; one-second updates only touch changed text
+    // Reuse cells, inserting only those that are out of summary order. Readings
+    // can first appear long after their section's initial render.
+    function showCell(key) {
+        const cell = cells.get(key)
+        const next = summaryBody.children[cellIndex++] || null
+        if (cell.node !== next) summaryBody.insertBefore(cell.node, next)
+        cell.node.hidden = false
+        seen.add(key)
+        return cell
+    }
+
     function section(name) {
         currentSection = name
         const key = `section:${name}`
         if (!cells.has(key)) {
             const node = el('div', { className: 'az-sec', textContent: name })
-            body.appendChild(node)
             cells.set(key, { node })
         }
-        seen.add(key)
-        cells.get(key).node.hidden = false
+        showCell(key)
     }
 
     function row(label, value, warn) {
@@ -160,14 +175,11 @@
             const labelNode = el('span', { textContent: label })
             const valueNode = el('span')
             node.append(labelNode, valueNode)
-            body.appendChild(node)
             cells.set(key, { node, valueNode })
         }
-        const cell = cells.get(key)
-        cell.node.hidden = false
+        const cell = showCell(key)
         text(cell.valueNode, value)
         cell.valueNode.className = warn ? 'az-warn' : ''
-        seen.add(key)
     }
 
     //* paybackText
@@ -368,6 +380,7 @@
         foldButton.setAttribute('aria-expanded', String(!body.hidden))
         ui.updateControls(controls, store.allSettings(), snapshot.modules)
         seen = new Set()
+        cellIndex = 0
         summary()
         for (const [key, cell] of cells) cell.node.hidden = !seen.has(key)
         place()

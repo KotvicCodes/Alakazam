@@ -66,6 +66,19 @@ class El {
         return this.append(kid)
     }
 
+    insertBefore(kid, before) {
+        if (kid === before) return kid
+        if (before !== null && !this.children.includes(before)) throw new Error('Not a child')
+        if (kid.parent) {
+            const siblings = kid.parent.children
+            siblings.splice(siblings.indexOf(kid), 1)
+        }
+        kid.parent = this
+        const index = before === null ? this.children.length : this.children.indexOf(before)
+        this.children.splice(index, 0, kid)
+        return kid
+    }
+
     setAttribute(name, value) {
         this.attrs = this.attrs || {}
         this.attrs[name] = value

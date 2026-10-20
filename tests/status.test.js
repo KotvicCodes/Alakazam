@@ -19,6 +19,129 @@ test('hidden boot can construct the HUD later and preserves its controls on upda
     assert.equal(h.game.doc.getElementById('alakazam-hud').hidden, true)
 })
 
+test('HUD rows stay in summary order when readings appear, disappear and return', async () => {
+    const h = boot({ save: fx.save({}).raw })
+    await h.A.store.ready('t')
+    h.A.registry.get('hud').setup()
+    const body = h.game.doc.getElementById('alakazam-hud-body')
+    const control = body.querySelector('[data-key="purchase"]')
+    const rows = () => body.querySelectorAll('.az-row')
+    const labels = () =>
+        rows()
+            .filter(node => !node.hidden)
+            .map(node => node.firstChild.textContent)
+
+    h.debug().garden = { unlocked: 1, goal: 'grow' }
+    h.A.hud.render()
+    const gardenRow = rows().find(node => node.firstChild.textContent === 'seeds')
+
+    h.debug().decision = { action: 'wait', reason: 'saving', payback: 12 }
+    h.debug().dragon = { level: 1, max: 27, aura: 'No aura' }
+    h.debug().lumps = { lumps: 3, type: 'normal', ripe: true, lifeSpanHours: 24, measured: true }
+    h.A.hud.render()
+    assert.deepEqual(labels().slice(0, 5), ['clicks', 'decision', 'payback', 'dragon', 'read'])
+    assert.deepEqual(
+        body.querySelectorAll('.az-sec').map(node => node.textContent),
+        ['game', 'save', 'sugar lumps', 'garden']
+    )
+    const entries = Array.from(body.querySelectorAll('div')).filter(
+        node => node.classList.contains('az-sec') || node.classList.contains('az-row')
+    )
+    assert.deepEqual(
+        entries.slice(0, 7).map(node => node.firstChild?.textContent || node.textContent),
+        ['game', 'clicks', 'decision', 'payback', 'dragon', 'save', 'read']
+    )
+    const dragonRow = rows().find(node => node.firstChild.textContent === 'dragon')
+
+    const clickStats = h.A.clicks.stats()
+    h.A.clicks.stats = () => ({ ...clickStats, clickCps: 42 })
+    delete h.debug().dragon
+    delete h.debug().garden
+    h.A.hud.render()
+    assert.deepEqual(labels().slice(0, 6), [
+        'from clicking',
+        'effective',
+        'clicks',
+        'decision',
+        'payback',
+        'read'
+    ])
+    assert.equal(dragonRow.hidden, true)
+    assert.equal(gardenRow.hidden, true)
+
+    h.debug().dragon = { level: 2, max: 27, aura: 'No aura' }
+    h.debug().garden = { unlocked: 2, goal: 'grow' }
+    h.A.hud.render()
+    assert.deepEqual(labels().slice(0, 7), [
+        'from clicking',
+        'effective',
+        'clicks',
+        'decision',
+        'payback',
+        'dragon',
+        'read'
+    ])
+    assert.equal(
+        rows().find(node => node.firstChild.textContent === 'dragon'),
+        dragonRow
+    )
+    assert.equal(
+        rows().find(node => node.firstChild.textContent === 'seeds'),
+        gardenRow
+    )
+    assert.equal(dragonRow.hidden, false)
+    assert.equal(gardenRow.hidden, false)
+    assert.equal(body.querySelector('[data-key="purchase"]'), control)
+})
+
+for (const release of ['pointerup', 'pointercancel']) {
+    test(`HUD keeps an active drag through refreshes and saves it on ${release}`, async () => {
+        const h = boot({})
+        await h.A.store.ready('t')
+        h.A.store.set('hudPosition', { left: '20px', top: '40px' })
+        h.A.registry.get('hud').setup()
+        const panel = h.game.doc.getElementById('alakazam-hud')
+        const head = h.game.doc.getElementById('alakazam-hud-head')
+        panel.getBoundingClientRect = () => ({
+            left: parseFloat(panel.style.left),
+            top: parseFloat(panel.style.top)
+        })
+        const pointer = (type, x, y) =>
+            head.dispatchEvent({
+                type,
+                pointerId: 1,
+                button: 0,
+                isTrusted: true,
+                clientX: x,
+                clientY: y,
+                preventDefault() {}
+            })
+
+        pointer('pointerdown', 30, 50)
+        pointer('pointermove', 500, 300)
+        for (let i = 0; i < 3; i++) h.A.registry.get('hud').tick()
+        assert.equal(panel.style.left, '490px')
+        assert.equal(panel.style.top, '290px')
+
+        h.ctx.innerWidth = 320
+        h.ctx.innerHeight = 240
+        h.events.find(event => event.type === 'resize').fn()
+        assert.equal(panel.style.left, '44px')
+        assert.equal(panel.style.top, '32px')
+        pointer(release, 500, 300)
+        await h.A.store.flush()
+        assert.deepEqual(JSON.parse(JSON.stringify(h.disk['legacy:t'].hudPosition)), {
+            left: '44px',
+            top: '32px'
+        })
+        h.ctx.innerWidth = 1440
+        h.ctx.innerHeight = 900
+        h.A.registry.get('hud').tick()
+        assert.equal(panel.style.left, '44px')
+        assert.equal(panel.style.top, '32px')
+    })
+}
+
 test('status stays current with a hidden HUD and paused automation', async () => {
     const h = boot({ save: fx.save({}).raw, disk: { settings: { hud: false, enabled: false } } })
     await h.A.store.ready('t')

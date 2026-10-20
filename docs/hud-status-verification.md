@@ -25,9 +25,11 @@ npm test
 npm run format:check
 ```
 
-The seven status regressions cover hidden-startup recovery and stable nodes,
+The ten status regressions cover hidden-startup recovery and stable nodes,
 paused/hidden live readings, scheduler restrictions, setup errors, building totals,
-identity/namespace refresh while paused, and observable storage failures/recovery.
+identity/namespace refresh while paused, observable storage failures/recovery,
+summary ordering as readings appear/disappear, and active drags across refreshes,
+resize, pointer release and cancellation.
 Existing module tests now inspect the persistent DOM instead of generated HTML.
 
 ## Installed-extension browser checks
@@ -63,6 +65,8 @@ The runner checks:
 - Expanded and compact HUDs leave actual store purchases accessible at 1280×800.
 - Keyboard docking, 640×400 and 320×480 viewports, return to 1280×800, and a reload
   with saved coordinates at `(9000, -800)` keep the panel in view.
+- A trusted pointer drag retains its position across multiple periodic refreshes
+  and after release.
 - Two game tabs retain separate tab/document records; selecting either displays its
   live readings even when the other tab published more recently. Reload changes
   document identity. Navigation/close clears old records.
