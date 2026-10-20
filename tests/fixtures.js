@@ -87,7 +87,7 @@ function save(opts = {}) {
         [
             opts.startDate || 1750000001000,
             opts.fullDate || 1750000000000,
-            Date.now(),
+            opts.lastDate === undefined ? Date.now() : opts.lastDate,
             opts.bakeryName || 'Test Bakery',
             opts.seed || 'abcde'
         ]

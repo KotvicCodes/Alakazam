@@ -32,13 +32,15 @@
     const { priority, COST, PERMANENT_PICKS, SLOT_NAMES, KITTEN, permanentRank, normalise } =
         window.Alakazam.data.heavenly
     const loanData = window.Alakazam.data.loans
-    const act = window.Alakazam.act.ascend
-    const loanAct = window.Alakazam.act.loans
+    const act = window.Alakazam.safety.bind('ascend', window.Alakazam.act.ascend)
+    const loanAct = window.Alakazam.safety.bind('ascend', window.Alakazam.act.loans)
 
     // Once the target is met this module is timing an ascension against a forty
     // second loan window, so it cannot be a slow poller. A tick is a save read and
     // a couple of DOM reads except during the sequence itself, so a second costs
     // nothing worth measuring.
+    const tooltip = window.Alakazam.safety.bind('ascend', catalog)
+
     const INTERVAL_MS = 1000
 
     // the ascend screen redraws its whole tree after every purchase, so a click has
@@ -194,7 +196,7 @@
             return { name: cache.names[crate.id], price: cache.prices[crate.id] }
         }
 
-        const tip = await catalog.readTooltip(crate.element)
+        const tip = await tooltip.readTooltip(crate.element)
         // the hover mutex is held by the catalog module; try again next tick
         if (!tip || !tip.name) return null
 
@@ -255,7 +257,7 @@
     }
 
     function wait(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+        return window.Alakazam.safety.wait('ascend', ms)
     }
 
     //* bestPermanent
@@ -370,7 +372,7 @@
     // tooltip names the slot, and a filled one prints its occupant above the
     // description. Returns null when the hover lock is held elsewhere.
     async function readSlot(crate, index) {
-        const tip = await catalog.readTooltip(crate.element)
+        const tip = await tooltip.readTooltip(crate.element)
         if (!tip || !tip.name) return null
         const name = normalise(tip.name)
         const slot = SLOT_NAMES.indexOf(name)
@@ -544,17 +546,55 @@
         return w && w.active > 0 ? w.hoard : 0
     }
 
-    function commit(s, why) {
-        const hoard = hoardAtRisk()
-        if (hoard > 0) {
-            console.warn(
-                `Alakazam: ascending with wrinklers still on the cookie. Their hoard is lost. ` +
-                    'Popping them is not something Alakazam can do yet (they are drawn on a ' +
-                    'canvas, not clickable elements), so pop them by hand to keep it.'
-            )
+    // Consent lives only in memory and names this run and decision. Reloading,
+    // changing saves, or withdrawing the decision requires fresh consent.
+    let decision = null
+    let decisionNumber = 0
+    store.subscribe(settings => {
+        if (settings.enabled === false || settings.ascend === false) decision = null
+    })
+
+    function decisionForRun() {
+        const who = window.Alakazam.identity.current()
+        if (!who.known) return null
+        if (!decision || decision.runId !== who.runId) {
+            decision = { id: `${who.runId}:${++decisionNumber}`, runId: who.runId, discarded: false }
         }
+        return decision
+    }
+
+    function discardHoard(id) {
+        const current = decisionForRun()
+        if (!current || current.id !== id || !window.__alakazam.ascend?.hoardBlocked) return false
+        current.discarded = true
+        return true
+    }
+
+    function hoardSafe(confirming = false) {
+        const current = decisionForRun()
+        if (!current) return false
+        if (current.discarded) return true
+        // Replace our confirmation prompt only after checking its ownership, then
+        // read a fresh export immediately before the irreversible confirmation.
+        if (confirming && act.promptIs('ascend')) act.cancelPrompt('ascend')
+        const evidence = act.liveHoard()
+        const safe = evidence && evidence.hoard === 0
+        if (!safe) {
+            Object.assign(window.__alakazam.ascend, {
+                hoardBlocked: true,
+                decisionId: current.id,
+                blocked: evidence
+                    ? 'Collect the wrinkler hoard or explicitly discard it for this ascent.'
+                    : 'Waiting to verify the live wrinkler hoard. Clear other prompts and retry.',
+                wrinklerHoard: evidence ? evidence.hoard : hoardAtRisk()
+            })
+        }
+        return !!safe
+    }
+
+    function commit(s, why) {
+        if (!hoardSafe()) return
         console.log(`Alakazam: ascending for ${Math.round(s.chipsGained)} heavenly chip(s). ${why}.`)
-        // the last moment the save is certain to describe the run being left
         awaitReset(s.ascensions)
         setPhase('ascending')
         act.openLegacy()
@@ -585,6 +625,7 @@
             // buff is a reason to wait, not a reason to go.
             if (buffs.active().some(b => !b.name)) return
 
+            if (!hoardSafe()) return
             taken = []
             harvestFrom = 0
             setPhase('loans')
@@ -592,6 +633,7 @@
         }
 
         if (phase === 'loans') {
+            if (!hoardSafe()) return
             if (takeLoans()) return
             if (taken.length === 0) {
                 // no bank, or every slot already spent. nothing to wait for.
@@ -644,12 +686,17 @@
             }
             // the prompt names itself, so this can never confirm anything else
             if (act.promptIs('ascend')) {
+                if (!hoardSafe(true)) {
+                    act.cancelPrompt('ascend')
+                    return
+                }
+                if (!act.promptIs('ascend')) act.openLegacy()
                 act.confirmPrompt('ascend')
                 return
             }
             // no prompt and no ascend screen: the click was lost, or the player
             // closed it. open it again rather than sitting here.
-            act.openLegacy()
+            if (hoardSafe()) act.openLegacy()
             return
         }
 
@@ -728,6 +775,7 @@
             )
         }
         if (!s.ready) announced = false
+        if (phase === 'watching') decision = null
 
         const window_ = loanWindow()
         window.__alakazam.ascend = {
@@ -757,5 +805,5 @@
 
     registry.register({ name: 'ascend', interval: INTERVAL_MS, setup, tick })
 
-    window.Alakazam.ascend = { state, shop, nameOf, loanWindow, takeLoans, PHASES }
+    window.Alakazam.ascend = { state, shop, nameOf, loanWindow, takeLoans, discardHoard, PHASES }
 })()

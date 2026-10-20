@@ -2,40 +2,14 @@
 // share one scope, so bare top-level declarations across files would collide
 ;(function () {
     //! Clone Customizer
-    // Runs once, the first time a You is owned, and then never again.
-    //
-    // It walks the customizer's arrows to the look that earns "In her likeness",
-    // steps a free gene once to make the game actually check, and then puts the
-    // clones back. Why any of that is necessary is in src/data/clones.js; the
-    // short version is that the achievement is awarded inside the arrow handler,
-    // so importing the right appearance does nothing.
-    //
-    //! All of it in one tick
-    // This used to be three stages a tick apart, which meant leaving the game's
-    // customizer prompt open on the player's screen for the best part of a minute
-    // and hoping it was still there next time. It is a prompt like any other:
-    // anything that opens one of its own replaces it, anything that clicks
-    // #promptOption0 closes it, and the player can dismiss it themselves. Any of
-    // those and the sequence went back to the beginning.
-    //
-    // Nothing here needs to wait for the game. An arrow click runs the game's own
-    // handler synchronously and the readout is updated inside it, and Game.Prompt
-    // builds its content synchronously too. So the whole thing is one pass: open,
-    // walk, nudge, put back, close. The panel is on screen for a frame.
-    //
-    //! Whose clones they are
-    // The appearance is the player's to choose, and it is written into the save
-    // and survives ascension. So whatever the clones looked like when Alakazam
-    // first met this save is put back afterwards, and only clones still on the
-    // game's default are left on a preset.
-    //
-    // Refusing to run at all on a save with a look of its own, which is what this
-    // did before, means declining the achievement over a hairstyle. The look is
-    // worth preserving; a few seconds of it changing is not worth an achievement.
+    // Capture the open customizer's live genes before the first change. The undo
+    // journal is flushed before each arrow click, so reload recovery recognizes
+    // either side of an interrupted write. Restore and verify the exact snapshot
+    // after the achievement, cancellation, or recovery; later player edits win.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('clones')
     const { save, store, registry } = window.Alakazam
-    const { GENES, LIKENESS, PRESET, FREE_GENE, isDefault, stepsTo } = window.Alakazam.data.clones
+    const { GENES, LIKENESS, FREE_GENE, stepsTo } = window.Alakazam.data.clones
 
     const INTERVAL_MS = 15000
 
@@ -52,10 +26,12 @@
     const DONE_KEY = 'clonesStyled'
 
     //* THEIRS_KEY
-    // the look the clones had the first time Alakazam saw this save, so it can be
-    // put back. It is recorded before anything is touched, because once the walk
-    // has begun the save no longer says what the player chose.
+    // the live snapshot for inspection; the recovery journal owns restoration.
     const THEIRS_KEY = 'clonesTheirLook'
+    const RECOVERY_KEY = 'cloneRecovery'
+    const { safety, identity } = window.Alakazam
+    const equal = (a, b) =>
+        Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i])
 
     function el(id) {
         return document.getElementById(id)
@@ -83,19 +59,10 @@
     }
 
     function isOpen() {
-        return !!el('promptContentCustomizeYou')
+        return window.Alakazam.safety.ownsPrompt('clones', 'CustomizeYou')
     }
 
     //! Whose look it was
-
-    function rememberTheirs() {
-        if (store.get(THEIRS_KEY, undefined) !== undefined) return
-        const s = save.get()
-        const appearance = s.ok && s.run ? s.run.appearance : null
-        // null records "the game's default", which is nobody's choice and so
-        // nothing to put back
-        store.set(THEIRS_KEY, appearance && !isDefault(appearance) ? appearance.slice() : null)
-    }
 
     function theirs() {
         const held = store.get(THEIRS_KEY, null)
@@ -121,85 +88,132 @@
     //* step
     // one arrow click. Every gene change in this module goes through here, because
     // an arrow click is the only thing the game counts.
-    function step(gene, direction) {
+    function step(gene, direction, ctx) {
         const side = direction > 0 ? 'R' : 'L'
         const arrow = el(`customizerSelect-${side}-${GENES[gene]}`)
         if (!arrow) return false
-        simulateClick(arrow)
+        ctx.input('simulateClick', arrow)
         return true
     }
 
     //* walk
     // click toward a target appearance. Returns whether everything now matches,
     // so the caller can stop rather than carry on with a half-walked set.
-    function walk(target, budget) {
-        let clicks = 0
-        while (clicks < budget.left) {
+    async function walk(target, budget, ctx = safety.scope('clones'), mark = null) {
+        while (budget.left > 0) {
+            ctx.check()
             const genes = currentGenes()
-            if (!genes) return false
-
-            let moved = false
-            for (let gene = 0; gene < target.length; gene++) {
-                const steps = stepsTo(gene, genes[gene], target[gene])
-                if (steps === 0) continue
-                if (!step(gene, steps)) return false
-                clicks++
-                moved = true
-                break
-            }
-            if (!moved) {
-                budget.left -= clicks
-                return true
-            }
+            if (!genes || !safety.ownsPrompt('clones', 'CustomizeYou')) return false
+            if (mark && !equal(genes, mark.expected) && !equal(genes, mark.previous)) return false
+            const gene = target.findIndex((value, i) => value !== genes[i])
+            if (gene === -1) return true
+            const direction = Math.sign(stepsTo(gene, genes[gene], target[gene]))
+            if (!(await move(gene, direction, ctx, mark))) return false
+            budget.left--
         }
-        budget.left = 0
-        return false
+        return equal(currentGenes(), target)
     }
 
-    //! The sequence
+    async function move(gene, direction, ctx, mark) {
+        const before = currentGenes()
+        if (!before) return false
+        const next = before.slice()
+        const choices = window.Alakazam.data.clones.CHOICES[gene]
+        next[gene] = (next[gene] + direction + choices) % choices
+        const revision = safety.revision()
+        if (mark) {
+            mark.previous = before
+            mark.expected = next
+            store.set(RECOVERY_KEY, { ...mark })
+            if (!(await store.flush())) return false
+        }
+        ctx.check()
+        if (revision !== safety.revision() || !equal(currentGenes(), before)) return false
+        if (!safety.ownsPrompt('clones', 'CustomizeYou') || !step(gene, direction, ctx)) return false
+        return equal(currentGenes(), next)
+    }
 
-    function tick() {
-        if (done()) return
-        if (!ownsAYou()) return
+    async function restore(mark, ctx) {
+        const superseded = () => {
+            store.forget(RECOVERY_KEY)
+            store.set(DONE_KEY, true)
+            if (safety.ownsPrompt('clones', 'CustomizeYou')) {
+                ctx.input('simulateClick', el('promptOption0'))
+            }
+            return false
+        }
+        if (store.get(RECOVERY_KEY, null)?.intervened) return superseded()
+        if (!safety.ownsPrompt('clones', 'CustomizeYou')) return false
+        const live = currentGenes()
+        if (!live) return false
+        if (!equal(live, mark.expected) && !equal(live, mark.previous)) {
+            // the player's intervening look supersedes our undo record
+            return superseded()
+        }
+        if (!(await walk(mark.original, { left: MAX_CLICKS }, ctx, mark))) return false
+        if (!equal(currentGenes(), mark.original)) return false
+        store.forget(RECOVERY_KEY)
+        if (mark.earned) store.set(DONE_KEY, true)
+        ctx.input('simulateClick', el('promptOption0'))
+        return true
+    }
 
-        rememberTheirs()
-
-        if (!isOpen()) {
+    async function tick() {
+        const ctx = safety.scope('clones')
+        const who = identity.current()
+        if (!who.known) return
+        let mark = store.get(RECOVERY_KEY, null)
+        if (!mark && (done() || !ownsAYou())) return
+        if (mark && mark.legacyId !== who.legacyId) return
+        if (safety.prompt() && !safety.ownsPrompt('clones', 'CustomizeYou')) return
+        if (!safety.prompt()) {
             const button = customizeButton()
             if (!button) return
             simulateClick(button)
         }
-        // Game.Prompt builds its content there and then, so if the panel is not up
-        // now the click did not land. Try again on the next tick rather than
-        // clicking arrows that are not there.
-        if (!isOpen()) return
-
-        const budget = { left: MAX_CLICKS }
-        if (!walk(LIKENESS, budget)) return
-
-        // The whole set already matches, so these two clicks are the ones the game
-        // checks against. Two rather than one so the appearance is left exactly
-        // where it was, and on a gene the achievement does not care about so
-        // neither click can break the match.
-        step(FREE_GENE, 1)
-        step(FREE_GENE, -1)
-        console.log('Alakazam: styled the clones after a grandma for "In her likeness".')
-
-        const back = theirs()
-        walk(back || PRESET, budget)
-
-        // #promptOption0 on this prompt is its only option, "Done"
-        const close = el('promptOption0')
-        if (close) simulateClick(close)
-        store.set(DONE_KEY, true)
-        console.log(
-            back
-                ? 'Alakazam: put your clones back the way you had them.'
-                : 'Alakazam: clone appearance set. It is yours to change from here on.'
-        )
+        if (!safety.ownsPrompt('clones', 'CustomizeYou')) return
+        if (mark) {
+            await ctx.cleanup(() => restore(mark, ctx))
+            return
+        }
+        const original = currentGenes()
+        if (!original) return
+        // the save's appearance can be minutes old; only the open customizer is live
+        store.set(THEIRS_KEY, original.slice())
+        mark = {
+            legacyId: who.legacyId,
+            original: original.slice(),
+            expected: original.slice(),
+            previous: original.slice()
+        }
+        store.set(RECOVERY_KEY, { ...mark })
+        try {
+            if (!(await store.flush())) return false
+            ctx.check()
+            const budget = { left: MAX_CLICKS }
+            if (!(await walk(LIKENESS, budget, ctx, mark))) return
+            // the game checks this achievement only inside an arrow handler
+            if (!(await move(FREE_GENE, 1, ctx, mark))) return
+            if (!(await move(FREE_GENE, -1, ctx, mark))) return
+            mark.earned = true
+            store.set(RECOVERY_KEY, { ...mark })
+        } finally {
+            await ctx.cleanup(() => restore(mark, ctx))
+        }
     }
 
-    registry.register({ name: 'clones', interval: INTERVAL_MS, tick })
+    async function recover() {
+        const mark = store.get(RECOVERY_KEY, null)
+        const who = identity.current()
+        if (!mark || !who.known || mark.legacyId !== who.legacyId || safety.prompt()) return
+        const ctx = safety.context('clones')
+        await ctx.cleanup(async () => {
+            ctx.input('simulateClick', customizeButton())
+            await restore(mark, ctx)
+        })
+    }
 
-    window.Alakazam.clones = { currentGenes, walk, ownsAYou, theirs, tick }
+    registry.register({ name: 'clones', interval: INTERVAL_MS, setup: recover, tick })
+
+    window.Alakazam.clones = { currentGenes, walk, ownsAYou, theirs, tick, recover }
 })()

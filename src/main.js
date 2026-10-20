@@ -40,7 +40,7 @@
         // the seed and bakery name stay out of the log: only the derived ids
         console.log(`Alakazam: save ${who.legacyId}, run ${who.runId}, ${who.ascensions} ascension(s)`)
 
-        await store.ready(who.legacyId)
+        await store.ready(who.legacyId, who.previousLegacyId)
         await scheduler.start()
     }
 })()

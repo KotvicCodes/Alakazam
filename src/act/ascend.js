@@ -22,7 +22,6 @@
     // #promptContentAscend. So every confirm here names the prompt it expects and
     // refuses to click when that prompt is not the one on screen.
 
-    const { simulateClick } = window.Alakazam.input
     const { parseGameNumber } = window.Alakazam.parse
 
     //* Prompts we are willing to confirm
@@ -75,30 +74,99 @@
 
     function promptIs(which) {
         const id = PROMPTS[which]
-        return !!(id && el(id))
+        const node = window.Alakazam.safety.prompt()
+        return !!(id && node && node.id === id)
     }
 
     //* confirmPrompt
     // click the confirm option, but only when the prompt on screen is the one named.
     // returns false rather than clicking anything when it is not.
-    function confirmPrompt(which) {
-        return clickOption(which, 'promptOption0')
+    function confirmPrompt(which, ctx = window.Alakazam.safety.context('ascend')) {
+        return clickOption(which, 'promptOption0', ctx)
     }
 
     //* cancelPrompt
     // the second option, which every prompt the sequence opens uses for Cancel or
     // No. Backing out has to be possible: a picker with nothing worth picking would
     // otherwise sit open forever, and everything else waits behind it.
-    function cancelPrompt(which) {
-        return clickOption(which, 'promptOption1')
+    function cancelPrompt(which, ctx = window.Alakazam.safety.context('ascend')) {
+        return clickOption(which, 'promptOption1', ctx)
     }
 
-    function clickOption(which, id) {
-        if (!promptIs(which)) return false
+    function clickOption(which, id, ctx) {
+        if (!promptIs(which) || !window.Alakazam.safety.ownsPrompt(ctx.owner, PROMPTS[which].slice(13)))
+            return false
         const option = el(id)
         if (!option) return false
-        simulateClick(option)
+        ctx.input('simulateClick', option)
         return true
+    }
+
+    //* liveHoard
+    // Export save renders Game.WriteSave(1) into a read-only textarea. Reading
+    // that UI gives a live snapshot without calling game APIs or trusting autosave.
+    function liveHoard(ctx = window.Alakazam.safety.context('ascend')) {
+        ctx.check()
+        if (window.Alakazam.safety.prompt()) return null
+        const prefs = el('prefsButton')
+        if (!prefs) return null
+        const previous = ['prefsButton', 'statsButton', 'logButton']
+            .map(el)
+            .find(node => node && node.classList.contains('selected'))
+        let opened = false
+        try {
+            if (previous !== prefs) {
+                ctx.input('simulateClick', prefs)
+                opened = true
+            }
+            const button = Array.from(document.querySelectorAll('#menu a.option')).find(node =>
+                /Game\.ExportSave\(\)/.test(
+                    node.getAttribute('onclick') || node.getAttribute('ontouchend') || ''
+                )
+            )
+            if (!button) return null
+            const requestedAt = Date.now()
+            ctx.input('simulateClick', button)
+            if (!window.Alakazam.safety.ownsPrompt('ascend', 'ExportSave')) return null
+            const field = el('textareaPrompt')
+            if (!field) return null
+            const { savefile, identity } = window.Alakazam
+            const snapshot = savefile.parse(savefile.decode(field.value))
+            const who = identity.fromSave(snapshot)
+            const current = identity.current()
+            if (
+                !snapshot.ok ||
+                snapshot.stale ||
+                !snapshot.scalars ||
+                !who.known ||
+                who.runId !== current.runId ||
+                who.legacyId !== current.legacyId ||
+                Math.abs(requestedAt - snapshot.run.lastDate) > 2000
+            )
+                return null
+            const s = snapshot.scalars
+            if (
+                ![s.wrinklersAmount, s.wrinklersShinyAmount, s.wrinklersNumber, s.wrinklersShiny].every(
+                    value => Number.isFinite(value) && value >= 0
+                )
+            )
+                return null
+            return {
+                at: requestedAt,
+                runId: who.runId,
+                hoard: s.wrinklersAmount + s.wrinklersShinyAmount,
+                active: s.wrinklersNumber + s.wrinklersShiny
+            }
+        } finally {
+            ctx.cleanup(() => {
+                if (window.Alakazam.safety.ownsPrompt('ascend', 'ExportSave')) {
+                    ctx.input('simulateClick', el('promptOption0'))
+                }
+                if (opened && !window.Alakazam.safety.prompt() && prefs.classList.contains('selected')) {
+                    ctx.input('simulateClick', previous || prefs)
+                }
+            })
+        }
     }
 
     //! Leaving the run
@@ -107,10 +175,10 @@
     // the Legacy button in the corner, which opens the Ascend prompt. It does not
     // ascend on its own: the prompt still has to be confirmed, which is the second
     // step and a separate call.
-    function openLegacy() {
+    function openLegacy(ctx = window.Alakazam.safety.context('ascend')) {
         const button = el('legacyButton')
         if (!button) return false
-        simulateClick(button)
+        ctx.input('simulateClick', button)
         return true
     }
 
@@ -192,9 +260,9 @@
         return out
     }
 
-    function buy(crate) {
+    function buy(crate, ctx = window.Alakazam.safety.context('ascend')) {
         if (!crate || !crate.element) return false
-        simulateClick(crate.element)
+        ctx.input('simulateClick', crate.element)
         return true
     }
 
@@ -215,24 +283,25 @@
         return out
     }
 
-    function pickPermanent(choice) {
+    function pickPermanent(choice, ctx = window.Alakazam.safety.context('ascend')) {
         if (!choice || !choice.element) return false
-        simulateClick(choice.element)
+        ctx.input('simulateClick', choice.element)
         return true
     }
 
     //! Coming back
 
-    function reincarnate() {
+    function reincarnate(ctx = window.Alakazam.safety.context('ascend')) {
         const button = el('ascendButton')
         if (!button) return false
-        simulateClick(button)
+        ctx.input('simulateClick', button)
         return true
     }
 
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.act = window.Alakazam.act || {}
     window.Alakazam.act.ascend = {
+        liveHoard,
         screen,
         onAscendScreen,
         animating,

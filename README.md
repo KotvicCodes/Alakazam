@@ -37,7 +37,7 @@ exercised without a browser.
 
 ## Todo
 - Pop wrinklers automatically (they are drawn on a canvas, so this needs hit-testing).
-  This is the one that now costs something: every ascension throws the hoard away
+  Auto-ascension waits for collection or an explicit discard for that ascent.
 - Golden cookie combos, which are the largest single source of cookies in the game
 - Cookie-dunker, which needs the cookie to physically reach the milk
 
@@ -99,11 +99,16 @@ every couple of seconds.
 
 The save lags: the game writes it on autosave, up to 60 seconds behind. So it is
 used only for slow, structural state. Anything Alakazam spends cookies on is read
-live from the DOM.
+live from the DOM. Before loans or ascent, the planner reads a newly generated
+Export Save through the game UI to verify the live wrinkler hoard. A valuable
+hoard visibly defers automation until collected or explicitly discarded for the
+current decision; discard consent is never saved across reloads.
 
 **Your data stays yours.** The raw save string is never logged, never stored
 verbatim, and never leaves your machine. Your bakery name is treated as user data.
-The per-save identifier Alakazam remembers you by is a hash, not the values.
+The per-save identifier is a hash of the legacy creation time and survives seed
+changes. Temporary undo records hold the original bakery name and clone genes
+until restoration succeeds or a newer player edit supersedes them.
 
 ## Architecture
 Content scripts sharing one global (`window.Alakazam`), loaded in the order
@@ -115,9 +120,12 @@ registers itself, so adding one is a file and a manifest line.
   scalars, per-building records, the upgrade and achievement bitfields, and the
   garden / stock market / pantheon / grimoire sub-saves. Version gated.
 - `src/core/identity.js` — a stable per-save `legacyId` and per-ascension `runId`,
-  hashed from the save's seed and timestamps.
+  based on the legacy creation time and the run's seed and timestamp.
 - `src/core/store.js` — `chrome.storage.local`, namespaced per save. Also the
   bridge to the popup, so there is no background worker.
+- `src/core/safety.js` — cancellation generations and shared UI ownership. Every
+  routine checks its operation before input and after waits. Cleanup can restore
+  owned controls while paused; foreign prompts and newer player edits win.
 - `src/core/registry.js` / `scheduler.js` — modules self-register with their own
   cadence. One frame loop and one millisecond driver run all of them, isolating
   failures and budgeting clicks.

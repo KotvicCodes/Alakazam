@@ -19,9 +19,11 @@
     // and reading what the game says. That is a handful of hovers every few
     // minutes, on the cold path, behind the same mutex as everything else.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('garden')
     const { catalog, save, store, registry } = window.Alakazam
     const plants = window.Alakazam.data.plants
+
+    const tooltip = window.Alakazam.safety.bind('garden', catalog)
 
     const INTERVAL_MS = 20000
     const SIZE = 6
@@ -117,7 +119,7 @@
 
         const el = tileEl(tile.x, tile.y)
         if (!el) return false
-        const tip = await catalog.readTooltip(el)
+        const tip = await tooltip.readTooltip(el)
         if (!tip) return false
 
         // the game names the stage in the tile tooltip. anything that is not
@@ -141,10 +143,49 @@
         return null
     }
 
+    function selectedSeed() {
+        return document.querySelector('.gardenSeed.on')
+    }
+
+    function withSeed(seed, body) {
+        const { safety } = window.Alakazam
+        const ctx = safety.scope('garden')
+        ctx.check()
+        const lease = safety.acquire('gardenSeed', 'garden')
+        if (!lease) return false
+        const previous = selectedSeed()
+        let after = previous
+        try {
+            if (previous !== seed) {
+                if (previous) ctx.input('simulateClick', previous)
+                if (seed) ctx.input('simulateClick', seed)
+            }
+            if (selectedSeed() !== seed) return false
+            after = selectedSeed()
+            const result = body()
+            after = selectedSeed() // successful planting normally deselects the seed
+            return result
+        } finally {
+            try {
+                if (lease.valid() && selectedSeed() === after) {
+                    ctx.cleanup(() => {
+                        const current = selectedSeed()
+                        if (current !== previous) {
+                            if (current) ctx.input('simulateClick', current)
+                            if (previous) ctx.input('simulateClick', previous)
+                        }
+                    })
+                }
+            } finally {
+                lease.release()
+            }
+        }
+    }
+
     async function harvest(tile, why) {
         const el = tileEl(tile.x, tile.y)
         if (!el) return false
-        simulateClick(el)
+        if (!withSeed(null, () => simulateClick(el))) return false
         stageCache.delete(`${tile.x},${tile.y}`)
         store.update('gardenHarvests', 0, n => n + 1)
         console.log(`Alakazam: harvesting ${tile.plant.name} at ${tile.x},${tile.y} (${why})`)
@@ -162,9 +203,7 @@
         const el = tileEl(tile.x, tile.y)
         if (!seed || !el) return false
         if (seed.classList && seed.classList.contains('locked')) return false
-        simulateClick(seed)
-        simulateClick(el)
-        return true
+        return withSeed(seed, () => simulateClick(el))
     }
 
     //* preferWoodChips
@@ -224,5 +263,5 @@
 
     registry.register({ name: 'garden', interval: INTERVAL_MS, tick })
 
-    window.Alakazam.garden = { state, nextGoal, worthHarvesting }
+    window.Alakazam.garden = { state, nextGoal, worthHarvesting, withSeed, plantAt }
 })()

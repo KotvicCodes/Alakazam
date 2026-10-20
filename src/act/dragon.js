@@ -35,7 +35,7 @@
     // scheduler still for the moment this takes, and every open here is verified
     // against what actually appeared rather than assumed.
 
-    const { simulateClick, simulateClickAt } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.input
 
     // the last tab's centre, in the canvas's own pixels
     const TAB_X = 24
@@ -97,13 +97,14 @@
     //* open
     // click the tab and check. Returns false rather than clicking twice when nothing
     // appeared: a second click on a tab that did open would close it again.
-    async function open() {
+    async function open(ctx = window.Alakazam.safety.context('dragon')) {
         if (panelOpen()) return true
         const cv = canvas()
         if (!cv) return false
         const { x, y } = tabPoint(cv)
-        simulateClickAt(cv, x, y)
+        ctx.input('simulateClickAt', cv, x, y)
         await wait(DRAW_MS)
+        ctx.check()
         return panelOpen()
     }
 
@@ -111,6 +112,7 @@
     // through the popup's own close button, which is an element and cannot be
     // mistimed, rather than a second canvas click
     async function close() {
+        if (!panelOpen()) return false
         const popup = el('specialPopup')
         const button = popup && popup.querySelector ? popup.querySelector('.close') : null
         if (!button) return false
@@ -138,10 +140,10 @@
 
     //* train
     // one level, and only when the game says it is paid for
-    function train() {
+    function train(ctx = window.Alakazam.safety.context('dragon')) {
         const step = nextStep()
         if (!step || !step.affordable) return false
-        return simulateClick(step.element)
+        return ctx.input('simulateClick', step.element)
     }
 
     //* auraCrate
@@ -158,7 +160,7 @@
     }
 
     function pickerOpen() {
-        return !!el(AURA_PROMPT)
+        return window.Alakazam.safety.ownsPrompt('dragon', AURA_PROMPT.slice(13))
     }
 
     //* choices
@@ -183,52 +185,56 @@
     //
     // The confirm is guarded the way act/ascend.js guards its own: #promptOption0 is
     // whatever prompt happens to be open, so the prompt has to name itself first.
-    async function setAura(auraId, slot) {
+    async function setAura(auraId, slot, ctx = window.Alakazam.safety.context('dragon')) {
         if (!panelOpen()) return false
 
         if (!pickerOpen()) {
             const crate = auraCrate(slot)
             if (!crate) return false
-            simulateClick(crate)
+            ctx.input('simulateClick', crate)
             await wait(DRAW_MS)
+            ctx.check()
             if (!pickerOpen()) return false
         }
 
         const choice = choices().find(c => c.aura === auraId && c.slot === slot)
         if (!choice) {
-            await cancel()
+            await cancel(ctx)
             return false
         }
-        simulateClick(choice.element)
+        ctx.input('simulateClick', choice.element)
         // picking redraws the prompt, so nothing read before this point is still live
         await wait(DRAW_MS)
+        ctx.check()
 
         if (!pickerOpen()) return false
         const confirm = el('promptOption0')
         if (!confirm) return false
-        simulateClick(confirm)
+        ctx.input('simulateClick', confirm)
         await wait(DRAW_MS)
+        ctx.check()
         return !pickerOpen()
     }
 
     //* cancel
     // the picker's second option. Used when the aura we wanted is not on offer,
     // which means the dragon knows less than the save said it did.
-    async function cancel() {
+    async function cancel(ctx = window.Alakazam.safety.context('dragon')) {
         if (!pickerOpen()) return false
         const button = el('promptOption1')
         if (!button) return false
-        simulateClick(button)
+        ctx.input('simulateClick', button)
         await wait(DRAW_MS)
+        ctx.check()
         return !pickerOpen()
     }
 
     //* pet
     // one scratch. The drop roll is the game's, one in twenty, and it only happens
     // at all once the dragon is grown enough for it.
-    function pet() {
+    function pet(ctx = window.Alakazam.safety.context('dragon')) {
         if (!panelOpen()) return false
-        return simulateClick(el('specialPic'))
+        return ctx.input('simulateClick', el('specialPic'))
     }
 
     window.Alakazam = window.Alakazam || {}

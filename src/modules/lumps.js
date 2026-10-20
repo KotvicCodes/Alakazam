@@ -29,7 +29,7 @@
     // that survives a game patch (the bitfield is by upgrade id, and ids move), so
     // the schedule is measured off the lump itself instead. See lifeSpan below.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('lumps')
     const { save, store, registry } = window.Alakazam
 
     const INTERVAL_MS = 30000
@@ -280,11 +280,12 @@
     // it belongs to: the game builds it into the building's own row, over on the
     // other side of the page, so looking for it inside the store listing finds
     // nothing and no lump was ever spent. It is addressed by id instead.
-    function levelUp(index) {
+    async function levelUp(index) {
         const badge = el('productLevel' + index)
         if (!badge) return false
         simulateClick(badge)
-        setTimeout(confirmSpend, 120)
+        await window.Alakazam.safety.wait('lumps', 120)
+        confirmSpend()
         return true
     }
 
@@ -300,7 +301,7 @@
         return s.scalars.lumps
     }
 
-    function tick() {
+    async function tick() {
         const lump = lumpState()
         if (lump) {
             window.__alakazam.lumps = lump
@@ -322,7 +323,7 @@
         const spend = nextSpend(held)
         if (spend) {
             console.log(`Alakazam: levelling ${spend.name} for ${spend.cost} sugar lumps (${spend.why})`)
-            levelUp(spend.index)
+            await levelUp(spend.index)
         }
     }
 

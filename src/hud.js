@@ -416,6 +416,10 @@
             html += section('ascension')
             if (debug.ascend.blocked) {
                 html += row('status', debug.ascend.blocked, true)
+                if (debug.ascend.hoardBlocked) {
+                    html += row('hoard at risk', format(debug.ascend.wrinklerHoard), true)
+                    html += '<button class="az-discard-hoard">Discard hoard for this ascent</button>'
+                }
             } else {
                 html += row('prestige', `${format(debug.ascend.current)} lvl`)
                 html += row('chips banked', format(debug.ascend.chipsBanked))
@@ -478,6 +482,14 @@
     function render() {
         if (!body) return
         body.innerHTML = toggles() + summary()
+        const discard = body.querySelector('.az-discard-hoard')
+        if (discard) {
+            const decisionId = window.__alakazam.ascend.decisionId
+            discard.addEventListener('click', () => {
+                window.Alakazam.ascend.discardHoard(decisionId)
+                render()
+            })
+        }
         for (const node of body.querySelectorAll('.az-tog')) {
             node.addEventListener('click', () => {
                 const key = node.getAttribute('data-key')

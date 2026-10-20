@@ -23,7 +23,7 @@
     //     magic accumulates fastest when the bar is already high. Spending down to
     //     empty is the slowest possible way to run the minigame.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('grimoire')
     const { parseGameNumber } = window.Alakazam.parse
     const { live, save, store, registry } = window.Alakazam
 

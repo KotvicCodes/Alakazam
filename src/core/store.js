@@ -15,7 +15,8 @@
     // chrome.storage.onChanged doubles as the bridge to the popup, which means no
     // background service worker and no message passing is needed anywhere.
     //
-    // Nothing here ever stores raw game data: only our own derived state.
+    // Temporary cosmetic undo records also hold the original name or genes until
+    // restoration succeeds or a newer player edit supersedes them.
 
     const FLUSH_DELAY_MS = 500
     const SETTINGS_KEY = 'settings'
@@ -65,14 +66,16 @@
     //* ready
     // fills the cache for one save file. safe to call again when the player
     // ascends into a new run: the legacy id only changes when the save changes.
-    async function ready(legacyId) {
+    async function ready(legacyId, previousLegacyId) {
         namespace = 'legacy:' + (legacyId || 'unknown')
         const api = backend()
         if (!api) {
             loaded = true
             return
         }
+        const previous = previousLegacyId ? 'legacy:' + previousLegacyId : null
         const wanted = [SETTINGS_KEY, namespace]
+        if (previous) wanted.push(previous)
         const got = await new Promise(resolve => {
             try {
                 api.get(wanted, resolve)
@@ -81,7 +84,8 @@
             }
         })
         settings = { ...DEFAULTS, ...(got[SETTINGS_KEY] || {}) }
-        cache = got[namespace] || {}
+        cache = got[namespace] || (previous && got[previous]) || {}
+        if (!got[namespace] && previous && got[previous]) markDirty(namespace)
         loaded = true
         listen()
     }
@@ -148,23 +152,31 @@
     }
 
     //* flush
-    // writes whatever changed since the last flush. resolves even without a
-    // storage backend so callers can always await it.
+    // cosmetic mutations require a confirmed durable undo record before proceeding.
     function flush() {
         const api = backend()
         const pending = dirty
         dirty = new Set()
-        if (!api || pending.size === 0) return Promise.resolve()
+        if (pending.size === 0) return Promise.resolve(true)
+        const failed = () => {
+            for (const key of pending) dirty.add(key)
+            return false
+        }
+        if (!api) return Promise.resolve(failed())
 
         const payload = {}
-        if (pending.has(SETTINGS_KEY)) payload[SETTINGS_KEY] = settings
-        if (pending.has(namespace)) payload[namespace] = cache
+        if (pending.has(SETTINGS_KEY)) payload[SETTINGS_KEY] = { ...settings }
+        if (pending.has(namespace)) payload[namespace] = { ...cache }
 
         return new Promise(resolve => {
             try {
-                api.set(payload, resolve)
+                api.set(payload, () => {
+                    const error =
+                        typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError
+                    resolve(error ? failed() : true)
+                })
             } catch (err) {
-                resolve()
+                resolve(failed())
             }
         })
     }

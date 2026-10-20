@@ -27,14 +27,14 @@ function boot(opts = {}) {
             local: {
                 get: (keys, cb) => {
                     const o = {}
-                    for (const k of keys) if (k in disk) o[k] = disk[k]
+                    for (const k of keys) if (k in disk) o[k] = structuredClone(disk[k])
                     cb(o)
                 },
                 set: (obj, cb) => {
                     const changes = {}
                     for (const k in obj) {
                         changes[k] = { oldValue: disk[k], newValue: obj[k] }
-                        disk[k] = obj[k]
+                        disk[k] = structuredClone(obj[k])
                     }
                     storageListeners.forEach(fn => fn(changes, 'local'))
                     cb && cb()
@@ -92,6 +92,30 @@ function boot(opts = {}) {
 
     for (const f of files) {
         vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f })
+    }
+
+    const { savefile } = ctx.window.Alakazam
+    const initial = savefile.read()
+    const scalar = initial.scalars || {}
+    g.state.wrinklerHoard = scalar.wrinklersAmount || 0
+    g.state.wrinklers = scalar.wrinklersNumber || 0
+    g.state.shinyHoard = scalar.wrinklersShinyAmount || 0
+    g.state.shinyWrinklers = scalar.wrinklersShiny || 0
+    g.state.exportSave = () => {
+        const fx = require('./fixtures')
+        const decoded = savefile.decode(opts.save || fx.save().raw)
+        const sections = decoded.split('|')
+        const run = sections[2].split(';')
+        run[2] = String(Date.now())
+        run[5] = g.state.genes.join(',')
+        sections[2] = run.join(';')
+        const scalars = sections[4].split(';')
+        scalars[23] = g.state.wrinklerHoard
+        scalars[24] = g.state.wrinklers
+        scalars[40] = g.state.shinyWrinklers
+        scalars[41] = g.state.shinyHoard
+        sections[4] = scalars.join(';')
+        return fx.encode(sections.join('|'))
     }
 
     return {
