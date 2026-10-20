@@ -141,6 +141,32 @@ test('a cancelled switch restored before redraw does not stall subsequent purcha
     await sleep(180)
 })
 
+test('player controls changed between transactions replace the pending restoration redraw', async () => {
+    for (const settled of [false, true]) {
+        const h = boot({ game: { bank: 1e6, crates: [] } })
+        click(h, 'storeBulkSell')
+        click(h, 'storeBulk10')
+        slowStore(h, 40)
+        await purchaseTick(h)
+        await sleep(60)
+        assert.equal(h.game.state.mode, 'sell')
+        assert.equal(h.game.state.amount, 10)
+
+        click(h, 'storeBulkBuy')
+        click(h, 'storeBulk1')
+        if (settled) await sleep(60)
+        const purchases = () => h.game.state.log.filter(s => /^buy /.test(s)).length
+        const before = purchases()
+        await purchaseTick(h)
+        assert.equal(purchases(), before + 1)
+        await purchaseTick(h)
+        assert.equal(purchases(), before + 2)
+        assert.equal(h.game.state.mode, 'buy')
+        assert.equal(h.game.state.amount, 1)
+        await sleep(60)
+    }
+})
+
 test('the available balance is checked again after changing purchase quantity', async () => {
     const h = boot({ game: { bank: 5000, crates: [] } })
     slowStore(h)
@@ -235,6 +261,27 @@ test('unobserved lump spends are reserved until autosave reconciles them', async
     assert.equal(h.game.state.lumps, 100)
 })
 
+test('autosave releases a lump ceiling left below the balance by harvesting and spending', async () => {
+    const h = lumpsBoot()
+    const saved = h.A.save.get()
+    saved.scalars.lumpT = Date.now() - 23.5 * 3600000
+    // Harvesting changes the game balance before its next displayed update.
+    h.game.doc.getElementById('lumps').listeners.click = [() => h.game.state.lumps++]
+    await lumpTick(h)
+    assert.equal(h.game.state.lumps, 101)
+    assert.equal(h.game.state.levels[1], 2)
+
+    h.game.state.lumps = 104
+    h.game.doc.getElementById('lumpsAmount').innerText = '104'
+    await lumpTick(h)
+    assert.equal(h.game.state.levels[1], 2, 'unacknowledged spends remain reserved')
+    saved.buildings[1].level = 2
+    saved.scalars.lumps = 104
+    await lumpTick(h)
+    assert.equal(h.game.state.levels[1], 3)
+    assert.equal(h.game.state.lumps, 101)
+})
+
 test('early minigame unlocks may intentionally spend below the reserve', async () => {
     const h = lumpsBoot({ lumps: 1, levels: {} })
     await lumpTick(h)
@@ -271,7 +318,7 @@ test('lump confirmation rechecks changed balances, levels, costs and settings', 
     }
 })
 
-function marketBoot(goods) {
+function marketBoot(goods, { hoverRedraw = false } = {}) {
     const h = boot({
         save: fx.save({
             rawCps: 10,
@@ -282,23 +329,38 @@ function marketBoot(goods) {
         game: { bank: 1e6 }
     })
     goods.forEach((good, id) => {
+        const row = new El('div', { id: `bankGood-${id}` })
+        h.game.doc.body.append(row)
         const add = (suffix, text) => {
             const node = new El('div', { id: `bankGood-${id}${suffix}`, text: String(text) })
-            h.game.doc.body.append(node)
+            row.append(node)
             return node
         }
-        add('-stock', good.stock || 0)
+        let held = good.stock || 0
+        const stock = add('-stock', held)
         add('-stockMax', '/' + (good.capacity || 10))
         add('-val', '$' + good.val)
+        const draw = () => {
+            stock.innerText = String(held)
+        }
+        if (hoverRedraw) {
+            // The real market only draws changed holdings when its graph is dirty.
+            // Start hovered so a repeated mouseover alone cannot request a redraw.
+            let hovered = true
+            row.addEventListener('mouseout', () => {
+                hovered = false
+            })
+            row.addEventListener('mouseover', () => {
+                if (!hovered) setTimeout(draw, good.delay || 25)
+                hovered = true
+            })
+        }
         const execute = selling => {
             h.game.state.log.push(`attempt ${selling ? 'sell' : 'buy'} ${id}`)
             if (good.refused) return
-            const node = h.game.doc.getElementById(`bankGood-${id}-stock`)
-            const held = Number(node.innerText)
             const quantity = selling ? -held : Math.min(good.fill ?? 100, good.capacity - held)
-            const draw = () => {
-                node.innerText = String(held + quantity)
-            }
+            held += quantity
+            if (hoverRedraw) return
             if (good.delay) setTimeout(draw, good.delay)
             else draw()
         }
@@ -308,6 +370,23 @@ function marketBoot(goods) {
     return h
 }
 const marketTick = h => h.A.registry.get('market').tick()
+
+test('market trades request a holdings redraw before retrying or starting cooldown', async () => {
+    for (const selling of [false, true]) {
+        const h = marketBoot(
+            [
+                { val: 1, mode: selling ? 4 : 3, stock: selling ? 8 : 0, capacity: 1000 },
+                { val: 5, mode: 3, stock: 0, capacity: 10 }
+            ],
+            { hoverRedraw: true }
+        )
+        await marketTick(h)
+        assert.deepEqual(h.game.state.log, [`attempt ${selling ? 'sell' : 'buy'} 0`])
+        assert.equal(h.game.doc.getElementById('bankGood-0-stock').innerText, selling ? '0' : '100')
+        await marketTick(h)
+        assert.equal(h.game.state.log.length, 1, 'the observed fill starts cooldown')
+    }
+})
 
 test('full Cereals at 91/91 cannot starve Chocolate at 0/10', async () => {
     const h = marketBoot([

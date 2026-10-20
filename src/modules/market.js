@@ -14,7 +14,7 @@
     // Trading is on by default. Switch it off and the module keeps watching and
     // reporting its signals to the HUD without touching your money.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick, hoverOn, hoverOff } = window.Alakazam.input
     const { save, store, registry } = window.Alakazam
 
     const INTERVAL_MS = 15000
@@ -159,10 +159,21 @@
             if (!executable) continue
             attempts++
             simulateClick(executable.button)
-            const filled = await window.Alakazam.transactions.until(lease, () => {
-                const current = holdings(good.id)
-                return selling ? current < executable.stock : current > executable.stock
-            })
+            // Trading changes internal holdings without dirtying the market graph.
+            // Enter the row again to request its normal DOM redraw, including when
+            // the pointer was already over this good before the trade.
+            const row = document.getElementById(`bankGood-${good.id}`) || executable.button
+            hoverOff(row)
+            hoverOn(row)
+            let filled
+            try {
+                filled = await window.Alakazam.transactions.until(lease, () => {
+                    const current = holdings(good.id)
+                    return selling ? current < executable.stock : current > executable.stock
+                })
+            } finally {
+                hoverOff(row)
+            }
             const current = holdings(good.id)
             const executed = selling ? current < executable.stock : current > executable.stock
             if (!filled && !executed) continue

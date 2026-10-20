@@ -98,8 +98,8 @@
         redraw = null
     }
 
-    function change(mode, amount) {
-        const changed = currentMode() !== mode || currentAmount() !== amount
+    function change(mode, amount, refresh = false) {
+        const changed = refresh || currentMode() !== mode || currentAmount() !== amount
         if (changed) {
             clearRedraw()
             const pending = { before: prices(), mode, amount, drawn: false }
@@ -125,12 +125,18 @@
         }
         // mode first: the game converts Sell/all to Buy/100 automatically
         if (currentMode() !== mode) setMode(mode)
-        if (currentAmount() !== amount) setAmount(amount)
+        if (refresh || currentAmount() !== amount) setAmount(amount)
     }
 
     async function ready(lease) {
         if (!lease.valid()) return false
         if (!redraw) return true
+        if (currentMode() !== redraw.mode || currentAmount() !== redraw.amount) {
+            // The player can change controls after a transaction releases its lease.
+            // Reapply their current quantity to request a fresh draw, even if the
+            // earlier restoration already drew identical prices.
+            change(currentMode(), currentAmount(), true)
+        }
         const pending = redraw
         const drawn = await window.Alakazam.transactions.until(lease, () => {
             if (currentMode() !== pending.mode || currentAmount() !== pending.amount) return false

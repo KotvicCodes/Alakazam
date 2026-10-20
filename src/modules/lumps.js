@@ -78,13 +78,21 @@
     const pending = []
     let balanceCeiling = Infinity
 
-    function levels() {
-        const s = save.get()
-        if (!s.ok || !s.buildings) return []
+    function reconcile(s) {
+        if (!s.ok || !s.buildings) return
         // once autosave contains a spend, it no longer needs reconciliation
         for (let i = pending.length - 1; i >= 0; i--) {
             if (s.buildings[pending[i].index]?.level >= pending[i].level) pending.splice(i, 1)
         }
+        // A harvest may leave the live balance above our conservative ceiling.
+        // Once all spends are saved, that ceiling must not hide future earnings.
+        if (!pending.length) balanceCeiling = Infinity
+    }
+
+    function levels() {
+        const s = save.get()
+        if (!s.ok || !s.buildings) return []
+        reconcile(s)
         return s.buildings.map(b => {
             const badge = el('productLevel' + b.id)
             const liveLevel = badge ? window.Alakazam.parse.firstNumberIn(badge.innerText) : NaN
@@ -356,6 +364,7 @@
     // spends so repeated ticks cannot spend the same lumps twice.
     function banked() {
         const s = save.get()
+        reconcile(s)
         const node = el('lumpsAmount')
         const live = node ? window.Alakazam.parse.firstNumberIn(node.innerText) : NaN
         if (Number.isFinite(live) && live >= 0) {
