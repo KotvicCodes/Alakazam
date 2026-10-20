@@ -35,6 +35,21 @@ function register(h, name, tick) {
     return h.A.registry.get(name)
 }
 
+// The game save and extension storage advance independently. Save only when the
+// test requests it, including while a temporary cosmetic value is live.
+function autosave(h) {
+    const { savefile } = h.A
+    const sections = savefile.decode(h.ctx.localStorage.getItem(savefile.SAVE_KEY)).split('|')
+    const run = sections[2].split(';')
+    run[2] = String(Date.now())
+    if (h.game.state.bakeryName !== undefined) run[3] = h.game.state.bakeryName
+    run[5] = h.game.state.genes.join(',')
+    sections[2] = run.join(';')
+    const raw = fx.encode(sections.join('|'))
+    h.ctx.localStorage = { getItem: key => (key === savefile.SAVE_KEY ? raw : null) }
+    return raw
+}
+
 for (const cancel of ['pause', 'stop', 'master', 'module']) {
     test(`${cancel} during a bulk redraw cancels spending and restores controls`, async () => {
         const h = await ready({ game: { bank: 1e9 } })
@@ -283,6 +298,9 @@ test('God complex restores the live name rather than the old autosave or brandin
     })
     await nameRoutine(h)
     assert.equal(h.game.state.bakeryName, 'My live bakery')
+    assert.ok(h.A.store.get('bakeryNameRecovery', null), 'the save still has the old name')
+    autosave(h)
+    h.A.achievements.recoverName()
     assert.equal(h.A.store.get('bakeryNameRecovery', null), null)
     assert.equal(h.A.safety.prompt(), null)
 })
@@ -355,12 +373,18 @@ test('clone styling restores the exact live snapshot, even when the save records
     assert.deepEqual(h.game.state.genes, live)
     assert.equal(h.game.state.likenessWon, true)
     assert.equal(h.A.store.get('clonesStyled', false), true)
+    assert.ok(h.A.store.get('cloneRecovery', null), 'the restored look is not saved yet')
+    autosave(h)
+    await h.A.clones.recover()
     assert.equal(h.A.store.get('cloneRecovery', null), null)
 })
 
 test('cancellation during a clone journal await restores a partial walk', async () => {
     const live = [4, 5, 6, 1, 2, 3, 4]
-    const h = await ready({ save: fx.save({ amounts: { 19: 1 } }).raw, game: { genes: live } })
+    const h = await ready({
+        save: fx.save({ amounts: { 19: 1 }, appearance: live.join(',') }).raw,
+        game: { genes: live }
+    })
     const flush = h.A.store.flush
     let writes = 0
     h.A.store.flush = async () => {
@@ -393,7 +417,7 @@ for (const changed of [false, true]) {
         await first.A.store.flush()
         const h = await ready({
             disk,
-            save: fx.save({ seed: 'fresh', amounts: { 19: 1 } }).raw,
+            save: fx.save({ seed: 'fresh', amounts: { 19: 1 }, appearance: original.join(',') }).raw,
             game: { genes: changed ? newer : temporary }
         })
         h.A.store.setSetting('clones', false)
@@ -530,7 +554,10 @@ test('cosmetic routines refuse to mutate without a durable undo record', async (
 
 test('an incomplete clone restoration retains its journal and retries before marking success', async () => {
     const original = [4, 5, 6, 1, 2, 3, 4]
-    const h = await ready({ save: fx.save({ amounts: { 19: 1 } }).raw, game: { genes: original } })
+    const h = await ready({
+        save: fx.save({ amounts: { 19: 1 }, appearance: original.join(',') }).raw,
+        game: { genes: original }
+    })
     const flush = h.A.store.flush
     let blocked = false
     let calls = 0
@@ -623,4 +650,220 @@ test('withdrawing auto-ascension invalidates discard consent for the old decisio
     assert.notEqual(h.debug().ascend.decisionId, oldDecision)
     assert.equal(h.A.ascend.discardHoard(oldDecision), false)
     assert.equal(h.game.state.loansTaken.length, 0)
+})
+
+for (const fromSlot of [false, true]) {
+    for (const waitNumber of [1, 2]) {
+        test(`drag cancellation at wait ${waitNumber} preserves swaps and a spirit from ${fromSlot ? 'a slot' : 'the roster'}`, async () => {
+            const h = await ready()
+            const source = new El('div', { id: 'templeGodDrag0' })
+            const original = new El('div', { id: 'templeSlot1' })
+            const target = new El('div', { id: 'templeSlot0' })
+            h.game.doc.body.append(original, target)
+            ;(fromSlot ? original : h.game.doc.body).append(source)
+            let dragging = false
+            let slotHovered = -1
+            let equipped = fromSlot ? 1 : -1
+            let swaps = 3
+            source.addEventListener('mousedown', () => (dragging = true))
+            const drop = () => {
+                if (!dragging) return
+                if (slotHovered !== -1 && slotHovered !== equipped) swaps--
+                equipped = slotHovered
+                dragging = false
+            }
+            // Pantheon remembers mouseover/mouseout independently of coordinates
+            // and drops from its document mouseup handler. The fake DOM does not
+            // bubble, so attach that handler at each possible release target.
+            for (const [node, slot] of [
+                [original, 1],
+                [target, 0]
+            ]) {
+                node.addEventListener('mouseover', () => (slotHovered = slot))
+                node.addEventListener('mouseout', () => (slotHovered = -1))
+                node.addEventListener('mouseup', drop)
+            }
+            h.game.doc.body.addEventListener('mouseup', drop)
+            const barrier = hold(h, 60)
+            const mod = register(h, 'pantheon', ctx => h.A.act.drag.dragTo(source, target, ctx.task))
+            const work = mod.tick()
+            if (waitNumber === 2) {
+                barrier.pending.shift()()
+                assert.ok(await waitFor(() => barrier.pending.length === 1, 1000, 5))
+                assert.equal(slotHovered, 0)
+            }
+            h.A.scheduler.pause()
+            barrier.release()
+            await work
+            assert.equal(swaps, 3)
+            assert.equal(equipped, fromSlot ? 1 : -1)
+            assert.equal(dragging, false)
+        })
+    }
+}
+
+for (const cancel of ['pause', 'stop', 'module']) {
+    test(`${cancel} dismisses the owned GiftRedeem prompt without redeeming`, async () => {
+        const h = await ready({
+            save: fx.save({ heavenlyChipsSpent: 999999 }).raw,
+            game: { bank: 1e12, wrappingPaper: true }
+        })
+        h.A.store.set('giftCode', { code: 'TESTCODE123456', at: Date.now() - 2 * 3600e3 })
+        const barrier = hold(h, 350)
+        const work = h.A.registry.get('gifts').tick()
+        barrier.pending.shift()() // Options is open; now open Redeem.
+        assert.ok(await waitFor(() => barrier.pending.length === 1, 1000, 5))
+        assert.equal(h.A.safety.prompt()?.id, 'promptContentGiftRedeem')
+        assert.equal(h.game.doc.getElementById('promptOption1'), null)
+        if (cancel === 'module') h.A.store.setSetting('gifts', false)
+        else h.A.scheduler[cancel]()
+        barrier.release()
+        await work
+        assert.equal(h.A.safety.prompt(), null)
+        assert.equal(h.game.state.log.includes('redeemed a gift'), false)
+        assert.ok(h.A.gifts.heldCode())
+        const lease = h.A.safety.acquire('prompt', 'probe')
+        assert.ok(lease)
+        lease.release()
+    })
+}
+
+test('a temporary name autosave remains recoverable after live restoration and reload', async () => {
+    const disk = {}
+    const h = await ready({
+        disk,
+        save: fx.save({ bakeryName: 'Original' }).raw,
+        game: { bakeryName: 'Original' }
+    })
+    const barrier = hold(h, 600)
+    const work = nameRoutine(h)
+    assert.ok(await waitFor(() => barrier.pending.length === 1, 2000, 5))
+    assert.equal(h.game.state.bakeryName, 'Orteil')
+    const saved = autosave(h)
+    barrier.release()
+    await work
+    assert.equal(h.game.state.bakeryName, 'Original')
+    assert.ok(h.A.store.get('bakeryNameRecovery', null))
+    const promptCount = h.game.state.log.filter(line => line === 'prompt NameBakery').length
+    h.A.achievements.recoverName()
+    assert.equal(h.game.state.log.filter(line => line === 'prompt NameBakery').length, promptCount)
+    await h.A.store.flush()
+
+    const reloaded = await ready({ disk, save: saved, game: { bakeryName: 'Orteil' } })
+    reloaded.A.store.setSetting('achievements', false)
+    reloaded.A.registry.get('achievements').setup()
+    assert.equal(reloaded.game.state.bakeryName, 'Original')
+    assert.ok(reloaded.A.store.get('bakeryNameRecovery', null))
+    autosave(reloaded)
+    reloaded.A.achievements.recoverName()
+    await reloaded.A.store.flush()
+    assert.equal(reloaded.A.store.get('bakeryNameRecovery', null), null)
+    assert.equal(disk['legacy:' + reloaded.A.identity.current().legacyId].bakeryNameRecovery, undefined)
+})
+
+test('a temporary clone autosave remains recoverable after the routine completes', async () => {
+    const original = [4, 5, 6, 1, 2, 3, 4]
+    const disk = {}
+    const h = await ready({
+        disk,
+        save: fx.save({ amounts: { 19: 1 }, appearance: original.join(',') }).raw,
+        game: { genes: original }
+    })
+    const flush = h.A.store.flush
+    let writes = 0
+    let saved
+    let temporary
+    h.A.store.flush = async () => {
+        const ok = await flush()
+        if (++writes === 4) {
+            temporary = h.game.state.genes.slice()
+            saved = autosave(h)
+        }
+        return ok
+    }
+    await h.A.registry.get('clones').tick()
+    assert.notDeepEqual(temporary, original)
+    assert.deepEqual(h.game.state.genes, original)
+    assert.ok(h.A.store.get('cloneRecovery', null))
+    const promptCount = h.game.state.log.filter(line => line === 'prompt CustomizeYou').length
+    await h.A.registry.get('clones').tick()
+    assert.equal(h.game.state.log.filter(line => line === 'prompt CustomizeYou').length, promptCount)
+    await flush()
+
+    const reloaded = await ready({ disk, save: saved, game: { genes: temporary } })
+    reloaded.A.store.setSetting('clones', false)
+    await reloaded.A.registry.get('clones').setup()
+    assert.deepEqual(reloaded.game.state.genes, original)
+    assert.equal(reloaded.A.store.get('clonesStyled', false), true)
+    assert.ok(reloaded.A.store.get('cloneRecovery', null))
+    autosave(reloaded)
+    await reloaded.A.clones.recover()
+    await reloaded.A.store.flush()
+    assert.equal(reloaded.A.store.get('cloneRecovery', null), null)
+    assert.equal(disk['legacy:' + reloaded.A.identity.current().legacyId].cloneRecovery, undefined)
+})
+
+test('interrupted clone recovery recognizes an autosave several journal steps behind', async () => {
+    const original = [4, 5, 6, 1, 2, 3, 4]
+    const h = await ready({
+        save: fx.save({ amounts: { 19: 1 }, appearance: original.join(',') }).raw,
+        game: { genes: original }
+    })
+    const flush = h.A.store.flush
+    let writes = 0
+    let saved
+    let temporary
+    let disk
+    let resume
+    h.A.store.flush = async () => {
+        const ok = await flush()
+        if (++writes === 3) {
+            temporary = h.game.state.genes.slice()
+            saved = autosave(h)
+        }
+        if (writes === 9) {
+            disk = structuredClone(h.disk)
+            await new Promise(resolve => (resume = resolve))
+        }
+        return ok
+    }
+    const work = h.A.registry.get('clones').tick()
+    assert.ok(await waitFor(() => !!resume, 1000, 5))
+    try {
+        const mark = disk['legacy:' + h.A.identity.current().legacyId].cloneRecovery
+        assert.notDeepEqual(temporary, mark.expected)
+        assert.notDeepEqual(temporary, mark.previous)
+        const reloaded = await ready({ disk, save: saved, game: { genes: temporary } })
+        await reloaded.A.registry.get('clones').setup()
+        assert.deepEqual(reloaded.game.state.genes, original)
+        assert.equal(reloaded.A.store.get('clonesStyled', false), false)
+    } finally {
+        h.A.scheduler.pause()
+        resume()
+        await work
+    }
+})
+
+test('a player edit matching an earlier clone step supersedes the retained journal', async () => {
+    const original = [4, 5, 6, 1, 2, 3, 4]
+    const disk = {}
+    const h = await ready({
+        disk,
+        save: fx.save({ amounts: { 19: 1 } }).raw,
+        game: { genes: original }
+    })
+    await h.A.registry.get('clones').tick()
+    const mark = h.A.store.get('cloneRecovery', null)
+    const chosen = Array.from(mark.history[1])
+    assert.notDeepEqual(chosen, original)
+    h.game.openCustomizer()
+    const prompt = h.game.doc.getElementById('promptContentCustomizeYou')
+    h.game.doc.fire('pointerdown', { isTrusted: true, target: prompt })
+    h.game.state.genes = chosen
+    const saved = autosave(h)
+    await h.A.store.flush()
+    const reloaded = await ready({ disk, save: saved, game: { genes: chosen } })
+    await reloaded.A.registry.get('clones').setup()
+    assert.deepEqual(reloaded.game.state.genes, chosen)
+    assert.equal(reloaded.A.store.get('cloneRecovery', null), null)
 })

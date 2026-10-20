@@ -16,7 +16,7 @@
     // background service worker and no message passing is needed anywhere.
     //
     // Temporary cosmetic undo records also hold the original name or genes until
-    // restoration succeeds or a newer player edit supersedes them.
+    // restoration reaches the game save or a newer player edit supersedes them.
 
     const FLUSH_DELAY_MS = 500
     const SETTINGS_KEY = 'settings'

@@ -108,7 +108,8 @@ current decision; discard consent is never saved across reloads.
 verbatim, and never leaves your machine. Your bakery name is treated as user data.
 The per-save identifier is a hash of the legacy creation time and survives seed
 changes. Temporary undo records hold the original bakery name and clone genes
-until restoration succeeds or a newer player edit supersedes them.
+until the restored values reach the game save or a newer player edit supersedes
+them. Clone recovery also recognizes earlier steps captured by autosave.
 
 ## Architecture
 Content scripts sharing one global (`window.Alakazam`), loaded in the order

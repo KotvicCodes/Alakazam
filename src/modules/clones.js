@@ -3,9 +3,9 @@
 ;(function () {
     //! Clone Customizer
     // Capture the open customizer's live genes before the first change. The undo
-    // journal is flushed before each arrow click, so reload recovery recognizes
-    // either side of an interrupted write. Restore and verify the exact snapshot
-    // after the achievement, cancellation, or recovery; later player edits win.
+    // journal is flushed before each arrow click and keeps every owned appearance:
+    // the game's autosave may trail many clicks behind our storage. Keep the undo
+    // record until restoration reaches the game save; later player edits win.
 
     const { simulateClick } = window.Alakazam.safety.input('clones')
     const { save, store, registry } = window.Alakazam
@@ -30,8 +30,22 @@
     const THEIRS_KEY = 'clonesTheirLook'
     const RECOVERY_KEY = 'cloneRecovery'
     const { safety, identity } = window.Alakazam
+    let restoredHere = null
     const equal = (a, b) =>
         Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i])
+
+    function forgetIfSaved(mark) {
+        const saved = window.Alakazam.savefile.read()
+        if (
+            !saved.ok ||
+            identity.fromSave(saved).legacyId !== mark.legacyId ||
+            !equal(saved.run?.appearance, mark.original)
+        )
+            return false
+        store.forget(RECOVERY_KEY)
+        restoredHere = null
+        return true
+    }
 
     function el(id) {
         return document.getElementById(id)
@@ -124,6 +138,9 @@
         if (mark) {
             mark.previous = before
             mark.expected = next
+            const history = mark.history || [mark.original, before]
+            // Use a new array so in-flight storage snapshots cannot change.
+            mark.history = history.some(genes => equal(genes, next)) ? history : [...history, next]
             store.set(RECOVERY_KEY, { ...mark })
             if (!(await store.flush())) return false
         }
@@ -146,13 +163,19 @@
         if (!safety.ownsPrompt('clones', 'CustomizeYou')) return false
         const live = currentGenes()
         if (!live) return false
-        if (!equal(live, mark.expected) && !equal(live, mark.previous)) {
+        const owned = [mark.original, mark.expected, mark.previous, ...(mark.history || [])]
+        if (!owned.some(genes => equal(live, genes))) {
             // the player's intervening look supersedes our undo record
             return superseded()
         }
+        // A reload can resume at any journaled step, not just the latest write.
+        mark.expected = live
+        mark.previous = live
         if (!(await walk(mark.original, { left: MAX_CLICKS }, ctx, mark))) return false
         if (!equal(currentGenes(), mark.original)) return false
-        store.forget(RECOVERY_KEY)
+        restoredHere = { ...mark }
+        store.set(RECOVERY_KEY, restoredHere)
+        forgetIfSaved(mark)
         if (mark.earned) store.set(DONE_KEY, true)
         ctx.input('simulateClick', el('promptOption0'))
         return true
@@ -165,6 +188,12 @@
         let mark = store.get(RECOVERY_KEY, null)
         if (!mark && (done() || !ownsAYou())) return
         if (mark && mark.legacyId !== who.legacyId) return
+        // We already verified the live UI this session. Wait for autosave without
+        // repeatedly opening the customizer while the journal is still needed.
+        if (mark && mark === restoredHere && !mark.intervened) {
+            forgetIfSaved(mark)
+            return
+        }
         if (safety.prompt() && !safety.ownsPrompt('clones', 'CustomizeYou')) return
         if (!safety.prompt()) {
             const button = customizeButton()
@@ -184,7 +213,8 @@
             legacyId: who.legacyId,
             original: original.slice(),
             expected: original.slice(),
-            previous: original.slice()
+            previous: original.slice(),
+            history: [original.slice()]
         }
         store.set(RECOVERY_KEY, { ...mark })
         try {
@@ -206,6 +236,10 @@
         const mark = store.get(RECOVERY_KEY, null)
         const who = identity.current()
         if (!mark || !who.known || mark.legacyId !== who.legacyId || safety.prompt()) return
+        if (mark === restoredHere && !mark.intervened) {
+            forgetIfSaved(mark)
+            return
+        }
         const ctx = safety.context('clones')
         await ctx.cleanup(async () => {
             ctx.input('simulateClick', customizeButton())

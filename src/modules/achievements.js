@@ -120,6 +120,24 @@
     // Journal the live input before renaming. Recovery compares our last write
     // with the live name, so a later player rename always wins.
     const NAME_KEY = 'bakeryNameRecovery'
+    let restoredName = null
+
+    function finishNameRecovery(mark) {
+        const { savefile, identity } = window.Alakazam
+        const saved = savefile.read()
+        if (
+            saved.ok &&
+            identity.fromSave(saved).legacyId === mark.legacyId &&
+            saved.run?.bakeryName === mark.original
+        ) {
+            store.forget(NAME_KEY)
+            restoredName = null
+        } else if (mark !== restoredName) {
+            // A live restoration does not replace an earlier autosave of Orteil.
+            restoredName = { ...mark }
+            store.set(NAME_KEY, restoredName)
+        }
+    }
 
     function recoverName() {
         const { safety, identity } = window.Alakazam
@@ -130,6 +148,10 @@
             store.forget(NAME_KEY)
             return false
         }
+        if (mark === restoredName) {
+            finishNameRecovery(mark)
+            return true
+        }
         const ctx = safety.scope('achievements')
         return ctx.cleanup(() => {
             if (safety.prompt() && !safety.ownsPrompt('achievements', 'NameBakery')) return false
@@ -137,6 +159,11 @@
             if (!safety.ownsPrompt('achievements', 'NameBakery')) return false
             const input = document.getElementById('bakeryNameInput')
             if (!input) return false
+            if (String(input.value) === mark.original) {
+                ctx.input('simulateClick', document.getElementById('promptOption2'))
+                finishNameRecovery(mark)
+                return true
+            }
             // an unsubmitted player edit is also a deliberate choice
             if (String(input.value) === mark.expected) {
                 ctx.input('typeInto', input, mark.original)
@@ -147,7 +174,7 @@
                 const restored = document.getElementById('bakeryNameInput')
                 const verified = restored && String(restored.value) === mark.original
                 ctx.input('simulateClick', document.getElementById('promptOption2'))
-                if (verified) store.forget(NAME_KEY)
+                if (verified) finishNameRecovery(mark)
                 return !!verified
             }
             // leave their new value intact, and dismiss only the prompt we opened
@@ -162,7 +189,7 @@
         const { safety, identity } = window.Alakazam
         const ctx = safety.scope('achievements')
         const who = identity.current()
-        if (!who.known || safety.prompt()) return false
+        if (!who.known || safety.prompt() || store.get(NAME_KEY, null)) return false
         simulateClick(document.getElementById('bakeryName'))
         try {
             await wait(MENU_MS)

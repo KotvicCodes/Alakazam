@@ -186,7 +186,13 @@
                           ? 2
                           : 1
                     task.cleanup(() =>
-                        task.input('simulateClick', document.getElementById('promptOption' + option))
+                        task.input(
+                            'simulateClick',
+                            // GiftRedeem has two promptOption0 elements and no option1.
+                            name === 'GiftRedeem'
+                                ? document.getElementById('darken')
+                                : document.getElementById('promptOption' + option)
+                        )
                     )
                 }
             } finally {

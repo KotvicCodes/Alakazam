@@ -53,6 +53,11 @@
         const lease = window.Alakazam.safety.acquire('tooltip', ctx.owner)
         if (!lease) return false
         let released = false
+        let hoveredTarget = false
+        let originalSlot = source
+        while (originalSlot && !/^templeSlot\d+$/.test(originalSlot.id || '')) {
+            originalSlot = originalSlot.parentElement || originalSlot.parent
+        }
         try {
             ctx.input('hoverOn', source)
             ctx.check()
@@ -61,6 +66,7 @@
             ctx.check()
             if (!lease.valid()) return false
             ctx.input('hoverOn', target)
+            hoveredTarget = true
             dispatchAt(target, 'mousemove')
             await wait(60)
             ctx.check()
@@ -72,10 +78,15 @@
         } finally {
             try {
                 if (!released) {
-                    // release away from the slot so cancellation cannot spend a swap
-                    hoverOn(document.body)
-                    dispatchAt(document.body, 'mousemove')
-                    dispatchAt(document.body, 'mouseup')
+                    // Synthetic movement does not emit the slot's mouseout for us.
+                    if (hoveredTarget) hoverOff(target)
+                    // Dropping back onto the original slot preserves an equipped
+                    // spirit without spending a swap; roster spirits return away.
+                    const back = originalSlot || document.body
+                    hoverOn(back)
+                    dispatchAt(back, 'mousemove')
+                    dispatchAt(back, 'mouseup')
+                    if (originalSlot) hoverOff(originalSlot)
                 }
                 if (lease.valid()) {
                     hoverOff(target)
