@@ -181,7 +181,7 @@
     // the tech pool. The research that starts the grandmapocalypse is tech, so the
     // one purchase Alakazam holds back by name is one this button cannot make.
     function buyAll() {
-        if (!inBuyAllWindow()) return false
+        if (catalog.purchaseSafety() || !inBuyAllWindow()) return false
         if (Date.now() - lastBuyAllAt < BUY_ALL_EVERY_MS) return false
         const button = document.getElementById('storeBuyAllButton')
         if (!button) return false

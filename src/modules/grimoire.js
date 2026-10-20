@@ -25,7 +25,7 @@
 
     const { simulateClick } = window.Alakazam.input
     const { parseGameNumber } = window.Alakazam.parse
-    const { live, save, store, registry } = window.Alakazam
+    const { live, save, store, registry, buffs } = window.Alakazam
 
     const INTERVAL_MS = 2000
     const FPS = 30
@@ -199,7 +199,9 @@
     function tick() {
         const s = state()
         if (!s || !s.unlocked) return
-        window.__alakazam.grimoire = s
+        const guard = buffs.guardStatus()
+        window.__alakazam.grimoire = { ...s, blocked: guard.blocked ? guard.reason : '' }
+        if (guard.blocked) return
 
         // never cast twice in a row without letting the bar move
         if (Date.now() - lastCastAt < 5000) return
@@ -207,7 +209,7 @@
         // the whole point of Force the Hand of Fate is starting a combo, and a
         // conjured golden cookie is worth far more stacked on a production buff
         // than used on its own
-        if (live.hasProductionBuff() && s.magic >= s.fthofCost) {
+        if (buffs.hasSpellComboBuff() && s.magic >= s.fthofCost) {
             cast(FTHOF, 'production buff is up')
             return
         }

@@ -545,6 +545,7 @@
     }
 
     function commit(s, why) {
+        if (buffs.blocksAscension()) return
         const hoard = hoardAtRisk()
         if (hoard > 0) {
             console.warn(
@@ -573,17 +574,7 @@
                 return
             }
 
-            // Do not leave in the middle of something good. Anything already
-            // running is production that has been paid for and not yet collected,
-            // and it is a few minutes at most.
-            if (buffs.hasProductionBuff()) return
-
-            // A buff is named from its tooltip, one per tick, so for up to a second
-            // after one appears it is on screen but not yet identified. Treating
-            // that as "nothing running" is how the sequence would start half a
-            // second into a frenzy and throw the rest of it away. An unidentified
-            // buff is a reason to wait, not a reason to go.
-            if (buffs.active().some(b => !b.name)) return
+            if (buffs.blocksAscension()) return
 
             taken = []
             harvestFrom = 0
@@ -592,6 +583,7 @@
         }
 
         if (phase === 'loans') {
+            if (buffs.blocksAscension()) return
             if (takeLoans()) return
             if (taken.length === 0) {
                 // no bank, or every slot already spent. nothing to wait for.
@@ -733,6 +725,7 @@
         window.__alakazam.ascend = {
             ...s,
             phase,
+            blocked: ['ready', 'loans', 'harvest'].includes(phase) ? buffs.guardStatus().reason : '',
             bought: bought.slice(),
             loans: taken.slice(),
             loanWindow: Number.isFinite(window_) ? Math.round(window_) : null,

@@ -122,58 +122,28 @@
 
     //! Upgrades
 
-    //* GRANDMAPOCALYPSE
-    // The three research upgrades that advance the Grandmapocalypse. They are
-    // ordinary-looking production upgrades, and each one is a one-way door into a
-    // different game: wrinklers on the cookie, wrath cookies instead of golden
-    // ones, and a production penalty until it is farmed properly.
-    //
-    // Now that research is read at all, these would otherwise be bought the moment
-    // they became affordable, and the run would change mode without anyone asking
-    // for it. Held back by name until there is a policy worth calling a policy.
-    // Everything else in the research tree is a plain multiplier and is bought.
-    const GRANDMAPOCALYPSE = ['one mind', 'communal brainsweep', 'elder pact']
+    // stable ids from Cookie Clicker 2.058, independent of tooltip language.
+    const NEVER_BUY_IDS = new Set([69, 71, 73, 74, 84, 85, 452])
 
-    //* NEVER_BUY
-    // Everything screened out, by exact name. The pledges and the sugar frenzy
-    // switch are state changes dressed up as purchases; they live in
-    // #toggleUpgrades, which measure/live.js does not read, so listing them here
-    // is a second lock on a door that is already shut.
-    const NEVER_BUY = GRANDMAPOCALYPSE.concat([
-        'elder pledge',
-        'elder covenant',
-        'revoke elder covenant',
-        'sugar frenzy'
-    ])
+    function upgradeId(el) {
+        const raw = el && el.getAttribute('data-id')
+        return typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : NaN
+    }
 
-    //! classifyUpgrade
-    // 'skip'  -> never auto-buy
-    // 'buy'   -> ordinary production/click upgrades: safe to auto-buy
-    //
-    // It matches on the name alone, and it is worth saying why, because this used
-    // to read the whole tooltip and that quietly switched upgrade buying off for
-    // the rest of the game.
-    //
-    // The screen included the word "vault". Once the heavenly upgrade "Inspired
-    // checklist" is owned, the game appends its own hint to the bottom of every
-    // upgrade tooltip in the store:
-    //
-    //   Click to purchase. Shift-click to vault.
-    //
-    // So from that ascension onward every upgrade matched, every upgrade was
-    // classified 'skip', and not one was ever bought again. The prose in a tooltip
-    // belongs to the game and can say anything it likes; the name is the only part
-    // of it that identifies the upgrade, so the name is what is screened.
-    //
-    // Narrowing it costs nothing. Toggles, pledges and anything the player has
-    // vaulted are in store sections that are never read, so they do not reach
-    // here, and the three doors into the grandmapocalypse are named outright.
-    function classifyUpgrade(text, name) {
-        const n = (name || '').toLowerCase().trim()
-        // an unnamed crate cannot be checked against the list, and the list is
-        // what stands between us and the grandmapocalypse
-        if (!n) return 'skip'
-        return NEVER_BUY.indexOf(n) !== -1 ? 'skip' : 'buy'
+    function guardReason(id) {
+        if (!Number.isSafeInteger(id) || id < 0) {
+            return 'Upgrade purchasing suspended: canonical upgrade id is unavailable.'
+        }
+        return NEVER_BUY_IDS.has(id) ? 'Held by research/toggle policy (upgrade ' + id + ').' : ''
+    }
+
+    function classifyUpgrade(text, name, id) {
+        return guardReason(id) ? 'skip' : 'buy'
+    }
+
+    function purchaseSafety() {
+        const unknown = live.readUpgradeCrates().find(c => !Number.isSafeInteger(upgradeId(c.element)))
+        return unknown ? guardReason(NaN) : ''
     }
 
     async function refreshCrate(crate) {
@@ -182,11 +152,14 @@
         const price = !Number.isNaN(tip.price) ? tip.price : firstNumberIn(tip.text)
         if (Number.isNaN(price)) return
         const name = tip.name || (tip.text || '').split('\n')[0].trim()
+        const id = upgradeId(crate.element)
         upgradeCache.set(crate.key, {
+            id,
+            blocked: guardReason(id),
             name,
             price,
             description: tip.text,
-            kind: classifyUpgrade(tip.text, name),
+            kind: classifyUpgrade(tip.text, name, id),
             at: Date.now()
         })
     }
@@ -233,7 +206,8 @@
             buildings: buildingCache.size,
             upgrades: upgradeCache.size,
             hovers,
-            waitingOnUser: userIsBusy()
+            waitingOnUser: userIsBusy(),
+            blocked: purchaseSafety()
         }
     }
 
@@ -259,6 +233,7 @@
         names,
         upgradeFor,
         classifyUpgrade,
+        purchaseSafety,
         perUnitCpsFromTooltip,
         readTooltip,
         stats

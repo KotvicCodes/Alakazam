@@ -2,43 +2,12 @@
 // share one scope, so bare top-level declarations across files would collide
 ;(function () {
     //! Buff Measurement
-    // What is currently boosting (or suppressing) production, by name, with the
-    // time left on it.
+    // live buff instances render an icon and pie timer, with a localized heading
+    // available only through their tooltip. Canonical identities come from the
+    // supported heading catalog; unknown effects suspend guarded actions.
     //
-    //! Why this file exists
-    // A buff renders as an icon and nothing else. The game builds it as
-    //
-    //   <div id="buff3" class="crate enabled buff" style="background-position:...">
-    //     <div class="pieTimer" id="buffPieTimer3" style="background-position:..."></div>
-    //   </div>
-    //
-    // There is no name in it, no countdown, no text at all. Everything a reader
-    // would want is either in a tooltip attribute or encoded in a sprite offset.
-    //
-    // measure/live.js was reading `innerText` off these elements and matching the
-    // result against a list of buff names. That can only ever have matched the
-    // empty string, which means hasProductionBuff() has always returned false and
-    // every decision resting on it has been running blind: the grimoire never
-    // timed a Force the Hand of Fate against a frenzy, and the shimmer module's
-    // "do not click a wrath cookie mid-buff" guard never fired.
-    //
-    //! What is actually readable
-    // The name comes from the tooltip, which costs a hover, so it is cached per
-    // buff element. Element ids are unique per buff instance and a buff element is
-    // thrown away when it expires, so the cache can never hand back a stale name.
-    // Icons cannot be used as the key: "Loan 1" and "Loan 1 (interest)" are drawn
-    // with the same one, and those two mean opposite things.
-    //
-    // The time left is in the pie timer. The game writes
-    //
-    //   T = (1 - time/maxTime) * 144
-    //   backgroundPosition = -(T % 18)*48 px, -floor(T/18)*48 px
-    //
-    // so the sprite offset is the fraction of the buff that has elapsed, in 144
-    // steps. That is a fraction rather than a duration, and turning it into seconds
-    // needs the buff's total length, which only the caller knows. For a forty
-    // second buff a step is under three tenths of a second, which is ample for
-    // deciding whether there is time to act.
+    // The timer encodes elapsed time in 144 steps on an 18-column, 48px grid.
+    // It supplies a fraction; a caller needs the total duration to get seconds.
 
     const { catalog, registry } = window.Alakazam
 
@@ -49,20 +18,11 @@
     const TIMER_STEPS = 144
     const CELL = 48
 
-    //* PRODUCTION_BUFFS
-    // the buffs that multiply cookies per second. Moved here from measure/live.js,
-    // where it was being tested against text that is never present.
-    //
-    // Loans are deliberately absent. They are production buffs by any reasonable
-    // definition, but everything that asks this question is asking "is something
-    // good happening that I should not interrupt", and the ascension planner takes
-    // loans on purpose and then interrupts them on purpose. It has its own reading.
-    const PRODUCTION_BUFFS =
-        /frenzy|dragon harvest|building special|high-five|congregation|luxuriant harvest|ore vein|oiled-up|juicy profits|fervent adoration|manabloom|delicious lifeforms|breakthrough|righteous cataclysm|golden ages|extra cycles|solar flare|winning streak|macrocosm|refactoring|cosmic nursery|brainstorm|deliciousness|click frenzy|cursed finger|elder frenzy|devastation|sugar frenzy/i
+    const { identify: canonicalEffect } = window.Alakazam.data.effects
 
-    // element id -> name. instances are unique and short lived, so this only grows
-    // by one entry per buff that has ever been on screen this page load.
-    const names = new Map()
+    // node identity avoids reusing cached names when a reset reuses buff0, and
+    // allows old instances to be collected after removal.
+    const names = new WeakMap()
 
     function elements() {
         const out = []
@@ -105,20 +65,53 @@
         return elements().map(el => ({
             id: el.id || '',
             element: el,
-            name: names.get(el.id) || null,
+            name: names.get(el) || null,
+            effect: canonicalEffect(names.get(el)),
             progress: progressOf(el)
         }))
     }
 
     //* named
-    // buffs whose name matches, ignoring any that have not been identified yet.
-    // Callers wanting "is anything good running" should prefer hasProductionBuff.
+    // match canonical names so loans and gift cooldowns work across locales.
+    // Safety callers use blocksAscension/guardStatus, which include unknowns.
     function named(pattern) {
-        return active().filter(b => b.name && pattern.test(b.name))
+        return active().filter(b => b.effect && pattern.test(b.effect.name))
     }
 
     function hasProductionBuff() {
-        return named(PRODUCTION_BUFFS).length > 0
+        return active().some(b => b.effect && b.effect.production)
+    }
+
+    function guardStatus() {
+        const all = active()
+        const unknown = all.find(b => !b.effect)
+        const protectedEffect = all.find(b => b.effect && b.effect.protect)
+        return {
+            blocked: !!unknown,
+            reason: unknown
+                ? 'Ascension and spell actions suspended: effect "' +
+                  (unknown.name || 'unidentified') +
+                  '" has no supported canonical identity.'
+                : protectedEffect
+                  ? 'Waiting for ' + protectedEffect.effect.name + ' to end.'
+                  : '',
+            protected: !!protectedEffect
+        }
+    }
+
+    function blocksAscension() {
+        const status = guardStatus()
+        return status.blocked || status.protected
+    }
+
+    function hasSpellComboBuff() {
+        const all = active()
+        // FTHOF removes click frenzy from its outcome pool during Dragonflight.
+        // Protect that effect, but keep magic for the next production combo.
+        return (
+            !all.some(b => !b.effect || b.effect.key === 'dragonflight') &&
+            all.some(b => b.effect.production)
+        )
     }
 
     //* remaining
@@ -139,12 +132,12 @@
 
     async function identify() {
         for (const el of elements()) {
-            if (!el.id || names.has(el.id)) continue
+            if (!el.id || names.has(el)) continue
             const tip = await catalog.readTooltip(el)
             // the lock is held elsewhere, or the tooltip has not drawn: try again
             if (!tip) return
             const name = tip.name || (tip.text || '').split('\n')[0].trim()
-            if (name) names.set(el.id, name)
+            if (name) names.set(el, name)
             // one per tick keeps this off the critical path; buffs are few and
             // last long enough that there is no hurry
             return
@@ -166,6 +159,8 @@
         hasProductionBuff,
         remaining,
         progressOf,
-        PRODUCTION_BUFFS
+        blocksAscension,
+        hasSpellComboBuff,
+        guardStatus
     }
 })()

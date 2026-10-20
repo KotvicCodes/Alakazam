@@ -2,26 +2,12 @@
 // share one scope, so bare top-level declarations across files would collide
 ;(function () {
     //! Which Aura
-    // Pure arithmetic, no DOM, no state: hand it what has been measured and it ranks
-    // every aura the dragon knows. It exists because the received wisdom about auras
-    // was written for someone playing by hand, and three of the most recommended ones
-    // are worth far less to Alakazam than to that player:
-    //
-    //   Dragon's Fortune pays per golden cookie *on screen*, and golden cookies are
-    //   clicked here within milliseconds of appearing, so there is almost never one
-    //   on screen to be paid for. The aura most guides put second is close to inert.
-    //
-    //   Dragonflight multiplies click power by 1111 for ten seconds. The game
-    //   registers about three clicks a second however many are dispatched, so those
-    //   ten seconds are thirty clicks, not the hundreds a human comboer gets.
-    //
-    //   Dragon Cursor adds 5% to clicking, and clicking is a small share of income
-    //   for the same reason.
-    //
-    // Radiant Appetite doubles production and does not care how the game is played,
-    // which is why it wins here, and why it is worth being able to show that with
-    // numbers rather than asserting it. Every candidate returns the terms behind its
-    // score so modules/dragon.js can print the whole table.
+    // score each aura against measured production, click income and golden-cookie
+    // income. Normal pointer clicks are not subject to the detail-zero throttle;
+    // no fixed registration ceiling belongs in these comparisons. Dragonflight
+    // and Dragon Cursor can become valuable as the measured click share rises.
+    // Dragon's Fortune instead depends on goldens remaining on screen.
+    // Every candidate returns the terms behind its score for explain().
     //
     //! Units
     // Every gain is in cookies per second, compared against measured income, so the

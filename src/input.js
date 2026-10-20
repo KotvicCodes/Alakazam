@@ -25,63 +25,76 @@
     //* dispatchMouse
     // fires one bubbling, cancelable pointer/mouse event at the given coordinates
     function dispatchMouse(el, type, x, y) {
-        // pointer events first (modern handlers), then the mouse event of the same
-        // phase, mirroring what a browser emits for real input
-        const PointerCtor = window.PointerEvent || window.MouseEvent
-        const base = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 }
-
-        if (type === 'pointerdown' || type === 'pointerup' || type === 'pointermove') {
-            el.dispatchEvent(
-                new PointerCtor(type, { ...base, pointerId: 1, isPrimary: true, pointerType: 'mouse' })
-            )
-            return
+        const pointer = type.startsWith('pointer')
+        if (pointer && !window.PointerEvent) return
+        const down = type === 'pointerdown' || type === 'mousedown'
+        const counted = type === 'mousedown' || type === 'mouseup' || type === 'click'
+        const base = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            view: window,
+            clientX: x,
+            clientY: y,
+            button: type === 'pointermove' ? -1 : 0,
+            buttons: down ? 1 : 0,
+            detail: counted ? 1 : 0
         }
-        el.dispatchEvent(new MouseEvent(type, base))
+        const Ctor = pointer || type === 'click' ? window.PointerEvent || MouseEvent : MouseEvent
+        el.dispatchEvent(
+            new Ctor(type, {
+                ...base,
+                pointerId: 1,
+                isPrimary: true,
+                pointerType: 'mouse',
+                pressure: down ? 0.5 : 0
+            })
+        )
+    }
+
+    function clickAt(el, x, y) {
+        dispatchMouse(el, 'pointermove', x, y)
+        dispatchMouse(el, 'mousemove', x, y)
+        dispatchMouse(el, 'pointerdown', x, y)
+        dispatchMouse(el, 'mousedown', x, y)
+        dispatchMouse(el, 'pointerup', x, y)
+        dispatchMouse(el, 'mouseup', x, y)
+        dispatchMouse(el, 'click', x, y)
+        return true
     }
 
     //* simulateClick
-    // a full human-like click: move the pointer over the element then run the
-    // down -> up -> click sequence. this is the only sanctioned way to act on the
-    // page. returns false when there is nothing to click.
-    function simulateClick(el) {
+    // pointer activation has a click count of one. Keyboard/assistive activation
+    // intentionally has detail zero and no pointer down/up sequence; the game's
+    // special handling of those clicks must remain available.
+    function simulateClick(el, { source = 'pointer' } = {}) {
         if (!el) return false
+        if (source === 'keyboard') {
+            el.dispatchEvent(
+                new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    composed: true,
+                    view: window,
+                    detail: 0,
+                    button: 0,
+                    buttons: 0,
+                    clientX: 0,
+                    clientY: 0
+                })
+            )
+            return true
+        }
         const { x, y } = centerOf(el)
-
-        dispatchMouse(el, 'pointermove', x, y)
-        dispatchMouse(el, 'mousemove', x, y)
-        dispatchMouse(el, 'pointerdown', x, y)
-        dispatchMouse(el, 'mousedown', x, y)
-        dispatchMouse(el, 'pointerup', x, y)
-        dispatchMouse(el, 'mouseup', x, y)
-        dispatchMouse(el, 'click', x, y)
-        return true
+        return clickAt(el, x, y)
     }
 
     //* simulateClickAt
-    // a click at a chosen point inside an element, given in the element's own CSS
-    // pixels from its top left corner. Same events in the same order as
-    // simulateClick, which is the part that matters: the only difference is where
-    // the pointer is said to be.
-    //
-    // This exists because not everything the game draws is an element. The dragon
-    // and Santa tabs are painted onto a background canvas and hit-tested against
-    // the mouse position, so clicking the canvas is only half of it: the event has
-    // to carry coordinates that land on the tab. A centre click on a canvas that
-    // fills the left column would land on nothing at all.
+    // offsets are CSS pixels from the target's top left, for canvas hit testing
     function simulateClickAt(el, offsetX, offsetY) {
         if (!el) return false
         const rect = el.getBoundingClientRect()
-        const x = rect.left + offsetX
-        const y = rect.top + offsetY
-
-        dispatchMouse(el, 'pointermove', x, y)
-        dispatchMouse(el, 'mousemove', x, y)
-        dispatchMouse(el, 'pointerdown', x, y)
-        dispatchMouse(el, 'mousedown', x, y)
-        dispatchMouse(el, 'pointerup', x, y)
-        dispatchMouse(el, 'mouseup', x, y)
-        dispatchMouse(el, 'click', x, y)
-        return true
+        return clickAt(el, rect.left + offsetX, rect.top + offsetY)
     }
 
     //* typeInto
