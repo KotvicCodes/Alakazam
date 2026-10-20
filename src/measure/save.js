@@ -28,7 +28,7 @@
     // preserve, and if the reason it failed was transient then waiting for the
     // save to change means waiting for the next autosave to try again. A failed
     // read is retried every tick until it works.
-    function tick() {
+    async function tick() {
         const next = savefile.rawFingerprint()
         if (next === fingerprint && current.ok) return
         fingerprint = next
@@ -40,6 +40,15 @@
             lastChangeAt = Date.now()
         }
         window.__alakazam.save = current
+        const previous = window.__alakazam.identity
+        const who = window.Alakazam.identity.fromSave(current)
+        // flush the old namespace before loading a replacement save
+        if (previous && who.known && previous.legacyId !== who.legacyId) {
+            window.__alakazam.identity = { ...who, known: false }
+            await window.Alakazam.store.flush()
+            await window.Alakazam.store.ready(who.legacyId)
+        }
+        if (previous) window.__alakazam.identity = who
     }
 
     //* get
@@ -101,7 +110,7 @@
         }
     }
 
-    registry.register({ name: 'saveWatch', interval: TICK_MS, setting: 'enabled', tick })
+    registry.register({ name: 'saveWatch', interval: TICK_MS, always: true, tick })
 
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.save = {

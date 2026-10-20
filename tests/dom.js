@@ -23,6 +23,10 @@ class El {
         return Array.from(this.classes).join(' ')
     }
 
+    set className(value) {
+        this.classes = new Set(value.split(' ').filter(Boolean))
+    }
+
     get classList() {
         const self = this
         return {

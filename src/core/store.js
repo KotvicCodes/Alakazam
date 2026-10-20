@@ -12,40 +12,19 @@
     // startup; writes go into that cache immediately and are flushed on a debounce
     // so a busy loop cannot hammer the storage quota.
     //
-    // chrome.storage.onChanged doubles as the bridge to the popup, which means no
-    // background service worker and no message passing is needed anywhere.
+    // chrome.storage.onChanged carries settings updates from the popup to every
+    // open game tab. Status uses a separate, tab-specific relay.
     //
     // Nothing here ever stores raw game data: only our own derived state.
 
     const FLUSH_DELAY_MS = 500
-    const SETTINGS_KEY = 'settings'
-
-    //* Default settings
-    // every module checks its own flag before doing anything, so this list is
-    // also the authoritative inventory of what Alakazam can be told to stop doing
-    const DEFAULTS = {
-        enabled: true,
-        autoclick: true,
-        shimmers: true,
-        wrinklers: true,
-        purchase: true,
-        lumps: true,
-        grimoire: true,
-        pantheon: true,
-        dragon: true,
-        garden: true,
-        achievements: true,
-        marketTrading: true,
-        ascend: true,
-        clones: true,
-        gifts: true,
-        hud: true
-    }
+    const { DEFAULTS, SETTINGS_KEY } = window.Alakazam.ui
 
     let namespace = 'legacy:unknown'
     let cache = {}
     let settings = { ...DEFAULTS }
     let loaded = false
+    let lastError = ''
     let flushTimer = null
     let dirty = new Set()
     const subscribers = []
@@ -75,8 +54,12 @@
         const wanted = [SETTINGS_KEY, namespace]
         const got = await new Promise(resolve => {
             try {
-                api.get(wanted, resolve)
+                api.get(wanted, got => {
+                    lastError = chrome.runtime?.lastError?.message || ''
+                    resolve(got || {})
+                })
             } catch (err) {
+                lastError = err.message
                 resolve({})
             }
         })
@@ -162,8 +145,14 @@
 
         return new Promise(resolve => {
             try {
-                api.set(payload, resolve)
+                api.set(payload, () => {
+                    lastError = chrome.runtime?.lastError?.message || ''
+                    if (lastError) for (const key of pending) dirty.add(key)
+                    resolve()
+                })
             } catch (err) {
+                lastError = err.message
+                for (const key of pending) dirty.add(key)
                 resolve()
             }
         })
@@ -205,6 +194,7 @@
 
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.store = {
+        error: () => lastError,
         ready,
         isReady,
         get,

@@ -17,6 +17,7 @@
         {
             "matches": ["https://orteil.dashnet.org/cookieclicker/*"],
             "js": [
+                "src/shared/ui.js",
                 "src/core/savefile.js",
                 "src/core/identity.js",
                 "src/core/store.js",
@@ -60,10 +61,14 @@
                 "src/modules/ascend.js",
                 "src/modules/clones.js",
                 "src/modules/gifts.js",
+                "src/core/status.js",
                 "src/hud.js",
                 "src/main.js"
             ],
             "run_at": "document_idle"
         }
-    ]
+    ],
+    "background": {
+        "service_worker": "src/background.js"
+    }
 }
