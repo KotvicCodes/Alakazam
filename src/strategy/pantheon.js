@@ -6,14 +6,10 @@
     // it exists for the same reason: the layout used to be one of three hand-written
     // presets picked by a single question, "is the autoclicker on".
     //
-    // That question turned out to be the wrong one. The clicker layout leads with
-    // Muridal, whose +15% clicking costs 3% of every building's output, and it is
-    // only worth it while clicking is a large share of measured income. A historical
-    // three-clicks-per-second observation depended on synthetic event detail; it
-    // does not establish a permanent ranking. Both spirits in the idle layout make
-    // golden cookies rarer, by 10% and 15% at the diamond slot, and golden cookies
-    // are a large share of income for something that clicks every one of them within
-    // milliseconds. None of that was priced.
+    // Muridal trades production for clicking, while the idle spirits trade
+    // golden-cookie frequency for production. Which trade wins depends on the
+    // run's measured income shares. The former three-click ceiling was caused by
+    // detail-zero synthetic events, not a limit on normal pointer registration.
     //
     // So: score every layout on what has actually been measured, and let the answer
     // move when the run moves. There are ten usable spirits and three slots, which is

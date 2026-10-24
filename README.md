@@ -276,9 +276,11 @@ reserve policy remains future work.
   resets it on every ascension. Radiant Appetite doubles all production and is
   fourteen building sacrifices up the ladder, which is a bargain even mid-run. The
   aura is not picked from a guide: every aura the dragon knows is scored against
-  what this save actually earns, and the whole table goes to the console. Auras
-  paying for clicks depend on measured click income; Dragon’s Fortune depends on
-  golden cookies remaining on screen, which immediate collection discourages.
+  what this save actually earns, and the whole table goes to the console. Click
+  auras and spirits are valued using measured click income; their rankings can
+  change as clicking's share grows. Dragon's Fortune depends on golden cookies
+  remaining on screen, while Alakazam takes them as soon as each one
+  appears.
   The historical three-clicks-per-second observation came from detail-zero
   synthetic events in the reviewed mirror, not an unconditional game limit. It
   also pets the dragon for its drops, and learns which quarter of the hour
@@ -286,6 +288,34 @@ reserve policy remains future work.
 - **Gift codes** — wraps a gift, keeps the code, and redeems it once the hour the
   game makes you wait is up, or once an ascension has cleared it. That is the
   "No time like the present" achievement, start to finish.
+
+## Click measurements and effect guards
+
+Normal pointer clicks carry `detail: 1` and the appropriate pressed/released button
+state. Keyboard-style activation retains `detail: 0`; that path has a separate
+throttle in the reviewed game. Pacing defaults to 15 clicks/second. Set
+`window.Alakazam.store.setSetting('clicksPerSecond', 10)` in the extension's content
+script console to change the budget (0–60); display refresh and background timer
+limits may reduce actual dispatches. The budget is not a registered-rate guarantee.
+
+Registration and income come from differences in the game's saved click/cookie
+counters over its save timestamps. Until two saves exist, scoring uses the configured
+rate as an explicit estimate; the HUD marks it as estimated. Measured zero stays
+zero. A new run clears every click estimate, newly saved inactivity clears old combo
+income, and measurements expire after 150 seconds without a recent save.
+
+Upgrade safety uses canonical `data-id` values, independent of translated prose.
+Buff headings are mapped to canonical identities using the English and French
+catalog for the reviewed 2.058 game. Missing upgrade IDs suspend upgrade actions;
+unknown buff identities suspend ascension and spells, with a reason in the HUD.
+Dragonflight and all building specials protect ascension. Spell combos use a
+separate production-multiplier policy: Dragonflight is protected but does not trigger
+Force the Hand of Fate, whose Click Frenzy outcome is unavailable during that effect.
+Loans retain their own ascension harvest policy; Sugar blessing is a lasting
+frequency bonus rather than a protected income multiplier.
+
+See [the verification record](docs/click-guards-verification.md) for the pinned-game
+trial, test coverage, and save-lifecycle contract.
 
 ## Future Improvements
 See [docs/ROADMAP.md](docs/ROADMAP.md) for remaining work, including wrinkler

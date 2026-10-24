@@ -794,6 +794,37 @@ async function turn(h, n) {
     }
 }
 
+for (const name of ['Dragonflight', 'Vol de dragon', 'Frénésie', 'Unbekannter Effekt']) {
+    test(`named ${name} prevents the pre-ascension sequence until it ends`, async () => {
+        const h = banker()
+        await h.A.store.ready('t')
+        await h.A.registry.get('ascend').setup()
+        h.game.gainBuff(name)
+        await turn(h, 6)
+        assert.equal(h.A.ascend.state().phase, 'ready')
+        assert.equal(h.game.state.loansTaken.length, 0)
+        assert.match(h.debug().ascend.blocked, /Waiting|suspended/)
+        assert.ok(!h.game.state.log.includes('prompt Ascend'))
+        h.game.loseBuff(name)
+        await turn(h, 6)
+        assert.ok(h.game.state.loansTaken.length > 0)
+    })
+}
+
+test('Dragonflight appearing during loan harvesting also defers the final ascent', async () => {
+    const h = banker({ loanProgress: 0.99 })
+    await h.A.store.ready('t')
+    await h.A.registry.get('ascend').setup()
+    for (let i = 0; i < 10 && h.A.ascend.state().phase !== 'harvest'; i++) await turn(h, 1)
+    assert.equal(h.A.ascend.state().phase, 'harvest')
+    h.game.gainBuff('Dragonflight')
+    await turn(h, 6)
+    assert.ok(!h.game.state.log.includes('prompt Ascend'))
+    h.game.loseBuff('Dragonflight')
+    await turn(h, 2)
+    assert.ok(h.game.state.log.includes('prompt Ascend'))
+})
+
 test('a running production buff holds the ascension back', async () => {
     const h = banker()
     await h.A.store.ready('t')

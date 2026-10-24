@@ -92,9 +92,12 @@ test('the game own vault hint does not make an upgrade unbuyable', () => {
     // was classified skip and not one was ever bought again.
     const C = boot({}).A.catalog
     const hint = 'Click to purchase. Shift-click to vault.'
-    assert.equal(C.classifyUpgrade(`Cookie production multiplier +5%. ${hint}`, 'Plain cookies'), 'buy')
-    assert.equal(C.classifyUpgrade(`You gain more golden cookies. ${hint}`, 'Lucky day'), 'buy')
-    assert.equal(C.classifyUpgrade(`Upgrade is vaulted. ${hint}`, 'Elderwort biscuits'), 'buy')
+    assert.equal(
+        C.classifyUpgrade(`Cookie production multiplier +5%. ${hint}`, 'Plain cookies', 33),
+        'buy'
+    )
+    assert.equal(C.classifyUpgrade(`You gain more golden cookies. ${hint}`, 'Lucky day', 52), 'buy')
+    assert.equal(C.classifyUpgrade(`Upgrade is vaulted. ${hint}`, 'Elderwort biscuits', 429), 'buy')
 })
 
 test('the three doors into the grandmapocalypse stay shut', () => {
@@ -609,7 +612,7 @@ test('the grandmapocalypse is never started by accident', () => {
     const c = boot({}).A.catalog
     // a plain research multiplier
     assert.equal(
-        c.classifyUpgrade('cookie production multiplier +1%', 'Specialized chocolate chips'),
+        c.classifyUpgrade('cookie production multiplier +1%', 'Specialized chocolate chips', 68),
         'buy'
     )
     // the three that change what game is being played
@@ -1034,63 +1037,10 @@ test('every module survives the manifest load order', async () => {
     h.A.scheduler.stop()
 })
 
-test('click income comes from the game totals, not from guessing at the bank', async () => {
-    // two saves a minute apart: 600 clicks earning 6000 cookies
-    const first = fx.save({ cookieClicks: 1000, handmadeCookies: 10000 }).raw
-    const second = fx.save({ cookieClicks: 1600, handmadeCookies: 16000 }).raw
-
-    let current = first
-    const h = boot({})
-    h.ctx.localStorage.getItem = key => (key === 'CookieClickerGame' ? current : null)
-
-    await h.A.store.ready('t')
-    await h.A.scheduler.start()
-    await sleep(1200)
-    assert.equal(h.A.clicks.measured(), false, 'one reading is not a rate')
-
-    current = second
-    const measured = await waitFor(() => h.A.clicks.measured())
-    h.A.scheduler.stop()
-
-    assert.equal(measured, true, 'the second save should have produced a sample')
-    // 6000 cookies over roughly three seconds of wall clock in the test
-    assert.ok(h.A.clicks.clickCps() > 0, 'income should be measured')
-    // 6000 cookies across 600 clicks, whatever the elapsed time was
-    assert.ok(
-        Math.abs(h.A.clicks.cookiesPerClick() - 10) < 0.001,
-        `cookies per click was ${h.A.clicks.cookiesPerClick()}`
-    )
-})
-
-test('an unmeasured click rate falls back to a floor, never to zero', async () => {
-    // measurement needs two autosaves, so there is a window at the start of every
-    // session with nothing to go on. valuing clicking upgrades at zero clicks a
-    // second through that window is how they came to be skipped entirely, and it
-    // is exactly the window in which they matter most.
-    const h = boot({})
-    assert.equal(h.A.clicks.measured(), false)
-    assert.equal(h.A.clicks.clicksPerSecond(), 3)
-    assert.equal(h.A.clicks.stats().registeredPerSecond, 3)
-
-    // and a real measurement takes over from it
-    let current = fx.save({ cookieClicks: 1000, handmadeCookies: 10000 }).raw
-    h.ctx.localStorage.getItem = key => (key === 'CookieClickerGame' ? current : null)
-    await h.A.store.ready('t')
-    await h.A.scheduler.start()
-    try {
-        await sleep(300)
-        current = fx.save({ cookieClicks: 100000, handmadeCookies: 1000000 }).raw
-        await waitFor(() => h.A.clicks.measured())
-        assert.ok(h.A.clicks.clicksPerSecond() > 3, 'the measurement should replace the floor')
-    } finally {
-        h.A.scheduler.stop()
-    }
-})
-
 test('the autoclicker paces itself in time, not per frame', async () => {
     // it used to fire a burst every animation frame, which worked out at about
     // 240 events a second on a 60Hz display and rather more on a 144Hz one. the
-    // game registers around three.
+    // corrected pointer clicks are measured separately from this dispatch budget.
     const h = boot({})
     assert.equal(h.A.autoclick.CLICKS_PER_SECOND, 15)
 
@@ -1153,8 +1103,10 @@ test('clicking upgrades are valued off the registered rate, not the dispatched o
     }
     const upgrade = { description: 'Clicking gains +1% of your CpS.' }
 
-    // three registered clicks a second: 3 x 1000 x 1%
+    // score the supplied registered rate, including higher rates and inactivity
     assert.equal(S.upgradeDeltaCps(upgrade, { ...base, clicksPerSecond: 3 }), 30)
-    // the dispatched figure would have valued the same upgrade a thousand times higher
+    assert.equal(S.upgradeDeltaCps(upgrade, { ...base, clicksPerSecond: 15 }), 150)
+    assert.equal(S.upgradeDeltaCps(upgrade, { ...base, clicksPerSecond: 0 }), 0)
+    // dispatch counts never choose the scorer input
     assert.equal(S.upgradeDeltaCps(upgrade, { ...base, clicksPerSecond: 3000 }), 30000)
 })

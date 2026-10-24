@@ -11,14 +11,9 @@
     // empty, corrects a slot when it is clearly wrong and swaps are plentiful, and
     // otherwise does nothing at all.
     //
-    //! What changed
-    // What "clearly wrong" means used to be one question, "is the autoclicker on",
-    // answered with one of three hand-written layouts. Both answers were wrong for
-    // this bot: Muridal's clicking bonus depends on measured click income, and
-    // the idle layout's two spirits between them make golden cookies a
-    // fifth rarer, which is a real cost to something that clicks every one of them.
-    // Now strategy/pantheon.js prices every layout against what has been measured,
-    // and this module's job is only to be reluctant about acting on it.
+    // strategy/pantheon.js prices every layout using measured income shares.
+    // Corrected pointer events can increase the click share substantially; this
+    // module acts only when the resulting gain justifies a scarce swap.
 
     const { act, save, store, income, registry } = window.Alakazam
     const { PRESETS, SLOTS, nameOf } = window.Alakazam.data.gods
