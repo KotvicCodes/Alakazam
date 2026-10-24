@@ -478,3 +478,37 @@ test('user changes while verifying a market fill stop further attempts', async (
     await trading
     assert.equal(h.game.state.log.length, 1)
 })
+
+test('identical-price redraws after a purchase do not strand later transactions', async () => {
+    const h = boot({ game: { bank: 5000, crates: [] } })
+    const price = h.game.doc.getElementById('product0').querySelector('.price')
+    const initial = price.innerText
+    const observers = new Set()
+    h.ctx.MutationObserver = class {
+        constructor(callback) {
+            this.callback = callback
+        }
+        observe() {
+            observers.add(this)
+        }
+        disconnect() {
+            observers.delete(this)
+        }
+    }
+    // Model free buildings being bought back: ownership increases while the
+    // game's draw writes the same price text. The event handler still buys.
+    Object.defineProperty(price, 'innerText', {
+        get: () => initial,
+        set: () => {
+            for (const observer of observers) observer.callback([{ target: price }])
+        }
+    })
+    for (let i = 0; i < 3; i++) {
+        const product = h.A.act.store.unitProducts().find(item => item.index === 0)
+        assert.ok(product, 'unit prices remain usable after the previous redraw')
+        const result = await h.A.act.store.buy(product, 1, 5000)
+        assert.equal(result.bought, true)
+        assert.equal(h.game.state.owned[0], i + 1)
+    }
+    assert.equal(observers.size, 0, 'observers are disconnected after the redraw')
+})

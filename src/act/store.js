@@ -100,30 +100,33 @@
         redraw = null
     }
 
-    function change(mode, amount, refresh = false) {
-        const changed = refresh || currentMode() !== mode || currentAmount() !== amount
-        if (changed) {
-            clearRedraw()
-            const pending = { before: prices(), mode, amount, drawn: false }
-            redraw = pending
-            // text assignments may redraw the same price (for example when a
-            // cancelled switch is restored before the next frame)
-            if (window.MutationObserver) {
-                pending.observer = new MutationObserver(records => {
-                    pending.drawn ||= records.some(record => {
-                        const node =
-                            record.target.nodeType === 3 ? record.target.parentElement : record.target
-                        return node?.classList?.contains('price')
-                    })
+    function observeRedraw(mode, amount) {
+        clearRedraw()
+        const pending = { before: prices(), mode, amount, drawn: false }
+        redraw = pending
+        // text assignments may redraw the same price (for example when a
+        // cancelled switch is restored before the next frame)
+        if (window.MutationObserver) {
+            pending.observer = new MutationObserver(records => {
+                pending.drawn ||= records.some(record => {
+                    const node =
+                        record.target.nodeType === 3 ? record.target.parentElement : record.target
+                    return node?.classList?.contains('price')
                 })
-                const products = el('products')
-                if (products)
-                    pending.observer.observe(products, {
-                        childList: true,
-                        characterData: true,
-                        subtree: true
-                    })
-            }
+            })
+            const products = el('products')
+            if (products)
+                pending.observer.observe(products, {
+                    childList: true,
+                    characterData: true,
+                    subtree: true
+                })
+        }
+    }
+
+    function change(mode, amount, refresh = false) {
+        if (refresh || currentMode() !== mode || currentAmount() !== amount) {
+            observeRedraw(mode, amount)
         }
         // mode first: the game converts Sell/all to Buy/100 automatically
         if (currentMode() !== mode) setMode(mode)
@@ -262,7 +265,8 @@
                     return
                 }
                 if (!token.valid()) return
-                const beforePrices = prices()
+                // observe before clicking: a real redraw may retain the same price
+                observeRedraw('buy', count)
                 simulateClick(current.element)
                 const after = await window.Alakazam.transactions.until(token, () => {
                     const p = live.readProducts().find(p => p.index === current.index)
@@ -276,9 +280,9 @@
                 result = { bought: true, cost, amount }
                 // do not score another purchase against a price face from before this one
                 if (readBulkPrice(after) === cost) {
-                    clearRedraw()
-                    redraw = { before: beforePrices, mode: 'buy', amount: count }
                     await ready(token)
+                } else {
+                    clearRedraw()
                 }
             },
             lease
