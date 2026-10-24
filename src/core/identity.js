@@ -11,8 +11,7 @@
     //* hash
     // FNV-1a, 32 bit, rendered as 8 hex characters. we only need a short stable
     // key for storage namespacing, so a non-cryptographic hash is the right tool.
-    // hashing rather than storing the raw fields also keeps the bakery name, which
-    // is user data, out of anything we persist or print.
+    // bakery names are never part of an identity or printed in logs.
     function hash(str) {
         let h = 0x811c9dc5
         for (let i = 0; i < str.length; i++) {
@@ -65,7 +64,7 @@
     //* bakeryName
     // the player's own bakery name, needed so the achievement routines can put it
     // back after temporarily renaming the bakery. treated as user data: returned
-    // to callers on request, never logged and never persisted.
+    // to callers on request and never logged. Temporary undo records may persist it.
     function bakeryName(save) {
         const s = save || savefile.read()
         return s && s.ok && s.run ? s.run.bakeryName : ''

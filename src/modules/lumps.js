@@ -29,7 +29,7 @@
     // that survives a game patch (the bitfield is by upgrade id, and ids move), so
     // the schedule is measured off the lump itself instead. See lifeSpan below.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('lumps')
     const { save, store, registry } = window.Alakazam
 
     const INTERVAL_MS = 30000

@@ -3,7 +3,15 @@
     const { store, scheduler, registry, live, save, act, ui, status } = window.Alakazam
     const { formatNumber, formatDuration } = window.Alakazam.parse
     const { text } = ui
-    let root, body, summaryBody, pauseButton, foldButton, stripStatus, controls
+    let root,
+        body,
+        summaryBody,
+        pauseButton,
+        foldButton,
+        stripStatus,
+        controls,
+        retryButton,
+        discardButton
     let dock = 'bottom-left'
     let dragPosition = null
     const cells = new Map()
@@ -80,6 +88,19 @@
         controls = ui.buildControls(body, key => store.setSetting(key, store.setting(key) === false))
         summaryBody = el('div')
         body.appendChild(summaryBody)
+        retryButton = button('alakazam-retry-storage', 'Retry saving', async () => {
+            try {
+                await store.flush()
+            } catch {
+                /* the summary retains the error */
+            }
+            render()
+        })
+        discardButton = button('alakazam-discard-hoard', 'Discard hoard for this ascent', () => {
+            window.Alakazam.ascend.discardHoard(discardButton.dataset.decisionId)
+            render()
+        })
+        body.append(retryButton, discardButton)
         root.append(head, body)
         document.body.appendChild(root)
         dock = store.get('hudDock', 'bottom-left')
@@ -218,7 +239,9 @@
         // distinguish saved registration from the configured startup estimate.
         row(
             'clicks',
-            click.measured ? `${click.registeredPerSecond}/s` : `~${click.estimatedPerSecond}/s (estimate)`
+            click.measured
+                ? `${click.registeredPerSecond}/s`
+                : `~${click.estimatedPerSecond}/s (estimate)`
         )
         // the action is dropped: every reason already says what it is, and the
         // panel spent nearly all its time showing the word "wait"
@@ -387,6 +410,9 @@
         seen = new Set()
         cellIndex = 0
         summary()
+        retryButton.hidden = !store.stats().error
+        discardButton.hidden = !window.__alakazam.ascend?.hoardBlocked
+        discardButton.dataset.decisionId = window.__alakazam.ascend?.decisionId || ''
         for (const [key, cell] of cells) cell.node.hidden = !seen.has(key)
         place()
     }

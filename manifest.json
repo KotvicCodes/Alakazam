@@ -21,6 +21,7 @@
                 "src/core/savefile.js",
                 "src/core/identity.js",
                 "src/core/store.js",
+                "src/core/safety.js",
                 "src/core/registry.js",
                 "src/core/scheduler.js",
                 "src/parse.js",

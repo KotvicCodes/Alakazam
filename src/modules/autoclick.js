@@ -6,7 +6,7 @@
     // The configured rate is an input budget, never a claim about registration:
     // measure/clicks.js reads the game's saved counters to measure what landed.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('autoclick')
     const { registry, clicks, store } = window.Alakazam
 
     const CLICKS_PER_SECOND = 15

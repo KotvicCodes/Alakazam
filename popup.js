@@ -1,16 +1,17 @@
 ;(function () {
     //! Active Tab Popup
     const { ui, parse, store } = window.Alakazam
-    const { SETTINGS_KEY, STATUS_PREFIX, DEFAULTS, STALE_MS, text } = ui
+    const { STATUS_PREFIX, DEFAULTS, STALE_MS, text } = ui
     const byId = id => document.getElementById(id)
     let settings = { ...DEFAULTS }
     let storageReady = null
 
     function ready() {
-        if (!storageReady) storageReady = store.ready('popup').catch(error => {
-            storageReady = null
-            throw error
-        })
+        if (!storageReady)
+            storageReady = store.ready('popup').catch(error => {
+                storageReady = null
+                throw error
+            })
         return storageReady
     }
     let activeTabId = null
@@ -114,7 +115,7 @@
         if (refreshing) return
         refreshing = true
         try {
-            const [tabs, got] = await Promise.all([
+            const [tabs] = await Promise.all([
                 call(chrome.tabs, 'query', { active: true, currentWindow: true }),
                 ready()
             ])
@@ -161,13 +162,21 @@
         buttons = ui.buildControls(byId('controls'), toggle)
         byId('pauseBtn').addEventListener('click', () => toggle('enabled'))
         byId('refreshBtn').addEventListener('click', async () => {
-            try { await ready(); await store.flush(); showError('') }
-            catch (error) { showError(`Could not save settings: ${error.message}`) }
+            try {
+                await ready()
+                await store.flush()
+                showError('')
+            } catch (error) {
+                showError(`Could not save settings: ${error.message}`)
+            }
             await refresh()
+        })
+        store.subscribe(() => {
+            settings = store.allSettings()
+            update()
         })
         chrome.storage.onChanged.addListener((changes, area) => {
             if (area !== 'local') return
-            if (changes[SETTINGS_KEY]) settings = { ...DEFAULTS, ...changes[SETTINGS_KEY].newValue }
             const status = changes[STATUS_PREFIX + activeTabId]?.newValue
             if (status && status.pageId === pageId && status.tabId === activeTabId) current = status
             update()

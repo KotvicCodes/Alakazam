@@ -262,6 +262,7 @@
     function stop() {
         window.Alakazam.transactions?.cancel()
         running = false
+        window.Alakazam.safety.invalidate()
         if (driver) clearInterval(driver)
         driver = null
     }
@@ -269,10 +270,12 @@
     function pause() {
         window.Alakazam.transactions?.cancel()
         paused = true
+        window.Alakazam.safety.pause()
     }
 
     function resume() {
         paused = false
+        window.Alakazam.safety.resume()
     }
 
     function isPaused() {

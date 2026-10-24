@@ -33,7 +33,7 @@
     // way, by opening the options menu and seeing whether the buttons are there,
     // and the cheap checks come first so that hardly ever happens.
 
-    const { simulateClick, typeInto } = window.Alakazam.input
+    const { simulateClick, typeInto } = window.Alakazam.safety.input('gifts')
     const { live, save, store, buffs, registry } = window.Alakazam
 
     const INTERVAL_MS = 60000
@@ -135,7 +135,7 @@
     }
 
     function promptIs(name) {
-        return !!el('promptContent' + name)
+        return window.Alakazam.safety.ownsPrompt('gifts', name)
     }
 
     //! Eligibility
@@ -182,7 +182,7 @@
     }
 
     function wait(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+        return window.Alakazam.safety.wait('gifts', ms)
     }
 
     //* stepOnce

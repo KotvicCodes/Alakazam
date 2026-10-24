@@ -201,7 +201,8 @@
             await inFlight.catch(() => {})
             return flush()
         }
-        if (!dirty.size) return
+        if (!dirty.size) return true
+        if (!backend()) return false
         const pending = new Map(dirty)
         const perform = async () => {
             try {
@@ -228,6 +229,7 @@
         inFlight = perform()
         try {
             await inFlight
+            return true
         } finally {
             inFlight = null
         }

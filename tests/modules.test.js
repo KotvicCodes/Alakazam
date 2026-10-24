@@ -410,7 +410,10 @@ test('no other prompt is answered on the way past', async () => {
     h.game.openCustomizer()
     await lumpTick(h)
     await sleep(200)
-    assert.ok(h.game.state.log.includes('levelled Wizard tower'))
+    assert.ok(
+        !h.game.state.log.includes('levelled Wizard tower'),
+        'deferred while a foreign prompt is open'
+    )
     assert.ok(h.game.doc.getElementById('promptContentCustomizeYou'))
 })
 

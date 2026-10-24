@@ -80,6 +80,30 @@ function boot(opts = {}) {
         vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f })
     }
 
+    const { savefile } = ctx.window.Alakazam
+    const initial = savefile.read()
+    const scalar = initial.scalars || {}
+    g.state.wrinklerHoard = scalar.wrinklersAmount || 0
+    g.state.wrinklers = scalar.wrinklersNumber || 0
+    g.state.shinyHoard = scalar.wrinklersShinyAmount || 0
+    g.state.shinyWrinklers = scalar.wrinklersShiny || 0
+    g.state.exportSave = () => {
+        const fx = require('./fixtures')
+        const decoded = savefile.decode(opts.save || fx.save().raw)
+        const sections = decoded.split('|')
+        const run = sections[2].split(';')
+        run[2] = String(Date.now())
+        run[5] = g.state.genes.join(',')
+        sections[2] = run.join(';')
+        const scalars = sections[4].split(';')
+        scalars[23] = g.state.wrinklerHoard
+        scalars[24] = g.state.wrinklers
+        scalars[40] = g.state.shinyWrinklers
+        scalars[41] = g.state.shinyHoard
+        sections[4] = scalars.join(';')
+        return fx.encode(sections.join('|'))
+    }
+
     return {
         A: ctx.window.Alakazam,
         debug: () => ctx.window.__alakazam,

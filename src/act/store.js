@@ -14,7 +14,9 @@
     // price reads wait for a changed store face after either kind of switch.
     // quantities are scored only in Buy/1 and execution must change ownership.
 
-    const { simulateClick } = window.Alakazam.input
+    let activeContext = null
+    const simulateClick = node =>
+        (activeContext || window.Alakazam.safety.scope('purchase')).input('simulateClick', node)
     const { parseGameNumber } = window.Alakazam.parse
     const { PRICE_GROWTH } = window.Alakazam.data.buildings
 
@@ -154,9 +156,13 @@
     }
 
     async function withBulk(mode, amount, body, lease) {
+        const context = lease && typeof lease.check === 'function' ? lease : null
+        if (context) lease = null
         const own = !lease
-        lease = lease || window.Alakazam.transactions.acquire('purchase')
+        lease = lease || window.Alakazam.transactions.acquire(context?.owner || 'purchase', context)
         if (!lease || !lease.valid()) return null
+        const previousContext = activeContext
+        activeContext = lease.ctx
         const prevMode = currentMode()
         const prevAmount = currentAmount()
         try {
@@ -170,15 +176,20 @@
                 if (!(await ready(lease))) return null
             }
             if (!lease.valid() || currentMode() !== mode || currentAmount() !== amount) return null
+            lease.ctx.check()
             return await body(lease)
         } finally {
             // preserve controls the player chose while this transaction was waiting
-            if (!lease.userControls && currentMode() === mode && currentAmount() === amount) {
-                change(prevMode, prevAmount)
-            } else {
-                clearRedraw()
+            try {
+                if (!lease.userControls && currentMode() === mode && currentAmount() === amount) {
+                    lease.ctx.cleanup(() => change(prevMode, prevAmount))
+                } else {
+                    clearRedraw()
+                }
+            } finally {
+                activeContext = previousContext
+                if (own) lease.release()
             }
-            if (own) lease.release()
         }
     }
 
