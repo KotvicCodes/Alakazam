@@ -29,7 +29,7 @@
     //
     // Alakazam clicks every golden cookie it sees, within milliseconds, forever.
     // So Holobore would be ejected almost immediately and take the whole swap
-    // budget with it. It is excluded from every preset on purpose.
+    // budget with it. It is excluded by the scorer’s unusable-spirit policy.
     const UNUSABLE = [0]
 
     //* Cyclius cannot be chased

@@ -4,8 +4,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Package manager lock files
-package-lock.json
+# Other package manager lock files
 yarn.lock
 pnpm-lock.yaml
 
@@ -37,3 +36,8 @@ temp/
 .env
 .env.local
 .env.*.local
+
+# Disposable browser test assets & results
+.cache/
+playwright-report/
+test-results/

@@ -15,22 +15,16 @@
     // One thing the save does not settle is whether a plant has finished growing.
     // Tiles carry an age, but the age at which a plant counts as mature differs
     // per species, and those thresholds are not something this extension can read.
-    // So maturity is confirmed the way a player confirms it: by hovering the tile
-    // and reading what the game says. That is a handful of hovers every few
-    // minutes, on the cold path, behind the same mutex as everything else.
+    // So maturity is confirmed from the live growth sprite, the same four stages
+    // a player sees. Tooltip descriptions also mention maturity on young plants
+    // and cannot establish that a plant is ready to harvest.
 
     const { simulateClick } = window.Alakazam.input
-    const { catalog, save, store, registry } = window.Alakazam
+    const { save, store, registry } = window.Alakazam
     const plants = window.Alakazam.data.plants
 
     const INTERVAL_MS = 20000
     const SIZE = 6
-
-    // how long a stage reading stays good for. the garden only advances on its own
-    // soil tick, three minutes at the fastest, so this is generous.
-    const STAGE_TTL_MS = 60000
-
-    const stageCache = new Map() // "x,y" -> { mature, plantId, at }
 
     let lastActionAt = 0
 
@@ -106,26 +100,35 @@
     }
 
     //* stageOf
-    // confirm whether a tile's plant has finished growing, by reading the tooltip
-    // the game shows on hover. cached, because the garden changes slowly.
-    async function stageOf(tile) {
-        const key = `${tile.x},${tile.y}`
-        const hit = stageCache.get(key)
-        if (hit && hit.plantId === tile.plantId && Date.now() - hit.at < STAGE_TTL_MS) {
-            return hit.mature
-        }
-
+    // buildPlot in the game's minigameGarden.js renders bud/sprout/bloom/mature
+    // in columns 1/2/3/4 of its 48px sprite sheet. buildPanel renders each seed
+    // in column 0 of the same species row (which is NOT always the plant id).
+    // https://github.com/ozh/cookieclicker/blob/gh-pages/minigameGarden.js
+    // compare those live sprites instead of interpreting localized tooltip prose.
+    // never cache readiness: even the same species can be replanted between ticks.
+    function stageOf(tile) {
         const el = tileEl(tile.x, tile.y)
-        if (!el) return false
-        const tip = await catalog.readTooltip(el)
-        if (!tip) return false
+        const icon = document.getElementById(`gardenTileIcon-${tile.x}-${tile.y}`)
+        const seed = seedEl(tile.plantId)
+        const seedIcon = seed ? seed.querySelector('.gardenSeedIcon') : null
+        if (!el || !el.isConnected || !icon || !el.contains(icon) || !seedIcon) return null
+        if (el.style.display !== 'block' || icon.style.display !== 'block') return null
+        const rect = el.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0) return null
 
-        // the game names the stage in the tile tooltip. anything that is not
-        // clearly mature is left alone, so a wording change means we harvest
-        // nothing rather than harvesting early.
-        const mature = /\bmature\b/i.test(tip.text)
-        stageCache.set(key, { mature, plantId: tile.plantId, at: Date.now() })
-        return mature
+        const position = spritePosition(icon)
+        const reference = spritePosition(seedIcon)
+        if (!position || !reference || reference.x !== 0 || position.y !== reference.y) return null
+        const stage = -position.x / 48
+        return Number.isInteger(stage) && stage >= 1 && stage <= 4 ? stage : null
+    }
+
+    function spritePosition(el) {
+        const match = /^(-?\d+)px\s+(-?\d+)px$/.exec(el.style.backgroundPosition || '')
+        if (!match) return null
+        const x = Number(match[1])
+        const y = Number(match[2])
+        return y <= 0 && y % 48 === 0 ? { x, y } : null
     }
 
     //* worthHarvesting
@@ -141,11 +144,13 @@
         return null
     }
 
-    async function harvest(tile, why) {
+    function harvest(tile, why) {
         const el = tileEl(tile.x, tile.y)
-        if (!el) return false
+        // the save can lag behind a harvest, death or replant. verify the current
+        // visible species and stage immediately before clicking, without a hover
+        // or an await during which the tile could change.
+        if (!el || stageOf(tile) !== 4) return false
         simulateClick(el)
-        stageCache.delete(`${tile.x},${tile.y}`)
         store.update('gardenHarvests', 0, n => n + 1)
         console.log(`Alakazam: harvesting ${tile.plant.name} at ${tile.x},${tile.y} (${why})`)
         return true
@@ -162,6 +167,10 @@
         const el = tileEl(tile.x, tile.y)
         if (!seed || !el) return false
         if (seed.classList && seed.classList.contains('locked')) return false
+        // an autosave may still call this empty after a plant has appeared here.
+        // clicking an occupied tile would unearth it instead of planting.
+        const icon = document.getElementById(`gardenTileIcon-${tile.x}-${tile.y}`)
+        if (!icon || !el.contains(icon) || icon.style.display !== 'none') return false
         simulateClick(seed)
         simulateClick(el)
         return true
@@ -208,9 +217,8 @@
         for (const tile of s.occupied) {
             const why = worthHarvesting(tile, s)
             if (!why) continue
-            if (!(await stageOf(tile))) continue
+            if (!harvest(tile, why)) continue
             lastActionAt = Date.now()
-            await harvest(tile, why)
             return
         }
 

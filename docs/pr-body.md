@@ -1,3 +1,10 @@
+> Historical Krumblor PR description (v1.3.2). This records that change, not the
+> current validation status. The three-clicks-per-second observation below came
+> from detail-zero synthetic events and is not a universal game limit. Use the
+> measured-income scorers and [current testing policy](TESTING.md) when evaluating
+> strategies. The later audit used a disposable 2.058 mirror, with no canonical-site
+> or native-extension verification at that time.
+
 # Krumblor
 
 Alakazam has never touched the cookie dragon, and it has been choosing pantheon
