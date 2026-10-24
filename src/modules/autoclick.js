@@ -2,22 +2,11 @@
 // share one scope, so bare top-level declarations across files would collide
 ;(function () {
     //! Autoclicker
-    // A real user clicks a few times a second; an autoclicker clicks many times a
-    // second. Every click here is still a genuine dispatched event (fair-play),
-    // we simply issue a burst of them per animation frame.
-    //
-    // It used to fire a burst per animation frame: fifty at first, then four,
-    // which still worked out at around 240 events a second on a 60Hz display.
-    // Watching the game's own tally makes it clear that almost none of that lands.
-    // However fast the clicks arrive, even thousands at once, the game registers
-    // roughly three a second. Everything above that was pure cost: events that
-    // several handlers each had to consider before nothing came of them.
-    //
-    // So the rate is capped in time rather than per frame, which also makes it a
-    // number that means something. Fifteen a second is comfortably above what the
-    // game has been observed to consume, low enough to be unremarkable, and
-    // independent of the display's refresh rate, which a per-frame burst never
-    // was.
+    // Dispatches at a configured rate independent of the display's refresh rate.
+    // Earlier experiments observed about three registered clicks per second with
+    // detail-zero synthetic events. That was an event-path throttle in the reviewed
+    // game, not a universal ceiling. Keep rate policy separate from measured income;
+    // input semantics and pacing changes belong with their browser regressions.
     //
     // Pacing happens here rather than through the scheduler's interval because the
     // millisecond driver runs on a 50ms tick, and 15 a second does not divide into

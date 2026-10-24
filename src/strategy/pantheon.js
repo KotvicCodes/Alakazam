@@ -8,9 +8,9 @@
     //
     // That question turned out to be the wrong one. The clicker layout leads with
     // Muridal, whose +15% clicking costs 3% of every building's output, and it is
-    // only worth it while clicking is a large share of income. The game registers
-    // about three clicks a second however many are dispatched, so after the opening
-    // minutes of a run it never is. Meanwhile both spirits in the idle layout make
+    // only worth it while clicking is a large share of measured income. A historical
+    // three-clicks-per-second observation depended on synthetic event detail; it
+    // does not establish a permanent ranking. Both spirits in the idle layout make
     // golden cookies rarer, by 10% and 15% at the diamond slot, and golden cookies
     // are a large share of income for something that clicks every one of them within
     // milliseconds. None of that was priced.

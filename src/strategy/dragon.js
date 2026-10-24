@@ -11,16 +11,13 @@
     //   clicked here within milliseconds of appearing, so there is almost never one
     //   on screen to be paid for. The aura most guides put second is close to inert.
     //
-    //   Dragonflight multiplies click power by 1111 for ten seconds. The game
-    //   registers about three clicks a second however many are dispatched, so those
-    //   ten seconds are thirty clicks, not the hundreds a human comboer gets.
+    //   Dragonflight multiplies click power by 1111 for ten seconds. Its value and
+    //   Dragon Cursor's 5% clicking bonus depend on measured click income. Earlier
+    //   three-clicks-per-second observations used detail-zero synthetic events;
+    //   they are not an unconditional game limit or a reason to freeze the ranking.
     //
-    //   Dragon Cursor adds 5% to clicking, and clicking is a small share of income
-    //   for the same reason.
-    //
-    // Radiant Appetite doubles production and does not care how the game is played,
-    // which is why it wins here, and why it is worth being able to show that with
-    // numbers rather than asserting it. Every candidate returns the terms behind its
+    // Radiant Appetite doubles production. Compare it with the measured alternatives
+    // rather than assuming a winner. Every candidate returns the terms behind its
     // score so modules/dragon.js can print the whole table.
     //
     //! Units

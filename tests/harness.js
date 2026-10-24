@@ -59,10 +59,10 @@ function boot(opts = {}) {
         console,
         document: g.doc,
         chrome,
-        setTimeout,
-        clearTimeout,
-        setInterval,
-        clearInterval,
+        setTimeout: opts.clock?.setTimeout || setTimeout,
+        clearTimeout: opts.clock?.clearTimeout || clearTimeout,
+        setInterval: opts.clock?.setInterval || setInterval,
+        clearInterval: opts.clock?.clearInterval || clearInterval,
         requestAnimationFrame: fn => rafQueue.push(fn),
         MouseEvent: FakeEvent,
         PointerEvent: FakeEvent,
@@ -86,6 +86,7 @@ function boot(opts = {}) {
             getItem: k => (opts.save && k === 'CookieClickerGame' ? opts.save : null)
         }
     }
+    if (opts.clock) ctx.Date = opts.clock.Date
     ctx.window = ctx
     ctx.PointerEvent = FakeEvent
     vm.createContext(ctx)
