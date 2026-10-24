@@ -24,6 +24,7 @@
                 "src/core/scheduler.js",
                 "src/parse.js",
                 "src/input.js",
+                "src/core/transactions.js",
                 "src/data/buildings.js",
                 "src/data/gods.js",
                 "src/data/dragon.js",
