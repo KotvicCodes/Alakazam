@@ -99,6 +99,9 @@ h.A.registry.get('clicks').tick()
 
 - `openGame(page, 'EN' | 'FR')`, `localOnly(context)`, `loadAlakazam(page)`:
   disposable language-specific sessions, request isolation, and manual module setup.
+  `openGame` writes the game's own initial save and reloads before returning, so
+  fresh-start save recovery cannot overwrite later unsaved fixture state. A browser
+  regression holds the pinned game's recovery timer and verifies this isolation.
 - `transition(page, stage)`: actual game prompts and ascend/reincarnate transitions.
   Stages are `ascend-prompt`, `intro`, `ascending`, `reincarnate-prompt`,
   `reincarnating`, `playing`, in that order. Only animation tails are shortened.

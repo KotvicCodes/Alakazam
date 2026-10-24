@@ -20,7 +20,8 @@ async function openGame(page, language = 'EN') {
         localStorage.setItem('CookieClickerLang', language)
     }, language)
     await page.goto(origin)
-    await page.waitForFunction(() => window.Game?.ready && Game.ObjectsById?.length === 20)
+    const ready = () => window.Game?.ready && Game.ObjectsById?.length === 20
+    await page.waitForFunction(ready)
     expect(await page.evaluate(() => String(Game.version))).toBe(pin.version)
     await page.evaluate(() => {
         Game.prefs.autosave = 0
@@ -29,6 +30,12 @@ async function openGame(page, language = 'EN') {
         Game.ClosePrompt()
         Game.WriteSave()
     })
+    // A fresh game schedules a delayed LoadSave retry. It can reload the save
+    // above over later unsaved fixture changes, including removing buffs. Start
+    // a new document with that real save so startup succeeds without a retry.
+    await page.reload()
+    await page.waitForFunction(ready)
+    await page.evaluate(() => Game.ClosePrompt())
 }
 
 async function loadAlakazam(page) {

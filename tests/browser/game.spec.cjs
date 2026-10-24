@@ -54,6 +54,41 @@ test('French fixtures use game-generated tooltips', async ({ page, context }) =>
     // Guard/classification correctness belongs with the localization fix.
 })
 
+test('fresh fixtures survive the delayed startup save retry', async ({ page, context }) => {
+    await localOnly(context)
+    await page.addInitScript(() => {
+        const schedule = window.setTimeout.bind(window)
+        // Hold only the pinned game's fresh-start recovery callback so the race
+        // is reproducible regardless of machine speed. A reload discards it.
+        window.runStartupSaveRetry = () => {}
+        window.setTimeout = (callback, delay, ...args) => {
+            if (
+                delay === 500 &&
+                typeof callback === 'function' &&
+                callback.toString().includes('Game.LoadSave(local)')
+            ) {
+                sessionStorage.setItem(
+                    'heldStartupSaveRetries',
+                    String(Number(sessionStorage.getItem('heldStartupSaveRetries')) + 1)
+                )
+                window.runStartupSaveRetry = () => callback(...args)
+                return schedule(() => {}, 0)
+            }
+            return schedule(callback, delay, ...args)
+        }
+    })
+    await openGame(page, 'FR')
+    expect(await page.evaluate(() => sessionStorage.getItem('heldStartupSaveRetries'))).toBe('1')
+    await expect(await buffTooltip(page)).toContainText('Frénésie')
+    await page.evaluate(() => {
+        Game.cookies = 123
+        window.runStartupSaveRetry()
+    })
+    expect(await page.evaluate(() => Game.cookies)).toBe(123)
+    await expect(page.locator('#buffs .crate')).toHaveCount(1)
+    await expect(await buffTooltip(page)).toContainText('Frénésie')
+})
+
 test('lump fixture exposes live changes while the autosave stays fixed', async ({ game }) => {
     const raw = await lumpReserve(game)
     await game.evaluate(() => {
