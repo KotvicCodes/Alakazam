@@ -194,16 +194,19 @@
 
     function stop() {
         running = false
+        window.Alakazam.safety.invalidate()
         if (driver) clearInterval(driver)
         driver = null
     }
 
     function pause() {
         paused = true
+        window.Alakazam.safety.pause()
     }
 
     function resume() {
         paused = false
+        window.Alakazam.safety.resume()
     }
 
     function isPaused() {

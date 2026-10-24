@@ -10,7 +10,8 @@
     // A module is:
     //   name      unique, and by default also the settings key that gates it
     //   interval  'frame' to run once per animation frame, or milliseconds
-    //   tick(ctx) the work. may be async; the scheduler will not re-enter it
+    //   tick(ctx) the work. ctx.task keeps cancellation identity across awaits;
+    //             the scheduler will not re-enter it
     //   setting   optional settings key when it differs from the name
     //   setup()   optional one-off, awaited once before the first tick
     //
@@ -35,7 +36,7 @@
             // that can unpause it again
             always: mod.always === true,
             setup: typeof mod.setup === 'function' ? mod.setup : null,
-            tick: mod.tick
+            tick: ctx => window.Alakazam.safety.run(entry, mod.tick, ctx)
         }
         const existing = modules.findIndex(m => m.name === entry.name)
         if (existing !== -1) modules[existing] = entry

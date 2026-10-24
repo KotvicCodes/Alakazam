@@ -38,11 +38,11 @@
     // Click one loan slot. Returns whether the click was issued, not whether the
     // loan was granted: the game decides that in its own handler, and the honest
     // confirmation is the buff appearing, which the caller watches for.
-    function take(id) {
+    function take(id, ctx = window.Alakazam.safety.context('ascend')) {
         if (!offered(id)) return false
         const loan = byId(id)
         const el = document.getElementById(loan.selector)
-        simulateClick(el)
+        ctx.input('simulateClick', el)
         return true
     }
 

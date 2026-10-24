@@ -229,8 +229,7 @@
 
     //* parseRun
     // section 2: startDate;fullDate;lastDate;bakeryName;seed
-    // seed is the five-letter per-save RNG seed. it is what makes the game's
-    // random events reproducible, and it doubles as a stable save identifier.
+    // seed is the per-run RNG seed. fullDate is the stable legacy identifier.
     function parseRun(section) {
         const bits = (section || '').split(';')
         return {

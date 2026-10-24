@@ -22,7 +22,7 @@
     // measure/live.js, so a stale catalog only makes scoring slightly out of date,
     // never a purchase wrong.
 
-    const { hoverOn, hoverOff } = window.Alakazam.input
+    const { hoverOff } = window.Alakazam.input
     const { parseGameNumber, firstNumberIn } = window.Alakazam.parse
     const { live, registry } = window.Alakazam
 
@@ -65,12 +65,17 @@
     //* readTooltip
     // hovers an element, lets the game populate #tooltip, reads it, hovers off.
     // returns null rather than throwing when the lock is already held.
-    async function readTooltip(el) {
-        if (!el || hovering) return null
+    async function readTooltip(el, ctx = window.Alakazam.safety.scope('catalog')) {
+        ctx.check()
+        if (!el || hovering || userIsBusy()) return null
+        const lease = window.Alakazam.safety.acquire('tooltip', ctx.owner)
+        if (!lease) return null
         hovering = true
         try {
-            hoverOn(el)
+            ctx.input('hoverOn', el)
             await settle()
+            ctx.check()
+            if (!lease.valid()) return null
             const tip = document.getElementById('tooltip')
             const priceEl = tip ? tip.querySelector('.price') : null
             const nameEl = tip ? tip.querySelector('.name') : null
@@ -79,11 +84,15 @@
                 price: priceEl ? parseGameNumber(priceEl.innerText) : NaN,
                 name: nameEl ? nameEl.innerText.trim() : ''
             }
-            hoverOff(el)
             hovers++
             return out
         } finally {
-            hovering = false
+            try {
+                if (lease.valid()) hoverOff(el)
+            } finally {
+                lease.release()
+                hovering = false
+            }
         }
     }
 

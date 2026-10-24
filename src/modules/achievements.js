@@ -24,7 +24,7 @@
     // only a few, and only after a cooldown. A routine whose menu is not even
     // drawn yet costs nothing and is simply looked at again next tick.
 
-    const { simulateClick, typeInto } = window.Alakazam.input
+    const { simulateClick, typeInto } = window.Alakazam.safety.input('achievements')
     const { save, store, registry } = window.Alakazam
 
     const INTERVAL_MS = 3000
@@ -70,7 +70,7 @@
     }
 
     function wait(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+        return window.Alakazam.safety.wait('achievements', ms)
     }
 
     //! One-off routines
@@ -116,24 +116,102 @@
         return found
     }
 
-    //* God complex: rename the bakery to "Orteil", then to "Alakazam"
-    // Renaming to Orteil is what unlocks the achievement; renaming to Alakazam
-    // afterwards is deliberate branding, not an accident. This runs once per save
-    // and never again, so it will not keep overwriting a name you set yourself.
-    async function godComplex() {
-        simulateClick(document.getElementById('bakeryName'))
-        await wait(MENU_MS)
-        const input = document.getElementById('bakeryNameInput')
-        if (!input) return false
-        typeInto(input, 'Orteil')
-        simulateClick(document.getElementById('promptOption0'))
+    //* God complex
+    // Journal the live input before renaming. Recovery compares our last write
+    // with the live name, so a later player rename always wins.
+    const NAME_KEY = 'bakeryNameRecovery'
+    let restoredName = null
 
-        await wait(600)
+    function finishNameRecovery(mark) {
+        const { savefile, identity } = window.Alakazam
+        const saved = savefile.read()
+        if (
+            saved.ok &&
+            identity.fromSave(saved).legacyId === mark.legacyId &&
+            saved.run?.bakeryName === mark.original
+        ) {
+            store.forget(NAME_KEY)
+            restoredName = null
+        } else if (mark !== restoredName) {
+            // A live restoration does not replace an earlier autosave of Orteil.
+            restoredName = { ...mark }
+            store.set(NAME_KEY, restoredName)
+        }
+    }
+
+    function recoverName() {
+        const { safety, identity } = window.Alakazam
+        const mark = store.get(NAME_KEY, null)
+        const who = identity.current()
+        if (!mark || !who.known || mark.legacyId !== who.legacyId) return false
+        if (mark.intervened) {
+            store.forget(NAME_KEY)
+            return false
+        }
+        if (mark === restoredName) {
+            finishNameRecovery(mark)
+            return true
+        }
+        const ctx = safety.scope('achievements')
+        return ctx.cleanup(() => {
+            if (safety.prompt() && !safety.ownsPrompt('achievements', 'NameBakery')) return false
+            if (!safety.prompt()) ctx.input('simulateClick', document.getElementById('bakeryName'))
+            if (!safety.ownsPrompt('achievements', 'NameBakery')) return false
+            const input = document.getElementById('bakeryNameInput')
+            if (!input) return false
+            if (String(input.value) === mark.original) {
+                ctx.input('simulateClick', document.getElementById('promptOption2'))
+                finishNameRecovery(mark)
+                return true
+            }
+            // an unsubmitted player edit is also a deliberate choice
+            if (String(input.value) === mark.expected) {
+                ctx.input('typeInto', input, mark.original)
+                ctx.input('simulateClick', document.getElementById('promptOption0'))
+                if (safety.prompt()) return false
+                ctx.input('simulateClick', document.getElementById('bakeryName'))
+                if (!safety.ownsPrompt('achievements', 'NameBakery')) return false
+                const restored = document.getElementById('bakeryNameInput')
+                const verified = restored && String(restored.value) === mark.original
+                ctx.input('simulateClick', document.getElementById('promptOption2'))
+                if (verified) finishNameRecovery(mark)
+                return !!verified
+            }
+            // leave their new value intact, and dismiss only the prompt we opened
+            const cancel = document.getElementById('promptOption2')
+            if (cancel) ctx.input('simulateClick', cancel)
+            store.forget(NAME_KEY)
+            return false
+        })
+    }
+
+    async function godComplex() {
+        const { safety, identity } = window.Alakazam
+        const ctx = safety.scope('achievements')
+        const who = identity.current()
+        if (!who.known || safety.prompt() || store.get(NAME_KEY, null)) return false
         simulateClick(document.getElementById('bakeryName'))
-        await wait(MENU_MS)
-        typeInto(document.getElementById('bakeryNameInput'), 'Alakazam')
-        simulateClick(document.getElementById('promptOption0'))
-        return true
+        try {
+            await wait(MENU_MS)
+            if (!safety.ownsPrompt('achievements', 'NameBakery')) return false
+            const input = document.getElementById('bakeryNameInput')
+            if (!input) return false
+            const original = String(input.value)
+            store.set(NAME_KEY, { legacyId: who.legacyId, original, expected: 'Orteil' })
+            // persist the undo record before any mutation can reach the game save
+            if (!(await store.flush())) return false
+            ctx.check()
+            if (!safety.ownsPrompt('achievements', 'NameBakery') || String(input.value) !== original) {
+                store.forget(NAME_KEY)
+                return false
+            }
+            typeInto(input, 'Orteil')
+            simulateClick(document.getElementById('promptOption0'))
+            await wait(600)
+            return true
+        } finally {
+            recoverName()
+        }
     }
 
     const ONE_OFFS = [
@@ -179,6 +257,10 @@
                 try {
                     worked = await job.run()
                 } catch (err) {
+                    if (window.Alakazam.safety.isCancellation(err)) {
+                        pending.push(...queue.slice(queue.indexOf(job)))
+                        throw err
+                    }
                     console.warn(`Alakazam: achievement routine "${job.name}" failed`, err)
                 }
 
@@ -207,6 +289,7 @@
     }
 
     function setup() {
+        recoverName()
         pending = ONE_OFFS.filter(job => !giveUp(job.name))
         if (pending.length === 0) {
             console.log('Alakazam: achievement routines already done for this save')
@@ -273,6 +356,7 @@
     }
 
     async function tick() {
+        recoverName()
         await runPending()
         await clickTicker()
         closeNotes()
@@ -290,5 +374,5 @@
 
     registry.register({ name: 'achievements', interval: INTERVAL_MS, setup, tick })
 
-    window.Alakazam.achievements = { ONE_OFFS, attempts, giveUp, MAX_ATTEMPTS }
+    window.Alakazam.achievements = { ONE_OFFS, attempts, giveUp, MAX_ATTEMPTS, godComplex, recoverName }
 })()

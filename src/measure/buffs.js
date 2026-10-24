@@ -140,7 +140,7 @@
     async function identify() {
         for (const el of elements()) {
             if (!el.id || names.has(el.id)) continue
-            const tip = await catalog.readTooltip(el)
+            const tip = await catalog.readTooltip(el, window.Alakazam.safety.scope('buffs'))
             // the lock is held elsewhere, or the tooltip has not drawn: try again
             if (!tip) return
             const name = tip.name || (tip.text || '').split('\n')[0].trim()

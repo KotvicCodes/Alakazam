@@ -99,30 +99,40 @@
     //
     // Buying one at a time needs no mode change at all, so it skips the controls
     // entirely and keeps working even when they are missing.
-    async function withBulk(mode, amount, body) {
-        if (mode === 'buy' && amount === 1 && currentMode() === 'buy' && currentAmount() === 1) {
-            return body()
-        }
-        if (!available()) {
-            warnOnce()
-            // only buy-one is safe without the controls; anything else is refused
-            // rather than silently doing something different from what was asked
-            if (mode === 'buy' && amount === 1) return body()
-            return null
-        }
-
+    async function withBulk(mode, amount, body, ctx = window.Alakazam.safety.context('purchase')) {
+        ctx.check()
+        const lease = window.Alakazam.safety.acquire('store', ctx.owner)
+        if (!lease) return null
         const prevMode = currentMode()
         const prevAmount = currentAmount()
-
+        let changed = false
         try {
-            if (prevMode !== mode) setMode(mode)
-            if (prevAmount !== amount) setAmount(amount)
-            // let the game rewrite the price faces for the new amount
+            if (!available()) {
+                warnOnce()
+                if (mode === 'buy' && amount === 1 && prevMode === 'buy' && prevAmount === 1) {
+                    return await body()
+                }
+                return null
+            }
+            if (prevMode !== mode) ctx.input('simulateClick', el(MODE_IDS[mode]))
+            if (prevAmount !== amount) ctx.input('simulateClick', el(AMOUNT_IDS[amount]))
+            assumedMode = mode
+            assumedAmount = amount
+            changed = true
             if (prevAmount !== amount) await wait(REDRAW_MS)
+            ctx.check()
+            if (!lease.valid() || currentMode() !== mode || currentAmount() !== amount) return null
             return await body()
         } finally {
-            if (currentAmount() !== prevAmount) setAmount(prevAmount)
-            if (currentMode() !== prevMode) setMode(prevMode)
+            try {
+                // restore only our own controls, never a newer deliberate selection
+                if (changed && lease.valid() && currentMode() === mode && currentAmount() === amount) {
+                    if (currentAmount() !== prevAmount) setAmount(prevAmount)
+                    if (currentMode() !== prevMode) setMode(prevMode)
+                }
+            } finally {
+                lease.release()
+            }
         }
     }
 
@@ -179,20 +189,25 @@
     //
     // Returns { bought, cost } so the caller can keep its own running balance
     // without waiting for the game to redraw the cookie counter.
-    async function buy(product, count, maxSpend) {
+    async function buy(product, count, maxSpend, ctx = window.Alakazam.safety.context('purchase')) {
         const budget = Number.isFinite(maxSpend) ? maxSpend : Infinity
         let result = { bought: false, cost: 0 }
 
-        await withBulk('buy', count, () => {
-            const rendered = readBulkPrice(product)
-            const cost = Number.isFinite(rendered) ? rendered : sumPrice(product.price, count)
-            if (cost > budget) {
-                result = { bought: false, cost: 0, reason: 'rendered price exceeded budget' }
-                return
-            }
-            simulateClick(product.element)
-            result = { bought: true, cost }
-        })
+        await withBulk(
+            'buy',
+            count,
+            () => {
+                const rendered = readBulkPrice(product)
+                const cost = Number.isFinite(rendered) ? rendered : sumPrice(product.price, count)
+                if (cost > budget) {
+                    result = { bought: false, cost: 0, reason: 'rendered price exceeded budget' }
+                    return
+                }
+                ctx.input('simulateClick', product.element)
+                result = { bought: true, cost }
+            },
+            ctx
+        )
 
         return result
     }
@@ -201,12 +216,17 @@
     // sell `count` of a product. selling is how Godzamok's click boost is earned
     // and how a couple of achievements are unlocked, and it is the reason the
     // restore in withBulk has to be airtight.
-    async function sell(product, count) {
+    async function sell(product, count, ctx = window.Alakazam.safety.context('purchase')) {
         let issued = false
-        await withBulk('sell', count, () => {
-            simulateClick(product.element)
-            issued = true
-        })
+        await withBulk(
+            'sell',
+            count,
+            () => {
+                ctx.input('simulateClick', product.element)
+                issued = true
+            },
+            ctx
+        )
         return issued
     }
 

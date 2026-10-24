@@ -20,10 +20,12 @@
     //   - measure/catalog  whatever the tooltip rotation has read so far
     //   - measure/save     owned counts, exact and free
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('purchase')
     const { decide, sumPrice } = window.Alakazam.strategy
     const { live, catalog, save, store, registry, act, clicks } = window.Alakazam
     const { BASE_PRODUCTION } = window.Alakazam.data.buildings
+
+    const storeAct = window.Alakazam.safety.bind('purchase', act.store)
 
     const INTERVAL_MS = 250
     const SLICE_MS = 150 // never spend longer than this in one drain
@@ -133,7 +135,7 @@
     }
 
     function wait(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+        return window.Alakazam.safety.wait('purchase', ms)
     }
 
     //! Buy all
@@ -221,7 +223,7 @@
 
             if (decision.action === 'buyBuilding') {
                 const amount = decision.amount || 1
-                const result = await act.store.buy(decision.target, amount, balance)
+                const result = await storeAct.buy(decision.target, amount, balance)
                 if (!result.bought) {
                     // the rendered bulk price came in over budget: our estimate was
                     // optimistic. stop here rather than retrying the same number.

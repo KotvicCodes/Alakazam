@@ -177,7 +177,7 @@ test('parses buffs, converting frames to seconds', () => {
     assert.equal(buffs[0].arg1, 7)
 })
 
-test('identity is stable per save and changes with the seed or creation date', () => {
+test('legacy identity survives seed changes and changes with the creation date', () => {
     const base = {
         ok: true,
         run: { seed: 'abcde', fullDate: 1000, startDate: 2000 },
@@ -190,7 +190,8 @@ test('identity is stable per save and changes with the seed or creation date', (
     const otherRun = identity.fromSave({ ...base, run: { ...base.run, startDate: 8888 } })
 
     assert.equal(a.legacyId, same.legacyId)
-    assert.notEqual(a.legacyId, otherSeed.legacyId)
+    assert.equal(a.legacyId, otherSeed.legacyId)
+    assert.notEqual(a.runId, otherSeed.runId)
     assert.notEqual(a.legacyId, otherSave.legacyId)
     // ascending starts a new run but stays the same save file
     assert.equal(a.legacyId, otherRun.legacyId)

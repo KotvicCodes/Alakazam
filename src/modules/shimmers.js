@@ -13,7 +13,7 @@
     // positive, so they are worth taking in general, just not while a buff is
     // running. Golden cookies and reindeer are always worth clicking.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('shimmers')
     const { live, registry } = window.Alakazam
 
     const INTERVAL_MS = 50
