@@ -74,11 +74,12 @@
     }
 
     //* ownedFrom
-    // the count rendered on the product. the save carries this exactly, so this is
-    // only a fallback for when the save cannot be trusted; NaN means "ask the save"
+    // the rendered count updates before autosave. a blank owned label means zero;
+    // a missing or unreadable label means callers may fall back to the save.
     function ownedFrom(el) {
         const ownedEl = el.querySelector('.owned')
         if (!ownedEl) return NaN
+        if (!ownedEl.innerText.trim()) return 0
         const n = firstNumberIn(ownedEl.innerText)
         return Number.isNaN(n) ? NaN : n
     }

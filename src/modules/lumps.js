@@ -75,6 +75,34 @@
     const BANK_TARGET = 100
 
     let lastHarvestAt = 0
+    const pending = []
+    let balanceCeiling = Infinity
+
+    function reconcile(s) {
+        if (!s.ok || !s.buildings) return
+        // once autosave contains a spend, it no longer needs reconciliation
+        for (let i = pending.length - 1; i >= 0; i--) {
+            if (s.buildings[pending[i].index]?.level >= pending[i].level) pending.splice(i, 1)
+        }
+        // A harvest may leave the live balance above our conservative ceiling.
+        // Once all spends are saved, that ceiling must not hide future earnings.
+        if (!pending.length) balanceCeiling = Infinity
+    }
+
+    function levels() {
+        const s = save.get()
+        if (!s.ok || !s.buildings) return []
+        reconcile(s)
+        return s.buildings.map(b => {
+            const badge = el('productLevel' + b.id)
+            const liveLevel = badge ? window.Alakazam.parse.firstNumberIn(badge.innerText) : NaN
+            const planned = pending
+                .filter(p => p.index === b.id)
+                .reduce((n, p) => Math.max(n, p.level), 0)
+            const level = Number.isInteger(liveLevel) && liveLevel >= 0 ? liveLevel : b.level
+            return { ...b, level: Math.max(level, planned) }
+        })
+    }
 
     //! How long this save's lumps actually live
     // The lump icon is a sprite, and the frame is picked from how far through its
@@ -202,21 +230,6 @@
 
     //! Harvesting
 
-    //* confirmSpend
-    // The game can be set to ask before a lump is spent. It never asks before one
-    // is harvested, so this belongs to levelling up and nothing else.
-    //
-    // It names the prompt it expects. Every confirmation in Cookie Clicker is
-    // #promptOption0, including "Really wipe save" and including the Done button
-    // on the clone customizer, so a blind click here is a click on whatever
-    // another module happens to have open. Game.Prompt stamps each prompt's own
-    // name into the DOM, and this one is #promptContentSpendLump.
-    function confirmSpend() {
-        if (!document.getElementById('promptContentSpendLump')) return
-        const option = document.getElementById('promptOption0')
-        if (option) simulateClick(option)
-    }
-
     function harvest(reason) {
         const lumps = el('lumps')
         if (!lumps) return false
@@ -249,30 +262,36 @@
     // the first entry in the plan that is not satisfied yet, or the best ordinary
     // level-up once the plan is complete
     function nextSpend(lumps) {
-        const s = save.get()
-        if (!s.ok || !s.buildings) return null
+        const buildings = levels()
+        if (!buildings.length) return null
 
         for (const step of PLAN) {
-            const building = s.buildings[step.building]
+            const building = buildings[step.building]
             if (!building) continue
             // a building has to exist before it can be levelled
             if (building.amount < 1) continue
             if (building.level >= step.level) continue
             const cost = building.level + 1
             if (cost > lumps) return null
-            return { index: step.building, name: building.name, cost, why: step.why }
+            return { index: step.building, name: building.name, cost, reserve: 0, why: step.why }
         }
 
         // plan complete: keep a hundred banked for the production bonus, and put
         // anything above that into whichever building is producing the most
         if (lumps <= BANK_TARGET) return null
-        const best = s.buildings
+        const best = buildings
             .filter(b => b.amount > 0)
             .sort((a, b) => b.totalCookies - a.totalCookies)[0]
         if (!best) return null
         const cost = best.level + 1
         if (cost > lumps - BANK_TARGET) return null
-        return { index: best.id, name: best.name, cost, why: 'highest producing building' }
+        return {
+            index: best.id,
+            name: best.name,
+            cost,
+            reserve: BANK_TARGET,
+            why: 'highest producing building'
+        }
     }
 
     //* levelUp
@@ -280,27 +299,84 @@
     // it belongs to: the game builds it into the building's own row, over on the
     // other side of the page, so looking for it inside the store listing finds
     // nothing and no lump was ever spent. It is addressed by id instead.
-    function levelUp(index) {
-        const badge = el('productLevel' + index)
-        if (!badge) return false
+    async function levelUp(spend, lease) {
+        const badge = el('productLevel' + spend.index)
+        if (!badge || !lease.valid()) return false
+        const before = banked()
+        const level = levels()[spend.index]?.level
+        if (level + 1 !== spend.cost || before - spend.cost < spend.reserve) return false
+        const previousPrompt = el('promptContentSpendLump')
+        if (previousPrompt) return false
         simulateClick(badge)
-        setTimeout(confirmSpend, 120)
-        return true
+        let prompt = null
+        try {
+            // confirmations may arrive on a later draw; there is no detached timer
+            const outcome = await window.Alakazam.transactions.until(lease, () => {
+                prompt = el('promptContentSpendLump')
+                return prompt || levels()[spend.index]?.level > level || banked() <= before - spend.cost
+            })
+            if (!outcome || !lease.valid()) {
+                // an unconfirmed prompt spent nothing; an immediate spend whose
+                // redraw is missing must still be reserved until autosave catches up
+                if (!el('promptContentSpendLump')) {
+                    balanceCeiling = Math.min(balanceCeiling, before - spend.cost)
+                    pending.push({ index: spend.index, level: level + 1, cost: spend.cost })
+                }
+                return false
+            }
+            if (prompt) {
+                const actualCost = window.Alakazam.parse.firstNumberIn(prompt.innerText)
+                const current = nextSpend(banked())
+                if (
+                    !current ||
+                    current.index !== spend.index ||
+                    actualCost !== current.cost ||
+                    banked() - actualCost < current.reserve ||
+                    !lease.valid()
+                )
+                    return false
+                const option = el('promptOption0')
+                if (!option || el('promptContentSpendLump') !== prompt) return false
+                simulateClick(option)
+            }
+            // account for this spend immediately, before the next autosave or draw
+            balanceCeiling = Math.min(balanceCeiling, before - spend.cost)
+            const reservation = { index: spend.index, level: level + 1, cost: spend.cost }
+            pending.push(reservation)
+            return !!(await window.Alakazam.transactions.until(lease, () => {
+                const badgeLevel = window.Alakazam.parse.firstNumberIn(badge.innerText)
+                const amount = el('lumpsAmount')
+                const held = amount ? window.Alakazam.parse.firstNumberIn(amount.innerText) : NaN
+                return badgeLevel > level || held <= before - spend.cost
+            }))
+        } finally {
+            if (prompt && el('promptContentSpendLump') === prompt) {
+                const cancel = el('promptOption1')
+                if (cancel) simulateClick(cancel)
+            }
+        }
     }
 
     //! Tick
 
     //* banked
-    // how many lumps are in hand. Straight from the save, so that a lump that is
-    // growing unreadably (or is not growing at all) cannot stop the ones already
-    // harvested from being spent, which is how a levelling plan quietly stalls.
+    // prefer the live balance; until redraw/autosave, subtract our outstanding
+    // spends so repeated ticks cannot spend the same lumps twice.
     function banked() {
         const s = save.get()
+        reconcile(s)
+        const node = el('lumpsAmount')
+        const live = node ? window.Alakazam.parse.firstNumberIn(node.innerText) : NaN
+        if (Number.isFinite(live) && live >= 0) {
+            if (live <= balanceCeiling) balanceCeiling = Infinity
+            return Math.min(live, balanceCeiling)
+        }
         if (!s.ok || !s.scalars || !s.scalars.trusted) return NaN
-        return s.scalars.lumps
+        const unrecorded = pending.filter(p => (s.buildings[p.index]?.level ?? -1) < p.level)
+        return s.scalars.lumps - unrecorded.reduce((n, p) => n + p.cost, 0)
     }
 
-    function tick() {
+    async function tick() {
         const lump = lumpState()
         if (lump) {
             window.__alakazam.lumps = lump
@@ -322,7 +398,13 @@
         const spend = nextSpend(held)
         if (spend) {
             console.log(`Alakazam: levelling ${spend.name} for ${spend.cost} sugar lumps (${spend.why})`)
-            levelUp(spend.index)
+            const lease = window.Alakazam.transactions.acquire('lumps')
+            if (!lease) return
+            try {
+                await levelUp(spend, lease)
+            } finally {
+                lease.release()
+            }
         }
     }
 

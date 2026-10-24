@@ -278,22 +278,12 @@ reserve policy remains future work.
   resets it on every ascension. Radiant Appetite doubles all production and is
   fourteen building sacrifices up the ladder, which is a bargain even mid-run. The
   aura is not picked from a guide: every aura the dragon knows is scored against
-<<<<<<< HEAD
-  what this save actually earns, and the whole table goes to the console. Auras
-  paying for clicks depend on measured click income; Dragon’s Fortune depends on
-  golden cookies remaining on screen, which immediate collection discourages.
-  The historical three-clicks-per-second observation came from detail-zero
-  synthetic events in the reviewed mirror, not an unconditional game limit. It
-  also pets the dragon for its drops, and learns which quarter of the hour
-  produces which one rather than wasting the attempt.
-=======
   what this save actually earns, and the whole table goes to the console. Click
   auras and spirits are valued using measured click income; their rankings can
   change as clicking's share grows. Dragon's Fortune depends on golden cookies
   remaining on screen, while Alakazam takes them as soon as each one
   appears. It also pets the dragon for its drops, and learns which quarter of the
   hour produces which one rather than wasting the attempt.
->>>>>>> origin/t3/fix-click-income-and-guards
 - **Gift codes** — wraps a gift, keeps the code, and redeems it once the hour the
   game makes you wait is up, or once an ascension has cleared it. That is the
   "No time like the present" achievement, start to finish.

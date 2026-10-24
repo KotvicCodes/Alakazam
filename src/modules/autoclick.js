@@ -2,22 +2,9 @@
 // share one scope, so bare top-level declarations across files would collide
 ;(function () {
     //! Autoclicker
-<<<<<<< HEAD
-    // Dispatches at a configured rate independent of the display's refresh rate.
-    // Earlier experiments observed about three registered clicks per second with
-    // detail-zero synthetic events. That was an event-path throttle in the reviewed
-    // game, not a universal ceiling. Keep rate policy separate from measured income;
-    // input semantics and pacing changes belong with their browser regressions.
-    //
-    // Pacing happens here rather than through the scheduler's interval because the
-    // millisecond driver runs on a 50ms tick, and 15 a second does not divide into
-    // it. Running on the frame loop and checking the clock gives an accurate
-    // cadence without a timer of its own.
-=======
     // pace normal pointer clicks by elapsed time, independently of refresh rate.
     // The configured rate is an input budget, never a claim about registration:
     // measure/clicks.js reads the game's saved counters to measure what landed.
->>>>>>> origin/t3/fix-click-income-and-guards
 
     const { simulateClick } = window.Alakazam.input
     const { registry, clicks, store } = window.Alakazam
