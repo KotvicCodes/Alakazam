@@ -199,6 +199,83 @@ test('a refused purchase is not counted, and partial fills report observed quant
     }
 })
 
+test('a refused rounded-price purchase recovers after a fresh delayed redraw', async () => {
+    const h = boot({ game: { bank: 14, crates: [] } })
+    const store = h.A.act.store
+    const product = store.unitProducts()[0]
+    // The rendered price can round down below the actual cost of 15.
+    product.element.querySelector('.price').innerText = '14'
+    slowStore(h)
+    const refused = await store.buy(product, 1, 14)
+    assert.equal(refused.bought, false)
+    assert.equal(refused.reason, 'purchase not observed')
+    assert.equal(h.game.state.owned[0], 0)
+    assert.equal(h.game.state.log.length, 1, 'only one product click was attempted')
+
+    // Funds recover without a store redraw, as with passive production.
+    h.game.state.bank = 5000
+    h.game.doc.getElementById('cookies').innerText = '5000 cookies'
+    const preparing = store.withBulk('buy', 1, () => store.unitProducts().length)
+    await sleep(30)
+    assert.equal(store.unitProducts().length, 0, 'prices stay blocked until the requested draw')
+    assert.equal(h.game.state.log.length, 1, 'refreshing quantity never retries the purchase')
+    assert.equal(await preparing, 8, 'a quantity refresh restores all unit prices')
+    const recovered = await store.buy(store.unitProducts()[0], 1, 5000)
+    assert.equal(recovered.bought, true)
+    assert.equal(h.game.state.owned[0], 1)
+    assert.equal(h.game.state.log.length, 2)
+})
+
+test('a refused purchase stays blocked if its requested redraw never arrives', async () => {
+    const h = boot({ game: { bank: 5000, crates: [] } })
+    const store = h.A.act.store
+    const product = store.unitProducts()[0]
+    let clicks = 0
+    product.element.listeners.click = [() => clicks++]
+    // Neither the refused product click nor reselecting quantity draws prices.
+    h.game.bulk.storeBulk1.listeners.click = []
+    assert.equal((await store.buy(product, 1, 5000)).bought, false)
+    assert.equal((await store.buy(product, 1, 5000)).bought, false)
+    assert.equal(clicks, 1, 'a timeout alone cannot authorize a repeat product click')
+    assert.equal(store.unitProducts().length, 0)
+})
+
+test('a cancelled unobserved purchase recovers without acting while paused', async () => {
+    const h = boot({ game: { bank: 5000, crates: [] } })
+    const store = h.A.act.store
+    const product = store.unitProducts()[0]
+    product.element.listeners.click = []
+    slowStore(h)
+    const buying = store.buy(product, 1, 5000)
+    await sleep(30)
+    h.A.scheduler.pause()
+    assert.equal((await buying).bought, false)
+    assert.equal(await store.withBulk('buy', 1, () => true), null)
+    h.A.scheduler.resume()
+    assert.equal(await store.withBulk('buy', 1, () => store.unitProducts().length), 8)
+    assert.equal(h.game.state.owned[0], 0)
+})
+
+test('an observed purchase cannot repeat before its delayed price redraw', async () => {
+    const h = boot({ game: { bank: 5000, crates: [] } })
+    const store = h.A.act.store
+    const product = store.unitProducts()[0]
+    const price = product.element.querySelector('.price')
+    let shown = price.innerText
+    let pending
+    Object.defineProperty(price, 'innerText', {
+        get: () => shown,
+        set: value => (pending = value)
+    })
+    assert.equal((await store.buy(product, 1, 5000)).bought, true)
+    assert.equal(h.game.state.owned[0], 1)
+    assert.equal(store.unitProducts().length, 0)
+    assert.equal((await store.buy(product, 1, 5000)).bought, false)
+    assert.equal(h.game.state.owned[0], 1, 'timeout cannot release a successful purchase barrier')
+    shown = pending
+    assert.equal(await store.withBulk('buy', 1, () => store.unitProducts()[0].price), 18)
+})
+
 const DONE = { 0: 12, 2: 9, 5: 1, 6: 1, 7: 1, 1: 1 }
 const AMOUNTS = { 0: 10, 1: 10, 2: 10, 5: 10, 6: 10, 7: 10 }
 function lumpsBoot({ lumps = 102, levels = DONE, askLumps = false, delay = 0, onPrompt } = {}) {

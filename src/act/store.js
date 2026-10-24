@@ -136,10 +136,10 @@
     async function ready(lease) {
         if (!lease.valid()) return false
         if (!redraw) return true
-        if (currentMode() !== redraw.mode || currentAmount() !== redraw.amount) {
-            // The player can change controls after a transaction releases its lease.
-            // Reapply their current quantity to request a fresh draw, even if the
-            // earlier restoration already drew identical prices.
+        if (redraw.refresh || currentMode() !== redraw.mode || currentAmount() !== redraw.amount) {
+            // an unobserved purchase may not draw, or the player may have changed
+            // controls since release. Reapply their current quantity to request
+            // a fresh draw, even if it writes identical prices.
             change(currentMode(), currentAmount(), true)
         }
         const pending = redraw
@@ -273,6 +273,9 @@
                     return p && p.owned > current.owned ? p : null
                 })
                 if (!after) {
+                    // a refused click may never draw; request a fresh quantity
+                    // draw under the next valid lease before allowing another buy
+                    if (redraw) redraw.refresh = true
                     result.reason = 'purchase not observed'
                     return
                 }
