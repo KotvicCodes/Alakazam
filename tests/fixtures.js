@@ -23,6 +23,7 @@ function encode(text) {
 // assemble a full save. everything has a sane default so a test only has to say
 // what it actually cares about.
 function save(opts = {}) {
+    const now = opts.now ?? Date.now()
     const scalars = new Array(SCALAR_COUNT).fill(0)
     scalars[0] = opts.cookies != null ? opts.cookies : 1e6 // cookies
     scalars[1] = opts.cookiesEarned != null ? opts.cookiesEarned : 1e9 // cookiesEarned
@@ -49,7 +50,7 @@ function save(opts = {}) {
     scalars[41] = opts.shinyWrinklerHoard || 0
     scalars[42] = opts.lumps != null ? opts.lumps : 0
     scalars[43] = opts.lumpsTotal != null ? opts.lumpsTotal : 0
-    scalars[44] = opts.lumpT != null ? opts.lumpT : Date.now()
+    scalars[44] = opts.lumpT != null ? opts.lumpT : now
     scalars[46] = opts.lumpType != null ? opts.lumpType : 0
     scalars[47] = '' // vault, a comma list
 
@@ -87,7 +88,7 @@ function save(opts = {}) {
         [
             opts.startDate || 1750000001000,
             opts.fullDate || 1750000000000,
-            Date.now(),
+            now,
             opts.bakeryName || 'Test Bakery',
             opts.seed || 'abcde'
         ]
@@ -140,4 +141,39 @@ function grimoire({ magic = 50, cast = 0 } = {}) {
     return `${magic} ${cast} ${cast} 1`
 }
 
-module.exports = { save, garden, market, pantheon, grimoire, encode, SCALAR_COUNT }
+// A mutable browser-shaped storage object for key discovery, imports, removal,
+// and updates between autosaves. Values change only when the test says so.
+function storage(initial = {}) {
+    const values = new Map(Object.entries(initial))
+    return {
+        get length() {
+            return values.size
+        },
+        key: index => [...values.keys()][index] ?? null,
+        getItem: key => values.get(key) ?? null,
+        setItem: (key, value) => values.set(String(key), String(value)),
+        removeItem: key => values.delete(key),
+        clear: () => values.clear()
+    }
+}
+
+function autosaves(initial = {}, { key = 'CookieClickerGame', now = () => Date.now() } = {}) {
+    let live = { ...initial }
+    const localStorage = storage()
+    const publish = () => {
+        const encoded = save({ ...live, now: now() })
+        localStorage.setItem(key, encoded.raw)
+        return encoded
+    }
+    publish()
+    return {
+        localStorage,
+        change: changes => {
+            live = { ...live, ...changes }
+        },
+        publish,
+        live: () => ({ ...live })
+    }
+}
+
+module.exports = { save, garden, market, pantheon, grimoire, encode, SCALAR_COUNT, storage, autosaves }
