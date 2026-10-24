@@ -185,7 +185,7 @@
         lease = lease || window.Alakazam.transactions.acquire('purchase')
         if (!lease) return false
         try {
-            if (!lease.valid() || !inBuyAllWindow()) return false
+            if (!lease.valid() || catalog.purchaseSafety() || !inBuyAllWindow()) return false
             if (Date.now() - lastBuyAllAt < BUY_ALL_EVERY_MS) return false
             const button = document.getElementById('storeBuyAllButton')
             if (!button) return false

@@ -1,3 +1,10 @@
+> Historical Krumblor PR description (v1.3.2). This records that change, not the
+> current validation status. The three-clicks-per-second observation below came
+> from detail-zero synthetic events and is not a universal game limit. Use the
+> measured-income scorers and [current testing policy](TESTING.md) when evaluating
+> strategies. The later audit used a disposable 2.058 mirror, with no canonical-site
+> or native-extension verification at that time.
+
 # Krumblor
 
 Alakazam has never touched the cookie dragon, and it has been choosing pantheon
@@ -5,25 +12,21 @@ spirits from a single question: "is the autoclicker on". This branch builds the
 dragon end to end and replaces both that question and the aura equivalent with
 scoring functions over what the run has actually earned. It closes roadmap item 7.
 
-## The thing that makes this different from the guides
+## Measurement-driven strategy
 
-The game registers about **three clicks a second**, however many are dispatched,
-and Alakazam takes every golden cookie within milliseconds of it appearing. Both
-facts quietly demolish most of the received wisdom about auras and spirits:
+The original three-clicks-per-second observation came from synthetic events with
+`detail: 0`, which use the game's keyboard-style throttle. Corrected normal pointer
+events registered all 28 dispatched clicks in a short paced trial on the pinned
+2.058 mirror. This is not a universal throughput guarantee.
 
-| what the guides rank highly | why it is worth less here |
-|---|---|
-| Dragon's Fortune, +123% CpS per golden cookie on screen | there is almost never one on screen: they are clicked at once |
-| Dragonflight, ×1111 click power for ten seconds | ten seconds is thirty clicks, not the hundreds a human gets |
-| Dragon Cursor, +5% clicking | 5% of a small share of income |
-| Muridal in the diamond slot, +15% clicking for -3% production | only wins while click income is above about two thirds of production, which after the opening minutes it never is |
-| Jeremy and Mokalsium, the idle pantheon | between them they make golden cookies about a fifth rarer, which was never priced |
+Dragonflight, Dragon Cursor and Muridal are scored using measured click income,
+without a fixed three-click ceiling. Their value can rise as clicking's share rises.
+Dragon's Fortune still depends on leaving golden cookies on screen. Aura and spirit
+rankings depend on the actual run; Radiant Appetite winning a fixture is not a
+promise that it wins every save.
 
-So neither choice is hard-coded any more. `src/strategy/dragon.js` and
-`src/strategy/pantheon.js` score every candidate in cookies per second against
-measured production, click income and golden cookie income, and return the terms
-behind each number. Radiant Appetite still wins, comfortably, on any ordinary save,
-which is the point: it is now a result rather than an assertion.
+`src/strategy/dragon.js` and `src/strategy/pantheon.js` return each score's inputs
+and terms. See [the corrected input and measurement verification](click-guards-verification.md).
 
 ``` JavaScript
 window.Alakazam.dragon.explain()    // every aura, scored, with its inputs

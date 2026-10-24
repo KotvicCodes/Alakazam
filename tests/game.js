@@ -207,7 +207,17 @@ function build(opts = {}) {
         }
         const box = sections[where]
         perSection[where] = perSection[where] || 0
-        const id = nextUpgradeId++
+        const canonicalIds = {
+            'One mind': 69,
+            'Communal brainsweep': 71,
+            'Elder pact': 73,
+            'Elder Pact': 73,
+            'Elder Pledge': 74,
+            'Elder Covenant': 84,
+            'Revoke Elder Covenant': 85,
+            'Sugar frenzy': 452
+        }
+        const id = c.id ?? canonicalIds[c.name] ?? nextUpgradeId++
         const el = new El('div', {
             class: 'crate upgrade',
             // positional within the section, exactly as the game numbers them
@@ -269,7 +279,12 @@ function build(opts = {}) {
             }
         })
         el.append(timer)
-        el.addEventListener('mouseover', () => setTooltip(name, '', `${name} is running`))
+        el.addEventListener('mouseover', () => {
+            // real buff tooltips use an h3, with no .name or .price elements.
+            tooltip.children = []
+            tooltip.text = ''
+            tooltip.append(new El('h3', { text: name }), new El('div', { text: `${name} is running` }))
+        })
         buffsEl.append(el)
         return { id, element: el, setProgress: p => setBuffProgress(el, p) }
     }

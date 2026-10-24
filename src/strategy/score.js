@@ -170,7 +170,7 @@
         // "unknown" no matter how strong it was. With a measured click rate they
         // convert to cookies per second like anything else.
         const rate = Number.isFinite(view.clicksPerSecond) ? view.clicksPerSecond : 0
-        if (rate > 0) {
+        if (rate >= 0) {
             // "Clicking gains +1% of your CpS."
             m = /clicking gains \+?([\d.]+)% of your (?:cps|cookies per second)/i.exec(text)
             if (m && Number.isFinite(view.cps)) {

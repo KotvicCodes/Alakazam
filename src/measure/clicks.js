@@ -1,124 +1,125 @@
-// wrapped in an IIFE so its top-level names stay private: all content scripts
-// share one scope, so bare top-level declarations across files would collide
+// wrapped in an IIFE so content scripts do not share top-level declarations
 ;(function () {
-    //! Click Income
-    // The number in #cookiesPerSecond is passive production only. It does not
-    // include a single cookie earned by clicking, and Alakazam clicks the big
-    // cookie constantly, so the rate it reasons about was never the rate it was
-    // actually earning at.
-    //
-    // This started out inferring click income by subtraction: watch the bank, take
-    // off what passive production should have contributed, and call the remainder
-    // clicking. Every term in that was a guess, and all of them leaned the same
-    // way, so it read low. Displayed CpS is sampled at the end of a window but
-    // applies across it, and production only ever rises. Wrinklers eat part of
-    // what production should have delivered. Windows containing a purchase had to
-    // be discarded, and the drain loop buys almost continuously, so honest samples
-    // were rare and the smoothed figure lagged a value that keeps growing.
-    //
-    // The game already counts all of this exactly. Two of its own running totals
-    // are in the save:
-    //
-    //   handmadeCookies  cookies earned by clicking, ever
-    //   cookieClicks     clicks the game acted on, ever
-    //
-    // Differencing those over the gap between saves gives income, click rate and
-    // the value of one click, with no estimate anywhere in the chain. It lags by
-    // up to a minute, because that is when the game writes its save, and it is an
-    // average over that gap rather than an instantaneous reading. For deciding
-    // what an upgrade is worth, exact and slightly stale beats live and wrong.
-
-    const { save, live, registry } = window.Alakazam
-
+    //! Registered Click Income
+    // Difference the game's saved cookieClicks and handmadeCookies counters over
+    // save timestamps, not scheduler ticks. Dispatches are a separate diagnostic.
+    const { save, live, registry, store } = window.Alakazam
     const TICK_MS = 1000
-
-    // how much a new sample moves the running estimate. these arrive about once a
-    // minute, so they are trusted more than the old noisy per-second ones were.
+    const STALE_MS = 150000 // two missed minute autosaves, plus polling slack
     const SMOOTHING = 0.4
-
-    //* ASSUMED_RATE
-    // What to reason with before the game has autosaved twice.
-    //
-    // Measurement needs two saves a minute apart, so there is a window at the
-    // start of every session with nothing to go on, and clicking upgrades are at
-    // their most valuable in exactly that window. Scoring them against zero clicks
-    // a second is the old bug in a new place: it values every one of them at
-    // nothing and skips them all.
-    //
-    // Three a second is what the game registers in practice, whether the clicks
-    // arriving are three a second or three thousand. It is a floor, not a
-    // prediction, and the moment a real measurement exists it takes over.
-    const ASSUMED_RATE = 3
 
     let dispatched = 0
     let dispatchedRate = 0
     let lastDispatched = 0
-    let lastDispatchAt = 0
-
+    let lastDispatchAt = null
     let income = 0
     let rate = 0
     let perClick = NaN
     let samples = 0
+    let baseline = null
+    let seenRevision = null
+    let reason = 'Waiting for two saves.'
+    let allowEstimate = true
 
-    let lastClicks = NaN
-    let lastHandmade = NaN
-    let lastAt = 0
-
-    //* record
-    // called by the autoclicker with however many clicks it issued. kept as a
-    // diagnostic only: what we send has never been what the game counts.
     function record(count) {
-        dispatched += count
+        if (Number.isFinite(count) && count > 0) dispatched += count
+    }
+
+    function reset(why, estimate = true) {
+        income = 0
+        rate = 0
+        perClick = NaN
+        samples = 0
+        baseline = null
+        dispatched = 0
+        dispatchedRate = 0
+        lastDispatched = 0
+        lastDispatchAt = null
+        reason = why
+        allowEstimate = estimate
     }
 
     function blend(current, sample) {
-        return current > 0 ? current * (1 - SMOOTHING) + sample * SMOOTHING : sample
+        return current * (1 - SMOOTHING) + sample * SMOOTHING
     }
 
-    //* sampleGameTotals
-    // difference the game's own cumulative counters. they only move when the game
-    // autosaves, so most ticks see no change and do nothing.
     function sampleGameTotals(now) {
         const s = save.get()
-        if (!s.ok || !s.scalars || !s.scalars.trusted) return
-
+        const meta = save.stats()
+        if (!s.ok || s.stale || !s.scalars || !s.scalars.trusted || meta.trusted === false) {
+            reset('Click measurement unavailable: save is not trustworthy.', false)
+            seenRevision = null
+            return
+        }
+        // The save-lifecycle PR supplies this contract. Parsed metadata is the
+        // compatibility path until that PR lands; changed parsed objects act as
+        // revisions, including saves with unchanged click totals.
+        const revision = meta.revision ?? s
+        const savedAt = meta.savedAt ?? (s.run && s.run.lastDate)
+        const runId =
+            meta.runId ||
+            (s.run && [s.key, s.run.fullDate, s.run.seed, s.run.startDate, s.scalars.resets].join('|'))
         const clicks = s.scalars.cookieClicks
         const handmade = s.scalars.handmadeCookies
-        if (!Number.isFinite(clicks) || !Number.isFinite(handmade)) return
-
-        const first = !Number.isFinite(lastClicks)
-        // ascending resets both totals; treat any decrease as a fresh start rather
-        // than reporting a negative rate
-        const reset = clicks < lastClicks || handmade < lastHandmade
-
-        if (!first && !reset && now > lastAt) {
-            const seconds = (now - lastAt) / 1000
-            const gainedCookies = handmade - lastHandmade
-            const gainedClicks = clicks - lastClicks
-
-            if (gainedCookies > 0) {
-                income = blend(income, gainedCookies / seconds)
-                samples++
-            }
-            if (gainedClicks > 0) {
-                rate = blend(rate, gainedClicks / seconds)
-                perClick = Number.isFinite(perClick)
-                    ? blend(perClick, gainedCookies / gainedClicks)
-                    : gainedCookies / gainedClicks
-            }
+        if (
+            !runId ||
+            !Number.isFinite(savedAt) ||
+            savedAt <= 0 ||
+            !Number.isFinite(clicks) ||
+            clicks < 0 ||
+            !Number.isFinite(handmade) ||
+            handmade < 0 ||
+            savedAt > now + 5000
+        ) {
+            reset('Click measurement unavailable: invalid save totals or time.', false)
+            seenRevision = null
+            return
         }
-
-        if (first || reset || clicks !== lastClicks || handmade !== lastHandmade) {
-            lastClicks = clicks
-            lastHandmade = handmade
-            lastAt = now
+        if (now - savedAt > STALE_MS) {
+            reset('Click measurement expired: no recent save.', false)
+            seenRevision = revision
+            return
         }
+        if (revision === seenRevision) return
+        seenRevision = revision
+        const next = { runId, savedAt, clicks, handmade }
+        if (
+            !baseline ||
+            baseline.runId !== runId ||
+            clicks < baseline.clicks ||
+            handmade < baseline.handmade ||
+            savedAt <= baseline.savedAt
+        ) {
+            reset('Waiting for two saves in this run.')
+            baseline = next
+            return
+        }
+        const seconds = (savedAt - baseline.savedAt) / 1000
+        const gainedClicks = clicks - baseline.clicks
+        const gainedCookies = handmade - baseline.handmade
+        if (gainedClicks === 0 && gainedCookies > 0) {
+            reset('Click measurement unavailable: inconsistent saved counters.', false)
+            baseline = next
+            return
+        }
+        const first = samples === 0
+        // A newly saved zero interval proves inactivity. Clear the old combo
+        // immediately; zero is a measured value and must not select a fallback.
+        income =
+            first || gainedCookies === 0
+                ? gainedCookies / seconds
+                : blend(income, gainedCookies / seconds)
+        rate = first || gainedClicks === 0 ? gainedClicks / seconds : blend(rate, gainedClicks / seconds)
+        perClick = gainedClicks > 0 ? gainedCookies / gainedClicks : NaN
+        samples++
+        reason = ''
+        allowEstimate = false
+        baseline = next
     }
 
     function sampleDispatched(now) {
-        if (lastDispatchAt > 0 && now > lastDispatchAt) {
-            const seconds = (now - lastDispatchAt) / 1000
-            dispatchedRate = blend(dispatchedRate, (dispatched - lastDispatched) / seconds)
+        if (lastDispatchAt !== null && now > lastDispatchAt) {
+            dispatchedRate = (dispatched - lastDispatched) / ((now - lastDispatchAt) / 1000)
         }
         lastDispatched = dispatched
         lastDispatchAt = now
@@ -131,37 +132,32 @@
         window.__alakazam.clicks = stats()
     }
 
-    //! What callers use
-
-    //* clickCps
-    // what clicking earns per second, from the game's own total. zero until the
-    // game has autosaved twice, which is the only honest thing to say until then.
     function clickCps() {
-        return income > 0 ? income : 0
+        return income
     }
 
-    //* clicksPerSecond
-    // how many clicks the game actually acts on, which is a small fraction of what
-    // the autoclicker sends. this is the one to value a clicking upgrade against,
-    // and it falls back to the assumed floor rather than to zero.
+    function estimatedRate() {
+        const autoclick = window.Alakazam.autoclick
+        return allowEstimate && store.moduleEnabled('autoclick') && autoclick
+            ? autoclick.configuredRate()
+            : 0
+    }
+
+    // The startup estimate is explicit and follows configured pacing. It is not
+    // presented as registration. Measured zero and expired samples stay zero.
     function clicksPerSecond() {
-        return rate > 0 ? rate : ASSUMED_RATE
+        return samples > 0 ? rate : estimatedRate()
     }
 
     function cookiesPerClick() {
-        return Number.isFinite(perClick) ? perClick : NaN
+        return perClick
     }
 
-    //* effectiveCps
-    // what Alakazam is really earning: passive production plus clicking
     function effectiveCps(passiveCps) {
         const passive = Number.isFinite(passiveCps) ? passiveCps : live.readGlobals().cps
         return passive + clickCps()
     }
 
-    //* measured
-    // whether there has been a real sample yet. the panel says so rather than
-    // showing a zero that looks like a broken autoclicker.
     function measured() {
         return samples > 0
     }
@@ -169,19 +165,25 @@
     function stats() {
         return {
             clickCps: clickCps(),
-            registeredPerSecond: Math.round(clicksPerSecond() * 10) / 10,
-            dispatchedPerSecond: Math.round(dispatchedRate),
+            registeredPerSecond: measured() ? Math.round(rate * 10) / 10 : null,
+            estimatedPerSecond: measured() ? null : estimatedRate(),
+            dispatchedPerSecond: Math.round(dispatchedRate * 10) / 10,
             cookiesPerClick: cookiesPerClick(),
             measured: measured(),
-            samples
+            samples,
+            reason
         }
     }
 
-    registry.register({ name: 'clicks', interval: TICK_MS, setting: 'enabled', tick })
+    function resetRun() {
+        reset('Waiting for two saves after a run transition.')
+        seenRevision = null
+    }
 
-    window.Alakazam = window.Alakazam || {}
+    registry.register({ name: 'clicks', interval: TICK_MS, always: true, tick, reset: resetRun })
     window.Alakazam.clicks = {
         record,
+        reset: resetRun,
         clickCps,
         clicksPerSecond,
         cookiesPerClick,

@@ -66,8 +66,10 @@ the save lags up to a minute, so the reset count from before an ascension is
 remembered and nothing starts again until the save reports a higher one; otherwise
 the stale save reads as a finished run and it ascends an empty one immediately.
 
-**Still open.** Permanent slots are filled from a fixed preference list and never
-reconsidered; challenge modes are not chosen; see below.
+**Permanent slots are implemented.** After shopping, the module makes a separate,
+bounded pass over owned slots and reassigns improvements using a fixed preference
+ranking and the current occupant’s tooltip; see item 12. This is not a dynamic
+milk/production optimizer. Challenge modes are still not chosen.
 
 ---
 
@@ -110,7 +112,9 @@ The stack, roughly in the order it is assembled:
 
 **What Alakazam already has.** Buff detection by name in `measure/live.js`, spell
 casting and cost modelling in `modules/grimoire.js`, bulk selling and a guaranteed
-mode restore in `act/store.js`, and the Godzamok preset in `data/gods.js`.
+mode restore in `act/store.js`, and Godzamok’s effect data in `data/gods.js`. The
+current Pantheon module scores layouts using measured income; presets are the fallback while measurements
+are unavailable.
 
 **What it needs.** An orchestrator that sequences those, and a way to decide which
 buildings are worth sacrificing. Buying everything back afterwards is a matter of

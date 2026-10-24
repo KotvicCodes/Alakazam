@@ -2,22 +2,13 @@
 // share one scope, so bare top-level declarations across files would collide
 ;(function () {
     //! Autoclicker
-    // A real user clicks a few times a second; an autoclicker clicks many times a
-    // second. Every click here is still a genuine dispatched event (fair-play),
-    // we simply issue a burst of them per animation frame.
-    //
-    // It used to fire a burst per animation frame: fifty at first, then four,
-    // which still worked out at around 240 events a second on a 60Hz display.
-    // Watching the game's own tally makes it clear that almost none of that lands.
-    // However fast the clicks arrive, even thousands at once, the game registers
-    // roughly three a second. Everything above that was pure cost: events that
-    // several handlers each had to consider before nothing came of them.
-    //
-    // So the rate is capped in time rather than per frame, which also makes it a
-    // number that means something. Fifteen a second is comfortably above what the
-    // game has been observed to consume, low enough to be unremarkable, and
-    // independent of the display's refresh rate, which a per-frame burst never
-    // was.
+    // pace normal pointer clicks by elapsed time, independently of refresh rate.
+    // The configured rate is an input budget, never a claim about registration:
+    // measure/clicks.js reads the game's saved counters to measure what landed.
+    // Earlier experiments observed about three registered clicks per second with
+    // detail-zero synthetic events. That was an event-path throttle in the reviewed
+    // game, not a universal ceiling. See docs/click-guards-verification.md for the
+    // corrected pointer-event browser trial and its limits.
     //
     // Pacing happens here rather than through the scheduler's interval because the
     // millisecond driver runs on a 50ms tick, and 15 a second does not divide into
@@ -25,17 +16,22 @@
     // cadence without a timer of its own.
 
     const { simulateClick } = window.Alakazam.input
-    const { registry, clicks } = window.Alakazam
+    const { registry, clicks, store } = window.Alakazam
 
     const CLICKS_PER_SECOND = 15
-    const MIN_GAP_MS = 1000 / CLICKS_PER_SECOND
+
+    function configuredRate() {
+        const configured = store.setting('clicksPerSecond')
+        return Number.isFinite(configured) ? Math.max(0, Math.min(60, configured)) : CLICKS_PER_SECOND
+    }
 
     let target = null
-    let lastClickAt = 0
+    let lastClickAt = -Infinity
 
     function tick() {
         const now = Date.now()
-        if (now - lastClickAt < MIN_GAP_MS) return
+        const rate = configuredRate()
+        if (rate === 0 || now - lastClickAt < 1000 / rate) return
         lastClickAt = now
 
         // the big cookie is replaced when the game redraws, so re-resolve it
@@ -44,7 +40,7 @@
             target = document.getElementById('bigCookie')
         }
         if (!target) return
-        simulateClick(target)
+        if (!simulateClick(target)) return
         // tell the click meter what we issued, so what clicking earns can be
         // measured rather than assumed
         clicks.record(1)
@@ -52,5 +48,5 @@
 
     registry.register({ name: 'autoclick', interval: 'frame', tick })
 
-    window.Alakazam.autoclick = { CLICKS_PER_SECOND }
+    window.Alakazam.autoclick = { CLICKS_PER_SECOND, configuredRate }
 })()
