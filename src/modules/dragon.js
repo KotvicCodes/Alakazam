@@ -241,6 +241,7 @@
         // an unpause here could only ever be against the player's wishes
         if (scheduler.isPaused()) return
         const wasOpen = act.dragon.panelOpen()
+        const task = window.Alakazam.safety.scope('dragon')
         const release = window.Alakazam.safety.isolate('dragon')
         if (!release) return
         try {
@@ -255,7 +256,7 @@
             await work()
         } finally {
             try {
-                if (!wasOpen) await act.dragon.close()
+                if (!wasOpen) await task.cleanup(() => act.dragon.close(task))
             } finally {
                 release()
             }

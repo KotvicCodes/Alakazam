@@ -243,6 +243,108 @@ test('pausing during a dragon panel await prevents training and remains paused a
     assert.equal(h.A.act.dragon.panelOpen(), false)
 })
 
+for (const paused of [false, true]) {
+    test(`a player replacement dragon panel survives the old visit${
+        paused ? ' after pause' : ''
+    }`, async () => {
+        const h = await ready({
+            save: fx.save({ dragonLevel: 5 }).raw,
+            game: {
+                bank: 1e9,
+                owned: [300, 0, 0, 0, 0, 0, 0, 0],
+                dragon: { level: 5, trainable: true }
+            }
+        })
+        const barrier = hold(h, 150)
+        const work = h.A.registry.get('dragon').tick()
+        assert.ok(await waitFor(() => barrier.pending.length > 0, 2000, 5))
+        const doc = h.game.doc
+        const oldPic = doc.getElementById('specialPic')
+        const close = doc.querySelector('#specialPopup .close')
+        doc.fire('pointerdown', { isTrusted: true, target: close })
+        h.A.input.simulateClick(close)
+        const canvas = doc.getElementById('backgroundLeftCanvas')
+        doc.fire('pointerdown', { isTrusted: true, target: canvas })
+        h.A.input.simulateClickAt(canvas, 24, canvas.height - 72)
+        const replacement = doc.getElementById('specialPic')
+        assert.notEqual(replacement, oldPic)
+        if (paused) h.A.scheduler.pause()
+        barrier.release()
+        await work
+        assert.equal(h.A.act.dragon.panelOpen(), true, 'cleanup preserves the player panel')
+        assert.equal(doc.getElementById('specialPic'), replacement)
+        assert.equal(h.game.dragon.level, 5, 'the old visit never trains the replacement')
+        assert.equal(h.game.dragon.pets, 0)
+        assert.equal(h.A.scheduler.isPaused(), paused)
+    })
+}
+
+for (const takeover of ['trusted input', 'replacement DOM']) {
+    test(`dragon actors refuse ${takeover} after opening`, async () => {
+        const h = await ready({ game: { dragon: { level: 5, trainable: true } } })
+        assert.equal(await h.A.act.dragon.open(), true)
+        if (takeover === 'trusted input') {
+            h.game.doc.fire('pointerdown', {
+                isTrusted: true,
+                target: h.game.doc.getElementById('specialPic')
+            })
+        } else h.game.drawDragon()
+        const pic = h.game.doc.getElementById('specialPic')
+        assert.equal(h.A.act.dragon.train(), false)
+        assert.equal(h.A.act.dragon.pet(), false)
+        assert.equal(await h.A.act.dragon.setAura(1, 0), false)
+        assert.equal(await h.A.act.dragon.close(), false)
+        assert.equal(await h.A.act.dragon.open(), false, 'open cannot adopt the player panel')
+        assert.equal(h.game.doc.getElementById('specialPic'), pic)
+        assert.equal(h.game.dragon.level, 5)
+        assert.equal(h.game.dragon.pets, 0)
+        assert.equal(h.A.safety.prompt(), null)
+    })
+}
+
+for (const waitNumber of [1, 2]) {
+    test(`dragon aura work & cancellation preserve a takeover at wait ${waitNumber}`, async () => {
+        const h = await ready({
+            game: { owned: [10, 0, 0, 0, 0, 0, 0, 0], dragon: { level: 27 } }
+        })
+        await h.A.act.dragon.open()
+        const barrier = hold(h, 150)
+        const work = h.A.act.dragon.setAura(15, 0)
+        assert.equal(barrier.pending.length, 1)
+        if (waitNumber === 2) {
+            barrier.pending.shift()()
+            assert.ok(await waitFor(() => barrier.pending.length === 1, 1000, 5))
+        }
+        const prompt = h.A.safety.prompt()
+        h.game.doc.fire('pointerdown', {
+            isTrusted: true,
+            target: h.game.doc.getElementById('specialPic')
+        })
+        barrier.release()
+        assert.equal(await work, false)
+        assert.equal(await h.A.act.dragon.cancel(), false)
+        assert.equal(await h.A.act.dragon.close(), false)
+        assert.equal(h.A.safety.prompt(), prompt)
+        assert.equal(h.game.dragon.aura, 0)
+        assert.equal(h.game.state.owned[0], 10)
+        assert.equal(h.A.act.dragon.panelOpen(), true)
+    })
+}
+
+test('a dragon visit never adopts a panel the player already opened', async () => {
+    const h = await ready({
+        save: fx.save({ dragonLevel: 5 }).raw,
+        game: { owned: [300, 0, 0, 0, 0, 0, 0, 0], dragon: { level: 5, trainable: true } }
+    })
+    const canvas = h.game.leftCanvas
+    h.A.input.simulateClickAt(canvas, 24, canvas.height - 72)
+    const pic = h.game.doc.getElementById('specialPic')
+    await h.A.registry.get('dragon').tick()
+    assert.equal(h.game.doc.getElementById('specialPic'), pic)
+    assert.equal(h.game.dragon.level, 5)
+    assert.equal(h.game.dragon.pets, 0)
+})
+
 function seeds(h) {
     const soil = new El('div', { id: 'gardenSoil-0', class: 'gardenSeed gardenSoil on' })
     const container = new El('div', { id: 'gardenSeeds' })
