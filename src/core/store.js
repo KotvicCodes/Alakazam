@@ -269,6 +269,7 @@
     }
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.store = {
+        error: () => lastError,
         ready,
         copyLegacy,
         isReady,

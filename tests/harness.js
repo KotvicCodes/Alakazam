@@ -64,6 +64,7 @@ function boot(opts = {}) {
             }
             return Buffer.from(s, 'base64').toString('binary')
         },
+        addEventListener: (type, fn) => events.push({ type, fn }),
         innerWidth: 1440,
         innerHeight: 900,
         localStorage: opts.localStorage || {

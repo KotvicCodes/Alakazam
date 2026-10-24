@@ -1,187 +1,178 @@
-//! Toolbar Popup
-// The popup runs in its own context and cannot see the game page at all. It talks
-// to the content script the only way it can without a service worker: through
-// chrome.storage. The HUD writes a status summary every few seconds, and setting
-// changes made here reach the page through chrome.storage.onChanged.
+;(function () {
+    //! Active Tab Popup
+    const { ui, parse, store } = window.Alakazam
+    const { SETTINGS_KEY, STATUS_PREFIX, DEFAULTS, STALE_MS, text } = ui
+    const byId = id => document.getElementById(id)
+    let settings = { ...DEFAULTS }
+    let storageReady = null
 
-const store = window.Alakazam.store
-let storageReady = null
-
-const LABELS = {
-    enabled: 'Master switch',
-    autoclick: 'Autoclicker',
-    shimmers: 'Golden cookies',
-    wrinklers: 'Wrinklers',
-    purchase: 'Buying',
-    lumps: 'Sugar lumps',
-    grimoire: 'Grimoire',
-    pantheon: 'Pantheon',
-    dragon: 'Dragon',
-    garden: 'Garden',
-    achievements: 'Achievements',
-    marketTrading: 'Stock trading',
-    ascend: 'Ascension',
-    clones: 'Clone look',
-    gifts: 'Gift codes',
-    hud: 'In-page panel'
-}
-
-function get(keys) {
-    return new Promise((resolve, reject) =>
-        chrome.storage.local.get(keys, result => {
-            const error = chrome.runtime && chrome.runtime.lastError
-            if (error) reject(new Error(error.message))
-            else resolve(result)
-        })
-    )
-}
-
-//* latestStatus
-// the HUD writes status under whichever save it belongs to, so pick the most
-// recently written one rather than guessing at a save id
-function latestStatus(all) {
-    let best = null
-    for (const key of Object.keys(all)) {
-        const status =
-            key.startsWith('az2:legacy%3A') && key.endsWith(':status')
-                ? all[key] && all[key].value
-                : key.startsWith('legacy:')
-                  ? all[key] && all[key].status
-                  : null
-        if (!status) continue
-        if (!best || status.at > best.at) best = status
-    }
-    return best
-}
-
-//* format
-// Cookie Clicker's own magnitude suffixes, at every third power from a thousand
-// up to 10^276, after which the game itself switches to an exponent.
-//
-// This is deliberately a copy of formatNumber in src/parse.js rather than a
-// shared import. The popup is a separate document in a separate context with no
-// access to the content scripts, and a two-file duplicate beats a build step for
-// one function. Change one, change the other.
-const MAGNITUDES = (() => {
-    const bases = ['', 'Un', 'Do', 'Tr', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No']
-    const tiers = ['', 'D', 'V', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No']
-    const names = ['k', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc']
-    for (let tier = 1; tier < tiers.length; tier++) {
-        for (let base = 1; base < bases.length; base++) names.push(bases[base] + tiers[tier])
-    }
-    return names.map((suffix, i) => [Math.pow(10, 3 * (i + 1)), suffix]).reverse()
-})()
-
-function format(n) {
-    if (!Number.isFinite(n)) return '-'
-    if (n < 0) return '-' + format(-n)
-    if (n < 1000) return n < 100 && n % 1 !== 0 ? trimZeros(n.toFixed(1)) : String(Math.round(n))
-    for (const [value, suffix] of MAGNITUDES) {
-        if (n < value) continue
-        const scaled = n / value
-        if (scaled >= 1000) break
-        return trimZeros(scaled.toFixed(3)) + suffix
-    }
-    return n.toExponential(2)
-}
-
-function trimZeros(text) {
-    return text.indexOf('.') === -1 ? text : text.replace(/\.?0+$/, '')
-}
-
-async function render() {
-    if (!storageReady)
-        storageReady = store.ready('popup').catch(err => {
+    function ready() {
+        if (!storageReady) storageReady = store.ready('popup').catch(error => {
             storageReady = null
-            throw err
+            throw error
         })
-    await storageReady
-    const all = await get(null)
-    const settings = store.allSettings()
-    const status = latestStatus(all)
-
-    const statusEl = document.getElementById('status')
-    const controls = document.getElementById('controls')
-    const data = document.getElementById('gameData')
-
-    // a status older than half a minute means no game page is currently running
-    const fresh = status && Date.now() - status.at < 30000
-    if (!fresh) {
-        statusEl.innerHTML = '<p>Open Cookie Clicker to begin analysis</p>'
-        data.style.display = 'none'
-    } else {
-        statusEl.innerHTML = `<p>${status.decision || 'running'}</p>`
-        data.style.display = ''
-        document.getElementById('cookies').textContent = format(status.cookies)
-        document.getElementById('cps').textContent = format(status.cps)
-        document.getElementById('buildings').textContent = status.seeds
-            ? `${status.seeds} seeds`
-            : `${status.lumps === null || status.lumps === undefined ? '-' : status.lumps} lumps`
+        return storageReady
     }
+    let activeTabId = null
+    let pageId = null
+    let current = null
+    let buttons
+    let refreshing = false
+    const diagnostics = new Map()
 
-    if (store.stats().error) {
-        statusEl.textContent = 'Settings could not be saved. Click Refresh Data to retry.'
-    }
-    controls.style.display = ''
-    controls.innerHTML = ''
-    for (const key of Object.keys(LABELS)) {
-        const on = settings[key] !== false
-        const button = document.createElement('button')
-        // the master switch is the one that has to read at a glance, so it gets
-        // the loud treatment: green running, red paused. the rest just light up.
-        const classes = ['btn']
-        if (key === 'enabled') {
-            classes.push('btn-primary')
-            if (!on) classes.push('active')
-        } else if (on) {
-            classes.push('on')
-        }
-        button.className = classes.join(' ')
-        button.textContent =
-            key === 'enabled' ? (on ? 'RUNNING' : 'PAUSED') : `${LABELS[key]}: ${on ? 'on' : 'off'}`
-        button.addEventListener('click', async () => {
-            store.setSetting(key, store.setting(key) === false)
-            try {
-                await store.flush()
-            } catch (err) {
-                /* shown by render */
-            }
-            safeRender()
+    function call(api, method, ...args) {
+        return new Promise((resolve, reject) => {
+            api[method](...args, result => {
+                const error = chrome.runtime.lastError
+                if (error) reject(new Error(error.message))
+                else resolve(result)
+            })
         })
-        controls.appendChild(button)
     }
-}
 
-//* showVersion
-// read from the manifest rather than written into the markup. it was hardcoded,
-// so it still claimed v1.0 ten releases later. deriving it means there is one
-// version number in the project and no ritual to forget.
-function showVersion() {
-    const el = document.getElementById('version')
-    if (!el) return
-    const manifest = chrome.runtime && chrome.runtime.getManifest ? chrome.runtime.getManifest() : null
-    el.textContent = manifest ? `v${manifest.version}` : ''
-}
+    function showError(error) {
+        byId('error').hidden = !error
+        text(byId('error'), error || '')
+    }
 
-function safeRender() {
-    return render().catch(err => {
-        document.getElementById('status').textContent =
-            'Storage unavailable. Click Refresh Data to retry.'
-        console.warn('Alakazam: popup storage failed', err)
-    })
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    showVersion()
-    safeRender()
-    // the page keeps writing status, so refresh while the popup is open
-    setInterval(safeRender, 2000)
-    document.getElementById('refreshBtn').addEventListener('click', async () => {
+    async function toggle(key) {
         try {
+            await ready()
+            store.setSetting(key, store.setting(key) === false)
             await store.flush()
-        } catch (err) {
-            /* shown by render */
+            settings = store.allSettings()
+            showError('')
+            update()
+            await refresh()
+        } catch (error) {
+            showError(`Could not save settings: ${error.message}`)
         }
-        safeRender()
+    }
+
+    function update() {
+        const fresh = current && Date.now() - current.at < STALE_MS
+        const paused = settings.enabled === false
+        text(byId('pauseBtn'), paused ? 'Resume automation' : 'Pause automation')
+        byId('pauseBtn').setAttribute('aria-pressed', String(Boolean(paused)))
+        ui.updateControls(buttons, settings, fresh ? current.modules : [])
+        byId('gameData').hidden = !fresh
+        if (!current) return
+        if (!fresh) {
+            text(byId('statusLine'), 'Status is stale — reconnect to the game tab')
+        } else {
+            text(byId('statusLine'), ui.headline(current))
+        }
+        const who = current.identity
+        text(
+            byId('identity'),
+            `Tab ${current.tabId} · Save ${who.known ? who.legacyId : 'unresolved'} · Run ${who.runId}`
+        )
+        text(
+            byId('updated'),
+            `Updated ${Math.max(0, Math.round((Date.now() - current.at) / 1000))}s ago · ${new Date(current.at).toLocaleTimeString()}`
+        )
+        text(byId('decision'), current.decision ? `Last decision: ${current.decision}` : '')
+        text(
+            byId('saveState'),
+            `Save: ${current.save.ok ? 'read' : 'failed'}${current.save.stale ? ' (untrusted)' : ''}${current.save.reason ? ` · ${current.save.reason}` : ''}`
+        )
+        text(byId('cookies'), parse.formatNumber(current.cookies))
+        text(byId('cps'), parse.formatNumber(current.cps))
+        text(byId('buildings'), parse.formatNumber(current.buildings))
+        const names = new Set()
+        for (const mod of current.modules) {
+            names.add(mod.name)
+            if (!diagnostics.has(mod.name)) {
+                const row = document.createElement('div')
+                const name = document.createElement('dt')
+                const value = document.createElement('dd')
+                text(name, ui.LABELS[mod.name] || mod.name)
+                row.append(name, value)
+                byId('diagnostics').appendChild(row)
+                diagnostics.set(mod.name, { row, value })
+            }
+            const { row, value } = diagnostics.get(mod.name)
+            row.hidden = false
+            text(
+                value,
+                `${fresh ? ui.moduleText(mod) : 'Stale'}${mod.failures ? ` · ${mod.failures} failure(s)` : ''}${mod.lastError ? ` · ${mod.lastError}` : ''}`
+            )
+        }
+        for (const [name, { row }] of diagnostics) row.hidden = !names.has(name)
+    }
+
+    function disconnected(message) {
+        current = null
+        pageId = null
+        text(byId('statusLine'), message)
+        for (const id of ['identity', 'updated', 'decision', 'saveState']) text(byId(id), '')
+        for (const { row } of diagnostics.values()) row.hidden = true
+        update()
+    }
+
+    async function refresh() {
+        if (refreshing) return
+        refreshing = true
+        try {
+            const [tabs, got] = await Promise.all([
+                call(chrome.tabs, 'query', { active: true, currentWindow: true }),
+                ready()
+            ])
+            settings = store.allSettings()
+            const tab = tabs[0]
+            activeTabId = tab?.id ?? null
+            if (!/^https:\/\/orteil\.dashnet\.org\/cookieclicker\//.test(tab?.url || '')) {
+                disconnected('Select a Cookie Clicker tab to see its status')
+                return
+            }
+            let reply
+            try {
+                reply = await call(chrome.tabs, 'sendMessage', activeTabId, {
+                    type: 'alakazam:get-status'
+                })
+            } catch {
+                disconnected('Game tab is not responding — wait for startup or reload it')
+                return
+            }
+            if (reply?.status?.publicationError) throw new Error(reply.status.publicationError)
+            pageId = reply?.status?.pageId
+            // read the actual storage bridge, bound to this tab and document
+            const key = STATUS_PREFIX + activeTabId
+            const stored = await call(chrome.storage.local, 'get', key)
+            const status = stored[key]
+            if (!pageId || status?.pageId !== pageId || status.tabId !== activeTabId) {
+                disconnected('Waiting for this game tab to publish status')
+                return
+            }
+            current = status
+            update()
+            showError('')
+        } catch (error) {
+            disconnected('Could not read game status')
+            showError(error.message)
+        } finally {
+            refreshing = false
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const manifest = chrome.runtime.getManifest()
+        text(byId('version'), `v${manifest.version}`)
+        buttons = ui.buildControls(byId('controls'), toggle)
+        byId('pauseBtn').addEventListener('click', () => toggle('enabled'))
+        byId('refreshBtn').addEventListener('click', async () => {
+            try { await ready(); await store.flush(); showError('') }
+            catch (error) { showError(`Could not save settings: ${error.message}`) }
+            await refresh()
+        })
+        chrome.storage.onChanged.addListener((changes, area) => {
+            if (area !== 'local') return
+            if (changes[SETTINGS_KEY]) settings = { ...DEFAULTS, ...changes[SETTINGS_KEY].newValue }
+            const status = changes[STATUS_PREFIX + activeTabId]?.newValue
+            if (status && status.pageId === pageId && status.tabId === activeTabId) current = status
+            update()
+        })
+        refresh()
+        setInterval(refresh, 2000)
     })
-})
+})()

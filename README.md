@@ -141,6 +141,10 @@ registers itself, so adding one is a file and a manifest line.
 - `src/core/store.js` — `chrome.storage.local`, scoped to families and runs, with
   one entry per field so unrelated writes cannot overwrite one another. Also the
   bridge to the popup, so there is no background worker.
+- `src/core/status.js` / `src/background.js` — live tab-specific status, including
+  paused and hidden sessions. The popup verifies the active document before reading
+  its record; closed and navigating tabs discard old records.
+- `src/shared/ui.js` — shared labels, defaults and accessible controls for both UIs.
 - `src/core/registry.js` / `scheduler.js` — modules self-register with their own
   cadence. One frame loop and one millisecond driver run all of them, isolating
   failures and budgeting clicks.
