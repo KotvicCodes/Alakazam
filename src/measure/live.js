@@ -100,7 +100,7 @@
     // read now. The two remaining sections are left alone deliberately. A vaulted
     // upgrade is the player saying do not buy this, which outranks anything the
     // strategy engine has to say, and the toggles are state changes dressed up as
-    // purchases. classifyUpgrade in measure/catalog.js screens for both by name as
+    // purchases. classifyUpgrade in measure/catalog.js screens canonical ids as
     // well, so a section moving between game versions cannot make us buy one.
     const BUYABLE_SECTIONS = ['#upgrades', '#techUpgrades']
 

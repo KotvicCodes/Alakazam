@@ -309,7 +309,7 @@ test('clicking upgrades are valued from the measured click rate', () => {
     )
 })
 
-test('clicking upgrades read as unknown when nothing is clicking', () => {
+test('clicking upgrades have zero click value when nothing is clicking', () => {
     const idle = view({ clicksPerSecond: 0, clickCps: 0 })
-    assert.ok(Number.isNaN(S.upgradeDeltaCps({ description: 'Clicking gains +1% of your CpS.' }, idle)))
+    assert.equal(S.upgradeDeltaCps({ description: 'Clicking gains +1% of your CpS.' }, idle), 0)
 })

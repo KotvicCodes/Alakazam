@@ -2,6 +2,7 @@
 // share one scope, so bare top-level declarations across files would collide
 ;(function () {
     //! Which Aura
+<<<<<<< HEAD
     // Pure arithmetic, no DOM, no state: hand it what has been measured and it ranks
     // every aura the dragon knows. It exists because the received wisdom about auras
     // was written for someone playing by hand, and three of the most recommended ones
@@ -19,6 +20,14 @@
     // Radiant Appetite doubles production. Compare it with the measured alternatives
     // rather than assuming a winner. Every candidate returns the terms behind its
     // score so modules/dragon.js can print the whole table.
+=======
+    // score each aura against measured production, click income and golden-cookie
+    // income. Normal pointer clicks are not subject to the detail-zero throttle;
+    // no fixed registration ceiling belongs in these comparisons. Dragonflight
+    // and Dragon Cursor can become valuable as the measured click share rises.
+    // Dragon's Fortune instead depends on goldens remaining on screen.
+    // Every candidate returns the terms behind its score for explain().
+>>>>>>> origin/t3/fix-click-income-and-guards
     //
     //! Units
     // Every gain is in cookies per second, compared against measured income, so the

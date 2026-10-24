@@ -323,16 +323,22 @@
             html += row('from clicking', format(click.clickCps))
             html += row('effective', format(globals.cps + click.clickCps))
         }
-        // how many clicks the game acts on. what we dispatch used to be shown
-        // alongside it and was only ever noise: it is not a number anyone can do
-        // anything with, and it made the real one look broken by comparison.
+        // separate saved registration from the configured startup estimate.
         html += row(
             'clicks',
-            click.measured ? `${click.registeredPerSecond}/s` : `~${click.registeredPerSecond}/s`
+            click.measured
+                ? `${click.registeredPerSecond}/s`
+                : `~${click.estimatedPerSecond}/s (estimate)`
         )
+        if (click.reason) html += row('click measurement', click.reason)
         // the action is dropped: every reason already says what it is, and the
         // panel spent nearly all its time showing the word "wait"
         html += row('decision', debug.decision ? debug.decision.reason : 'starting up')
+        const effectGuard = window.Alakazam.buffs.guardStatus()
+        if (effectGuard.blocked) html += row('effect guard', effectGuard.reason, true)
+        const purchaseGuard = window.Alakazam.catalog.purchaseSafety()
+        if (purchaseGuard) html += row('upgrade guard', purchaseGuard, true)
+
         // payback on its own row. it used to be inside the reason, which made a
         // sentence long enough to wrap over three lines of the panel
         if (debug.decision) {
