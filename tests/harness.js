@@ -7,6 +7,8 @@ const fs = require('fs')
 const vm = require('vm')
 const path = require('path')
 const game = require('./game')
+const { storageFixture } = require('./storage')
+const storageByDisk = new WeakMap()
 
 const ROOT = path.join(__dirname, '..')
 
@@ -20,29 +22,10 @@ function boot(opts = {}) {
         f => opts.includeMain === true || f !== 'src/main.js'
     )
 
-    const disk = opts.disk || {}
-    const storageListeners = []
-    const chrome = {
-        storage: {
-            local: {
-                get: (keys, cb) => {
-                    const o = {}
-                    for (const k of keys) if (k in disk) o[k] = disk[k]
-                    cb(o)
-                },
-                set: (obj, cb) => {
-                    const changes = {}
-                    for (const k in obj) {
-                        changes[k] = { oldValue: disk[k], newValue: obj[k] }
-                        disk[k] = obj[k]
-                    }
-                    storageListeners.forEach(fn => fn(changes, 'local'))
-                    cb && cb()
-                }
-            },
-            onChanged: { addListener: fn => storageListeners.push(fn) }
-        }
-    }
+    const disk = opts.storage ? opts.storage.disk : opts.disk || {}
+    if (!storageByDisk.has(disk)) storageByDisk.set(disk, storageFixture(disk))
+    const storage = opts.storage || storageByDisk.get(disk)
+    const chrome = storage.chrome()
 
     const rafQueue = []
     const events = []
@@ -57,6 +40,7 @@ function boot(opts = {}) {
 
     const ctx = {
         console,
+        location: opts.location,
         document: g.doc,
         chrome,
         setTimeout: opts.clock?.setTimeout || setTimeout,
@@ -101,6 +85,7 @@ function boot(opts = {}) {
         ctx,
         game: g,
         disk,
+        storage,
         rafQueue,
         frame: () => {
             const q = rafQueue.splice(0, rafQueue.length)

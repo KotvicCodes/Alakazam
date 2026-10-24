@@ -164,7 +164,7 @@
     // only thing behind the answer so far is the base timing
     function measuredSpan() {
         const s = save.get()
-        if (s.ok && s.scalars && s.scalars.trusted && s.scalars.lumpT) {
+        if (s.ok && s.scalars && s.scalars.lumpsState === 'unlocked' && s.scalars.lumpT) {
             measure(Date.now() - s.scalars.lumpT)
         }
         const held = store.get(LUMP_KEY, 0)
@@ -177,7 +177,7 @@
         const s = save.get()
         if (!s.ok || !s.scalars) return null
         const scalars = s.scalars
-        if (!scalars.lumpT) return null
+        if (scalars.lumpsState !== 'unlocked' || !scalars.lumpT) return null
 
         const age = Date.now() - scalars.lumpT
         const measured = measuredSpan()

@@ -24,6 +24,7 @@
     const FAILURE_LIMIT = 5
 
     const state = new Map()
+    let transitioning = false
     let running = false
     let paused = false
     let driver = null
@@ -66,6 +67,8 @@
     // settings flag are on
     function shouldRun(mod, slot) {
         if (!running) return false
+        if (mod.name !== 'saveWatch' && transitioning) return false
+        if (!store.isReady() && !mod.always) return false
         if (slot.disabled || slot.busy) return false
         // an `always` module runs through both the master switch and a pause,
         // because it is the UI those are operated from
@@ -114,7 +117,7 @@
     function noteFailure(mod, slot, err) {
         slot.failures++
         slot.lastError = err && err.message ? err.message : String(err)
-        if (slot.failures >= FAILURE_LIMIT) {
+        if (slot.failures >= FAILURE_LIMIT && mod.name !== 'saveWatch') {
             slot.disabled = true
             console.warn(
                 `Alakazam: module "${mod.name}" failed ${slot.failures} times in a row and was switched off`,
@@ -192,6 +195,25 @@
         )
     }
 
+    // drain old async actions before switching the namespace they write to.
+    // saveWatch owns this transition and must not wait on its own busy slot.
+    async function reconcile(who) {
+        transitioning = true
+        try {
+            while ([...state.entries()].some(([name, slot]) => name !== 'saveWatch' && slot.busy)) {
+                await new Promise(resolve => setTimeout(resolve, 10))
+            }
+            const previousIdentity = window.__alakazam.identity
+            await store.ready(who)
+            window.__alakazam.identity = who
+            for (const mod of registry.all()) {
+                if (mod.reset) await mod.reset({ previousIdentity, identity: who })
+            }
+        } finally {
+            transitioning = false
+        }
+    }
+
     function stop() {
         running = false
         if (driver) clearInterval(driver)
@@ -228,5 +250,5 @@
     }
 
     window.Alakazam = window.Alakazam || {}
-    window.Alakazam.scheduler = { start, stop, pause, resume, isPaused, stats, budget }
+    window.Alakazam.scheduler = { reconcile, start, stop, pause, resume, isPaused, stats, budget }
 })()

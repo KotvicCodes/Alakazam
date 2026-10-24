@@ -351,6 +351,11 @@
 
         const saveStats = save.stats()
         html += section('save')
+        const persistence = store.stats()
+        if (persistence.error) {
+            html += row('storage', persistence.error, true)
+            html += '<button class="az-retry-storage">Retry saving</button>'
+        }
         // the version and the note about it are gone. The note said the game was
         // newer than the parser had been read against, which was true of every
         // version after the list in savefile.js and told nobody anything: the parse
@@ -478,6 +483,16 @@
     function render() {
         if (!body) return
         body.innerHTML = toggles() + summary()
+        for (const node of body.querySelectorAll('.az-retry-storage')) {
+            node.addEventListener('click', async () => {
+                try {
+                    await store.flush()
+                } catch (err) {
+                    /* shown in summary */
+                }
+                render()
+            })
+        }
         for (const node of body.querySelectorAll('.az-tog')) {
             node.addEventListener('click', () => {
                 const key = node.getAttribute('data-key')
