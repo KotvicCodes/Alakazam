@@ -579,3 +579,129 @@ test('new local edits made before acknowledgment stay pending after an external 
     assert.equal(b.get('value'), 3)
     assert.equal(a.stats().pending, 0)
 })
+
+test('external pause survives a delayed namespace load with or without an existing setting', async () => {
+    for (const existing of [false, true]) {
+        const storage = storageFixture()
+        const h = page({ storage, entries: { CookieClickerGame: saved(1750000002000) } })
+        const popup = boot({ storage }).A.store
+        await h.A.save.connect()
+        await popup.ready('popup')
+        if (existing) {
+            h.A.store.setSetting('enabled', true)
+            await h.A.store.flush()
+        }
+        const notifications = []
+        h.A.store.subscribe(settings => notifications.push(settings.enabled))
+        const delayed = storage.deferNextGetCallback()
+        h.entries.CookieClickerGame = saved(1750000062000, {
+            seed: 'other',
+            resets: 1,
+            startDate: 1750000061000
+        })
+        const switching = h.tick()
+        const acknowledge = await delayed
+        popup.setSetting('enabled', false)
+        await popup.flush()
+        assert.equal(h.A.store.setting('enabled'), false)
+        acknowledge()
+        await switching
+        assert.equal(h.A.store.setting('enabled'), false)
+        assert.equal(h.A.store.moduleEnabled('autoclick'), false)
+        assert.equal(notifications.at(-1), false)
+        assert.equal(h.A.store.stats().pending, 0)
+        assert.equal(storage.disk[h.A.store.fieldKey('settings', 'enabled')].value, false)
+    }
+})
+
+test('initial load preserves storage events received before its first callback', async () => {
+    const storage = storageFixture()
+    const a = boot({ storage }).A.store
+    const b = boot({ storage }).A.store
+    await b.ready('same')
+    const delayed = storage.deferNextGetCallback()
+    const loading = a.ready('same')
+    const acknowledge = await delayed
+    b.setSetting('enabled', false)
+    b.set('value', 2)
+    await b.flush()
+    acknowledge()
+    await loading
+    assert.equal(a.setting('enabled'), false)
+    assert.equal(a.get('value'), 2)
+    assert.equal(a.stats().pending, 0)
+})
+
+test('queued namespace loads preserve creations, tombstones, and physical storage deletions', async () => {
+    const storage = storageFixture()
+    const a = boot({ storage }).A.store
+    const b = boot({ storage }).A.store
+    await Promise.all([a.ready('one'), b.ready('one')])
+    b.set('removed', 1)
+    b.setSetting('purchase', false)
+    await b.flush()
+    const firstRead = storage.deferNextGetCallback()
+    const first = a.ready('one')
+    const last = a.ready('two')
+    const acknowledgeFirst = await firstRead
+    b.forget('removed')
+    b.set('created', 2)
+    await b.flush()
+    const secondRead = storage.deferNextGetCallback()
+    acknowledgeFirst()
+    await first
+    const acknowledgeLast = await secondRead
+    assert.equal(a.isReady(), false)
+    assert.equal(a.get('removed', null), null)
+    assert.equal(a.get('created'), 2)
+    // The second snapshot includes the creation, but another deletion arrives
+    // before its callback. Neither load may resurrect data from its own snapshot.
+    await new Promise(resolve => {
+        storage
+            .chrome()
+            .storage.local.remove(
+                [a.fieldKey('legacy:one', 'created'), a.fieldKey('settings', 'purchase')],
+                resolve
+            )
+    })
+    acknowledgeLast()
+    await last
+    assert.equal(a.isReady(), true)
+    assert.equal(a.get('removed', null), null)
+    assert.equal(a.get('created', null), null)
+    assert.equal(a.setting('purchase'), true)
+    assert.equal(a.stats().pending, 0)
+    await a.ready('two')
+    await a.ready('one')
+    assert.equal(a.get('removed', null), null)
+    assert.equal(a.get('created', null), null)
+    assert.equal(a.setting('purchase'), true)
+})
+
+test('load reconciliation retains pending-write external events and newer local edits', async () => {
+    for (const editAgain of [false, true]) {
+        const storage = storageFixture()
+        const a = boot({ storage }).A.store
+        const b = boot({ storage }).A.store
+        await Promise.all([a.ready('same'), b.ready('same')])
+        a.set('value', 1)
+        const delayedWrite = storage.deferNextSetCallback()
+        const writing = a.flush()
+        const acknowledgeWrite = await delayedWrite
+        const delayedRead = storage.deferNextGetCallback()
+        const loading = a.ready('same')
+        const acknowledgeRead = await delayedRead
+        b.set('value', 2)
+        await b.flush()
+        if (editAgain) a.set('value', 3)
+        acknowledgeWrite()
+        await writing
+        acknowledgeRead()
+        await loading
+        assert.equal(a.get('value'), editAgain ? 3 : 2)
+        assert.equal(a.stats().pending, editAgain ? 1 : 0)
+        await a.flush()
+        assert.equal(storage.disk[a.fieldKey('legacy:same', 'value')].value, editAgain ? 3 : 2)
+        assert.equal(a.stats().pending, 0)
+    }
+})

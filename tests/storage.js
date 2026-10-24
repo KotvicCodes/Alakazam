@@ -6,6 +6,7 @@ function storageFixture(disk = {}) {
     const failures = new Map()
     let deferred = null
     let deferredCallback = null
+    let deferredGetCallback = null
     const clone = value => (value === undefined ? undefined : structuredClone(value))
     function chrome() {
         const runtime = {}
@@ -26,11 +27,23 @@ function storageFixture(disk = {}) {
             storage: {
                 local: {
                     get(keys, cb) {
+                        const acceptCallback = deferredGetCallback
+                        deferredGetCallback = null
                         const result = {}
                         for (const key of keys === null ? Object.keys(disk) : keys) {
                             if (key in disk) result[key] = clone(disk[key])
                         }
-                        finish('get', cb, result)
+                        if (acceptCallback) acceptCallback(() => finish('get', cb, result))
+                        else finish('get', cb, result)
+                    },
+                    remove(keys, cb) {
+                        const changes = {}
+                        for (const key of keys) {
+                            changes[key] = { oldValue: clone(disk[key]) }
+                            delete disk[key]
+                        }
+                        for (const fn of listeners) fn(clone(changes), 'local')
+                        finish('remove', cb)
                     },
                     set(values, cb) {
                         const acceptCallback = deferredCallback
@@ -65,6 +78,10 @@ function storageFixture(disk = {}) {
         disk,
         chrome,
         failNext: (method, message = 'storage unavailable') => failures.set(method, message),
+        deferNextGetCallback: () =>
+            new Promise(resolve => {
+                deferredGetCallback = resolve
+            }),
         deferNextSetCallback: () =>
             new Promise(resolve => {
                 deferredCallback = resolve

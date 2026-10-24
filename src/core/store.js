@@ -43,6 +43,7 @@
     let inFlight = null
     let loadQueue = Promise.resolve()
     let loadVersion = 0
+    let loadChanges = null
     let lastError = ''
     const records = new Map()
     const baselines = new Map()
@@ -86,8 +87,16 @@
         const version = ++loadVersion
         loaded = false
         const request = async () => {
+            // Listen before the read, including on first load. Each queued read
+            // gets its own overlay so delayed snapshots cannot undo newer events.
+            loadChanges = new Map()
+            listen()
             try {
                 const all = await call('get', null)
+                for (const [key, value] of loadChanges) {
+                    if (value === undefined) delete all[key]
+                    else all[key] = value
+                }
                 const who = typeof identity === 'object' && identity ? identity : null
                 const target = who
                     ? who.known
@@ -104,18 +113,19 @@
                     }
                 }
                 baselines.set(SETTINGS_KEY, clone(all[SETTINGS_KEY] || {}))
-                for (const [key, value] of Object.entries(all)) {
-                    if (key.startsWith(PREFIX) && !dirty.has(key)) records.set(key, clone(value))
+                for (const key of new Set([...records.keys(), ...Object.keys(all)])) {
+                    if (key.startsWith(PREFIX) && !dirty.has(key)) applyStored(key, all[key])
                 }
                 namespace = target
                 runNamespace = runTarget
                 loaded = version === loadVersion
                 if (!dirty.size) lastError = ''
-                listen()
                 notify()
             } catch (err) {
                 report(err)
                 throw err
+            } finally {
+                loadChanges = null
             }
         }
         const next = loadQueue.then(request, request)
@@ -246,6 +256,7 @@
             if (area !== 'local') return
             for (const [key, change] of Object.entries(changes)) {
                 if (!key.startsWith(PREFIX)) continue
+                if (loadChanges) loadChanges.set(key, clone(change.newValue))
                 if (dirty.has(key)) receivedWhileDirty.set(key, clone(change.newValue))
                 else applyStored(key, change.newValue)
             }
