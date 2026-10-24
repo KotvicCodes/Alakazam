@@ -244,6 +244,9 @@ test('pausing during a dragon panel await prevents training and remains paused a
 })
 
 function seeds(h) {
+    const soil = new El('div', { id: 'gardenSoil-0', class: 'gardenSeed gardenSoil on' })
+    const container = new El('div', { id: 'gardenSeeds' })
+    h.game.doc.body.append(soil, container)
     const nodes = [0, 1].map(id => new El('div', { id: 'gardenSeed-' + id, class: 'gardenSeed' }))
     for (const node of nodes) {
         node.addEventListener('click', () => {
@@ -251,11 +254,31 @@ function seeds(h) {
             nodes.forEach(other => other.classList.remove('on'))
             if (!was) node.classList.add('on')
         })
-        h.game.doc.body.append(node)
+        container.append(node)
     }
     h.A.input.simulateClick(nodes[1])
     return nodes
 }
+
+test('garden harvesting runs with active soil and no seed selected', async () => {
+    const h = await ready()
+    const nodes = seeds(h)
+    h.A.input.simulateClick(nodes[1])
+    const soil = h.game.doc.getElementById('gardenSoil-0')
+    const tile = new El('div', { id: 'gardenTile-0-0' })
+    h.game.doc.body.append(tile)
+    let harvested = 0
+    tile.addEventListener('click', () => harvested++)
+
+    assert.equal(
+        h.A.garden.withSeed(null, () => h.A.input.simulateClick(tile)),
+        true
+    )
+    assert.equal(harvested, 1)
+    assert.equal(h.game.doc.querySelector('#gardenSeeds .gardenSeed.on'), null)
+    assert.equal(soil.classList.contains('on'), true)
+    assert.equal(soil.events.includes('click'), false)
+})
 
 test('garden harvesting deselects the active seed and restores it even on failure', async () => {
     const h = await ready()
@@ -263,28 +286,28 @@ test('garden harvesting deselects the active seed and restores it even on failur
     assert.throws(
         () =>
             h.A.garden.withSeed(null, () => {
-                assert.equal(h.game.doc.querySelector('.gardenSeed.on'), null)
+                assert.equal(h.game.doc.querySelector('#gardenSeeds .gardenSeed.on'), null)
                 throw new Error('tile failed')
             }),
         /tile failed/
     )
-    assert.equal(h.game.doc.querySelector('.gardenSeed.on'), nodes[1])
+    assert.equal(h.game.doc.querySelector('#gardenSeeds .gardenSeed.on'), nodes[1])
 })
 
 test('garden cleanup respects a player selection and planting preserves an already selected seed', async () => {
     const h = await ready()
     const nodes = seeds(h)
     h.A.garden.withSeed(nodes[1], () => {
-        assert.equal(h.game.doc.querySelector('.gardenSeed.on'), nodes[1])
+        assert.equal(h.game.doc.querySelector('#gardenSeeds .gardenSeed.on'), nodes[1])
         h.A.input.simulateClick(nodes[1]) // planting consumes the selection
         return true
     })
-    assert.equal(h.game.doc.querySelector('.gardenSeed.on'), nodes[1])
+    assert.equal(h.game.doc.querySelector('#gardenSeeds .gardenSeed.on'), nodes[1])
     h.A.garden.withSeed(null, () => {
         h.game.doc.fire('pointerdown', { isTrusted: true, target: nodes[0] })
         h.A.input.simulateClick(nodes[0])
     })
-    assert.equal(h.game.doc.querySelector('.gardenSeed.on'), nodes[0])
+    assert.equal(h.game.doc.querySelector('#gardenSeeds .gardenSeed.on'), nodes[0])
 })
 
 function nameRoutine(h) {

@@ -144,7 +144,7 @@
     }
 
     function selectedSeed() {
-        return document.querySelector('.gardenSeed.on')
+        return document.querySelector('#gardenSeeds .gardenSeed.on')
     }
 
     function withSeed(seed, body) {
