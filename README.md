@@ -292,8 +292,11 @@ reserve policy remains future work.
   auras and spirits are valued using measured click income; their rankings can
   change as clicking's share grows. Dragon's Fortune depends on golden cookies
   remaining on screen, while Alakazam takes them as soon as each one
-  appears. It also pets the dragon for its drops, and learns which quarter of the
-  hour produces which one rather than wasting the attempt.
+  appears.
+  The historical three-clicks-per-second observation came from detail-zero
+  synthetic events in the reviewed mirror, not an unconditional game limit. It
+  also pets the dragon for its drops, and learns which quarter of the hour
+  produces which one rather than wasting the attempt.
 - **Gift codes** — wraps a gift, keeps the code, and redeems it once the hour the
   game makes you wait is up, or once an ascension has cleared it. That is the
   "No time like the present" achievement, start to finish.

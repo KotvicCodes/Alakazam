@@ -96,5 +96,6 @@ Cursor gains fivefold, and moves Muridal from ruby to diamond for the same passi
 production. The focused suite also passes against the concurrent save-lifecycle
 watcher/identity/registry implementation in a disposable combined-source copy.
 
-Run with `node --test --test-timeout=120000 tests/*.test.js`. The separate lifecycle
-PR fixes the existing Node 22 `npm test` discovery problem.
+Run the full unit suite with `npm test`, using the portable test launcher from
+the merged test-infrastructure PR. For just the input and effect regressions, run
+`node --test --test-timeout=120000 tests/click-guards.test.js`.
