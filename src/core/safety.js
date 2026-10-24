@@ -263,6 +263,8 @@
                     touch('prompt')
                 }
                 if (ids.some(id => id === 'store' || id.startsWith('storeBulk'))) touch('store')
+                if (ids.some(id => id === 'specialPopup' || id === 'backgroundLeftCanvas'))
+                    touch('dragonPanel')
                 if (ids.some(id => id.startsWith('gardenSeed-') || id.startsWith('gardenTile-')))
                     touch('gardenSeed')
                 if (type === 'input' && ids.includes('bakeryNameInput')) {
