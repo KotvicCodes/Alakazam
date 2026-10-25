@@ -257,6 +257,14 @@
                 const touch = resource => revisions.set(resource, revision(resource) + 1)
                 touch('tooltip')
                 if (type === 'mousemove') return
+                // loading even a save from the same run forfeits deferred panel
+                // cleanup. Dismissing Import Save leaves that permission intact.
+                if (
+                    prompt()?.id === 'promptContentImportSave' &&
+                    ((type === 'pointerdown' && ids.includes('promptOption0')) ||
+                        (type === 'keydown' && (event.key === 'Enter' || event.keyCode === 13)))
+                )
+                    touch('dragonPanel')
                 const inPrompt = ids.some(id => id.startsWith('prompt') || id === 'darken')
                 if (inPrompt) {
                     promptOwner = null
