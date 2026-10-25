@@ -793,7 +793,7 @@
             previousIdentity &&
             identity &&
             previousIdentity.familyId === identity.familyId &&
-            act.onAscendScreen() &&
+            window.Alakazam.act.ascend.onAscendScreen() &&
             ['ascending', 'shopping', 'returning'].includes(phase)
         ) {
             awaitingReset = null

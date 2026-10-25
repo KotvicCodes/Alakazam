@@ -97,7 +97,7 @@
             render()
         })
         discardButton = button('alakazam-discard-hoard', 'Discard hoard for this ascent', () => {
-            window.Alakazam.ascend.discardHoard(discardButton.dataset.decisionId)
+            window.Alakazam.ascend.discardHoard(discardButton.getAttribute('data-decision-id'))
             render()
         })
         body.append(retryButton, discardButton)
@@ -412,7 +412,7 @@
         summary()
         retryButton.hidden = !store.stats().error
         discardButton.hidden = !window.__alakazam.ascend?.hoardBlocked
-        discardButton.dataset.decisionId = window.__alakazam.ascend?.decisionId || ''
+        discardButton.setAttribute('data-decision-id', window.__alakazam.ascend?.decisionId || '')
         for (const [key, cell] of cells) cell.node.hidden = !seen.has(key)
         place()
     }

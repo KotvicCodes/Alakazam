@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const { boot, waitFor } = require('./harness')
 const { El } = require('./dom')
 const fx = require('./fixtures')
+const { slowStore } = require('./store-fixture')
 
 // Hold a real await at its boundary so races do not depend on wall-clock timing.
 function hold(h, ms) {
@@ -26,7 +27,7 @@ function hold(h, ms) {
 
 async function ready(opts = {}) {
     const h = boot({ save: fx.save().raw, ...opts })
-    await h.A.store.ready(h.A.identity.current().legacyId)
+    await h.A.store.ready(h.A.identity.current())
     return h
 }
 
@@ -53,11 +54,12 @@ function autosave(h) {
 for (const cancel of ['pause', 'stop', 'master', 'module']) {
     test(`${cancel} during a bulk redraw cancels spending and restores controls`, async () => {
         const h = await ready({ game: { bank: 1e9 } })
-        const barrier = hold(h, 40)
+        slowStore(h)
+        const barrier = hold(h, 25)
         const product = h.A.live.readProducts()[0]
         const mod = register(h, 'purchase', ctx => h.A.act.store.buy(product, 10, Infinity, ctx.task))
         const work = mod.tick()
-        assert.equal(barrier.pending.length, 1)
+        assert.ok(await waitFor(() => barrier.pending.length === 1, 1000, 5))
         if (cancel === 'pause') {
             h.A.scheduler.pause()
             h.A.scheduler.resume()
@@ -78,9 +80,11 @@ for (const cancel of ['pause', 'stop', 'master', 'module']) {
 
 test('bulk ownership serializes competing actions and preserves a newer player selection', async () => {
     const h = await ready({ game: { bank: 1e9 } })
-    const barrier = hold(h, 40)
+    slowStore(h)
+    const barrier = hold(h, 25)
     const product = h.A.live.readProducts()[0]
     const first = h.A.act.store.buy(product, 10, Infinity)
+    assert.ok(await waitFor(() => barrier.pending.length === 1, 1000, 5))
     assert.equal((await h.A.act.store.buy(product, 100, Infinity)).bought, false)
     const button = h.game.doc.getElementById('storeBulk100')
     h.game.doc.fire('pointerdown', { isTrusted: true, target: button })
@@ -93,11 +97,13 @@ test('bulk ownership serializes competing actions and preserves a newer player s
 
 test('mouse movement alone does not strand the store in Sell after cancellation', async () => {
     const h = await ready()
-    const barrier = hold(h, 40)
+    slowStore(h)
+    const barrier = hold(h, 25)
     const mod = register(h, 'purchase', ctx =>
         h.A.act.store.sell(h.A.live.readProducts()[0], 10, ctx.task)
     )
     const work = mod.tick()
+    assert.ok(await waitFor(() => barrier.pending.length === 1, 1000, 5))
     h.game.doc.fire('mousemove', { isTrusted: true, target: h.game.doc.body })
     h.A.scheduler.pause()
     barrier.release()
@@ -204,6 +210,7 @@ test('tooltip cleanup leaves a newer user hover alone', async () => {
     const target = h.A.live.readProducts()[0].element
     const barrier = hold(h, 90)
     const work = h.A.catalog.readTooltip(target)
+    assert.ok(await waitFor(() => barrier.pending.length === 1, 1000, 5))
     h.game.doc.fire('mousemove', { isTrusted: true, target: h.game.doc.body })
     barrier.release()
     assert.equal(await work, null)
@@ -727,11 +734,11 @@ test('stable namespace migration retains previous automation state', async () =>
     const id = boot({ save: fixture }).A.identity.current()
     const disk = { ['legacy:' + id.previousLegacyId]: { tickerClicks: 23, clonesStyled: true } }
     const h = boot({ save: fixture, disk })
-    await h.A.store.ready(id.legacyId, id.previousLegacyId)
+    await h.A.store.ready(id)
     assert.equal(h.A.store.get('tickerClicks'), 23)
     assert.equal(h.A.store.get('clonesStyled'), true)
     await h.A.store.flush()
-    assert.ok(disk['legacy:' + id.legacyId])
+    assert.equal(disk[h.A.store.fieldKey('legacy:' + id.legacyId, '@base:tickerClicks')].value, 23)
 })
 
 test('cosmetic routines refuse to mutate without a durable undo record', async () => {
@@ -943,9 +950,11 @@ test('a temporary name autosave remains recoverable after live restoration and r
     await work
     assert.equal(h.game.state.bakeryName, 'Original')
     assert.ok(h.A.store.get('bakeryNameRecovery', null))
+    await h.A.store.flush()
     const promptCount = h.game.state.log.filter(line => line === 'prompt NameBakery').length
     h.A.achievements.recoverName()
     assert.equal(h.game.state.log.filter(line => line === 'prompt NameBakery').length, promptCount)
+    assert.equal(h.A.store.stats().pending, 0, 'unchanged recovery does not rewrite the journal')
     await h.A.store.flush()
 
     const reloaded = await ready({ disk, save: saved, game: { bakeryName: 'Orteil' } })
@@ -957,7 +966,15 @@ test('a temporary name autosave remains recoverable after live restoration and r
     reloaded.A.achievements.recoverName()
     await reloaded.A.store.flush()
     assert.equal(reloaded.A.store.get('bakeryNameRecovery', null), null)
-    assert.equal(disk['legacy:' + reloaded.A.identity.current().legacyId].bakeryNameRecovery, undefined)
+    assert.equal(
+        disk[
+            reloaded.A.store.fieldKey(
+                'legacy:' + reloaded.A.identity.current().legacyId,
+                'bakeryNameRecovery'
+            )
+        ].deleted,
+        true
+    )
 })
 
 test('a temporary clone autosave remains recoverable after the routine completes', async () => {
@@ -999,7 +1016,15 @@ test('a temporary clone autosave remains recoverable after the routine completes
     await reloaded.A.clones.recover()
     await reloaded.A.store.flush()
     assert.equal(reloaded.A.store.get('cloneRecovery', null), null)
-    assert.equal(disk['legacy:' + reloaded.A.identity.current().legacyId].cloneRecovery, undefined)
+    assert.equal(
+        disk[
+            reloaded.A.store.fieldKey(
+                'legacy:' + reloaded.A.identity.current().legacyId,
+                'cloneRecovery'
+            )
+        ].deleted,
+        true
+    )
 })
 
 test('interrupted clone recovery recognizes an autosave several journal steps behind', async () => {
@@ -1029,7 +1054,8 @@ test('interrupted clone recovery recognizes an autosave several journal steps be
     const work = h.A.registry.get('clones').tick()
     assert.ok(await waitFor(() => !!resume, 1000, 5))
     try {
-        const mark = disk['legacy:' + h.A.identity.current().legacyId].cloneRecovery
+        const mark =
+            disk[h.A.store.fieldKey('legacy:' + h.A.identity.current().legacyId, 'cloneRecovery')].value
         assert.notDeepEqual(temporary, mark.expected)
         assert.notDeepEqual(temporary, mark.previous)
         const reloaded = await ready({ disk, save: saved, game: { genes: temporary } })
@@ -1065,4 +1091,107 @@ test('a player edit matching an earlier clone step supersedes the retained journ
     await reloaded.A.registry.get('clones').setup()
     assert.deepEqual(reloaded.game.state.genes, chosen)
     assert.equal(reloaded.A.store.get('cloneRecovery', null), null)
+})
+
+for (const kind of ['name', 'clone']) {
+    test(`prior stable namespace migrates ${kind} recovery through reload and a changed seed`, async () => {
+        const original = [4, 5, 6, 1, 2, 3, 4]
+        const temporary = [9, 1, 1, 3, 7, 3, 0]
+        const fixture = fx.save({
+            seed: 'after-ascend',
+            bakeryName: 'Orteil',
+            amounts: { 19: 1 },
+            appearance: temporary.join(',')
+        }).raw
+        const probe = boot({ save: fixture })
+        const who = probe.A.identity.current()
+        const oldId = probe.A.identity.hash('legacy|1750000000000')
+        const key = kind === 'name' ? 'bakeryNameRecovery' : 'cloneRecovery'
+        const mark =
+            kind === 'name'
+                ? { legacyId: oldId, original: 'Original', expected: 'Orteil' }
+                : { legacyId: oldId, original, expected: temporary, previous: temporary, earned: true }
+        const disk = { ['legacy:' + oldId]: { [key]: mark, tickerClicks: 23, spellsCast: 9 } }
+        const h = await ready({ disk, save: fixture, game: { bakeryName: 'Orteil', genes: temporary } })
+        assert.equal(h.A.store.get(key).legacyId, who.familyId)
+        assert.equal(h.A.store.get('tickerClicks'), 23)
+        assert.equal(h.A.store.get('spellsCast', 0), 0)
+        await h.A.store.flush()
+        const reloaded = await ready({
+            disk,
+            save: fixture,
+            game: { bakeryName: 'Orteil', genes: temporary }
+        })
+        await reloaded.A.registry.get(kind === 'name' ? 'achievements' : 'clones').setup()
+        if (kind === 'name') assert.equal(reloaded.game.state.bakeryName, 'Original')
+        else assert.deepEqual(reloaded.game.state.genes, original)
+        assert.deepEqual(disk['legacy:' + oldId][key], mark, 'old namespace remains intact')
+        autosave(reloaded)
+        if (kind === 'name') reloaded.A.achievements.recoverName()
+        else await reloaded.A.clones.recover()
+        await reloaded.A.store.flush()
+        const final = await ready({ disk, save: autosave(reloaded) })
+        assert.equal(final.A.store.get(key, null), null, 'tombstone prevents remigration')
+    })
+}
+
+test('recovery migration rejects another family, variant, or embedded identity', async () => {
+    const oldId = boot().A.identity.hash('legacy|1750000000000')
+    const source = {
+        bakeryNameRecovery: { legacyId: oldId, original: 'Original', expected: 'Orteil' },
+        tickerClicks: 23
+    }
+    const disk = { ['legacy:' + oldId]: source }
+    const other = await ready({ disk, save: fx.save({ fullDate: 1750000000001 }).raw })
+    assert.equal(other.A.store.get('bakeryNameRecovery', null), null)
+    assert.equal(other.A.store.get('tickerClicks', 0), 0)
+    const raw = fx.save().raw
+    const beta = await ready({
+        disk,
+        location: { pathname: '/cookieclicker/beta/' },
+        localStorage: { getItem: key => (key === 'CookieClickerGameBeta' ? raw : null) }
+    })
+    assert.equal(beta.A.store.get('bakeryNameRecovery', null), null)
+    assert.equal(beta.A.store.get('tickerClicks', 0), 0)
+    const foreign = await ready({
+        disk: {
+            ['legacy:' + oldId]: {
+                ...source,
+                bakeryNameRecovery: { ...source.bakeryNameRecovery, legacyId: 'foreign-family' }
+            }
+        }
+    })
+    assert.equal(foreign.A.store.get('bakeryNameRecovery', null), null)
+    assert.equal(foreign.A.store.get('tickerClicks'), 23)
+})
+
+test('cancelled clone cleanup cannot restore the previous family over an imported look', async () => {
+    const original = [4, 5, 6, 1, 2, 3, 4]
+    const h = await ready({
+        save: fx.save({ amounts: { 19: 1 }, appearance: original.join(',') }).raw,
+        game: { genes: original }
+    })
+    const flush = h.A.store.flush
+    let writes = 0
+    let imported
+    h.A.store.flush = async () => {
+        const ok = await flush()
+        if (++writes === 5) {
+            imported = h.game.state.genes.slice()
+            const raw = fx.save({
+                fullDate: 1750000000001,
+                amounts: { 19: 1 },
+                appearance: imported.join(',')
+            }).raw
+            h.ctx.localStorage = { getItem: key => (key === 'CookieClickerGame' ? raw : null) }
+            h.A.scheduler.pause()
+        }
+        return ok
+    }
+    await h.A.registry.get('clones').tick()
+    assert.notDeepEqual(imported, original)
+    assert.deepEqual(h.game.state.genes, imported)
+    assert.ok(h.A.store.get('cloneRecovery', null), 'the old family retains its undo journal')
+    assert.equal(h.A.store.get('clonesStyled', false), false)
+    assert.equal(h.A.safety.prompt(), null)
 })

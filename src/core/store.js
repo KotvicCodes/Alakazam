@@ -104,9 +104,25 @@
                         : namespace
                     : 'legacy:' + (identity || 'unknown')
                 const runTarget = who && who.known ? 'run:' + who.familyId + ':' + who.runId : target
-                const source = all[target] || (who && all['legacy:' + who.previousLegacyId]) || {}
-                for (const [key, value] of Object.entries(source)) {
+                const source = Object.assign(
+                    {},
+                    who?.previousLegacyId && all['legacy:' + who.previousLegacyId],
+                    who?.previousRecoveryId && all['legacy:' + who.previousRecoveryId],
+                    all[target]
+                )
+                for (const [key, held] of Object.entries(source)) {
                     if (who && RUN_KEYS.has(key)) continue
+                    let value = held
+                    if (who && ['bakeryNameRecovery', 'cloneRecovery'].includes(key)) {
+                        if (
+                            !held ||
+                            ![who.familyId, who.previousLegacyId, who.previousRecoveryId]
+                                .filter(Boolean)
+                                .includes(held.legacyId)
+                        )
+                            continue
+                        value = { ...held, legacyId: who.familyId }
+                    }
                     const baselineKey = fieldKey(target, '@base:' + key)
                     if (!all[baselineKey] && !records.has(baselineKey)) {
                         write(baselineKey, { value: clone(value) })

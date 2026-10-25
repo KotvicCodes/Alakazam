@@ -39,7 +39,14 @@ test('HUD rows stay in summary order when readings appear, disappear and return'
     h.debug().dragon = { level: 1, max: 27, aura: 'No aura' }
     h.debug().lumps = { lumps: 3, type: 'normal', ripe: true, lifeSpanHours: 24, measured: true }
     h.A.hud.render()
-    assert.deepEqual(labels().slice(0, 5), ['clicks', 'decision', 'payback', 'dragon', 'read'])
+    assert.deepEqual(labels().slice(0, 6), [
+        'clicks',
+        'click measurement',
+        'decision',
+        'payback',
+        'dragon',
+        'read'
+    ])
     assert.deepEqual(
         body.querySelectorAll('.az-sec').map(node => node.textContent),
         ['game', 'save', 'sugar lumps', 'garden']
@@ -48,8 +55,8 @@ test('HUD rows stay in summary order when readings appear, disappear and return'
         node => node.classList.contains('az-sec') || node.classList.contains('az-row')
     )
     assert.deepEqual(
-        entries.slice(0, 7).map(node => node.firstChild?.textContent || node.textContent),
-        ['game', 'clicks', 'decision', 'payback', 'dragon', 'save', 'read']
+        entries.slice(0, 8).map(node => node.firstChild?.textContent || node.textContent),
+        ['game', 'clicks', 'click measurement', 'decision', 'payback', 'dragon', 'save', 'read']
     )
     const dragonRow = rows().find(node => node.firstChild.textContent === 'dragon')
 
@@ -58,10 +65,11 @@ test('HUD rows stay in summary order when readings appear, disappear and return'
     delete h.debug().dragon
     delete h.debug().garden
     h.A.hud.render()
-    assert.deepEqual(labels().slice(0, 6), [
+    assert.deepEqual(labels().slice(0, 7), [
         'from clicking',
         'effective',
         'clicks',
+        'click measurement',
         'decision',
         'payback',
         'read'
@@ -72,10 +80,11 @@ test('HUD rows stay in summary order when readings appear, disappear and return'
     h.debug().dragon = { level: 2, max: 27, aura: 'No aura' }
     h.debug().garden = { unlocked: 2, goal: 'grow' }
     h.A.hud.render()
-    assert.deepEqual(labels().slice(0, 7), [
+    assert.deepEqual(labels().slice(0, 8), [
         'from clicking',
         'effective',
         'clicks',
+        'click measurement',
         'decision',
         'payback',
         'dragon',
@@ -130,10 +139,13 @@ for (const release of ['pointerup', 'pointercancel']) {
         assert.equal(panel.style.top, '32px')
         pointer(release, 500, 300)
         await h.A.store.flush()
-        assert.deepEqual(JSON.parse(JSON.stringify(h.disk['legacy:t'].hudPosition)), {
-            left: '44px',
-            top: '32px'
-        })
+        assert.deepEqual(
+            JSON.parse(JSON.stringify(h.disk[h.A.store.fieldKey('legacy:t', 'hudPosition')].value)),
+            {
+                left: '44px',
+                top: '32px'
+            }
+        )
         h.ctx.innerWidth = 1440
         h.ctx.innerHeight = 900
         h.A.registry.get('hud').tick()
@@ -225,17 +237,18 @@ test('save observation refreshes identity and storage namespace while paused', a
     })
     const original = h.A.identity.fromSave(h.A.save.get())
     h.debug().identity = original
-    await h.A.store.ready(original.legacyId)
+    await h.A.save.connect()
     h.A.store.set('marker', 'old save')
     h.ctx.localStorage.getItem = key =>
-        key === 'CookieClickerGame' ? fx.save({ seed: 'vwxyz' }).raw : null
+        key === 'CookieClickerGame' ? fx.save({ seed: 'vwxyz', fullDate: 1600000000001 }).raw : null
     await h.A.registry.get('saveWatch').tick()
     const next = h.A.status.snapshot()
     assert.equal(next.paused, true)
     assert.notEqual(next.identity.legacyId, original.legacyId)
     assert.equal(h.debug().identity.legacyId, next.identity.legacyId)
     assert.equal(h.A.store.get('marker', null), null)
-    assert.equal(h.disk['legacy:' + original.legacyId].marker, 'old save')
+    await h.A.store.flush()
+    assert.equal(h.disk[h.A.store.fieldKey('legacy:' + original.legacyId, 'marker')].value, 'old save')
 })
 
 test('status and settings storage failures are observable and recover', async () => {
@@ -246,7 +259,7 @@ test('status and settings storage failures are observable and recover', async ()
         sendMessage: (message, callback) => callback()
     }
     h.A.store.set('counter', 1)
-    await h.A.store.flush()
+    await assert.rejects(h.A.store.flush(), /write failed/)
     assert.equal(h.A.status.snapshot().storageError, 'write failed')
     assert.equal((await h.A.status.publish()).publicationError, 'write failed')
     h.ctx.chrome.runtime.lastError = undefined

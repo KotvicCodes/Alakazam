@@ -4,7 +4,7 @@ const { resolve } = require('node:path')
 const pin = require('./game-pin.json')
 const root = resolve(__dirname, '../..')
 const manifest = JSON.parse(readFileSync(resolve(root, 'manifest.json'), 'utf8'))
-const origin = 'http://127.0.0.1:4173'
+const origin = `http://127.0.0.1:${process.env.ALAKAZAM_TEST_PORT || 4173}`
 
 async function localOnly(context) {
     await context.route('**/*', route => {
@@ -81,9 +81,9 @@ async function buffTooltip(page, name = 'frenzy') {
 }
 
 async function publish(page) {
-    return page.evaluate(() => {
+    return page.evaluate(async () => {
         Game.WriteSave()
-        window.Alakazam?.registry.get('saveWatch').tick()
+        await window.Alakazam?.registry.get('saveWatch').tick()
         return localStorage.getItem(Game.SaveTo)
     })
 }

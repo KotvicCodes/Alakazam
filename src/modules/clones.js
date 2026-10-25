@@ -142,7 +142,7 @@
             // Use a new array so in-flight storage snapshots cannot change.
             mark.history = history.some(genes => equal(genes, next)) ? history : [...history, next]
             store.set(RECOVERY_KEY, { ...mark })
-            if (!(await store.flush())) return false
+            if (!(await store.flush().catch(() => false))) return false
         }
         ctx.check()
         if (revision !== safety.revision() || !equal(currentGenes(), before)) return false
@@ -151,6 +151,9 @@
     }
 
     async function restore(mark, ctx) {
+        // an import can replace the live customizer before cancelled work drains
+        const who = identity.current()
+        if (!who.known || mark.legacyId !== who.legacyId) return false
         const superseded = () => {
             store.forget(RECOVERY_KEY)
             store.set(DONE_KEY, true)
@@ -190,7 +193,7 @@
         if (mark && mark.legacyId !== who.legacyId) return
         // We already verified the live UI this session. Wait for autosave without
         // repeatedly opening the customizer while the journal is still needed.
-        if (mark && mark === restoredHere && !mark.intervened) {
+        if (mark && JSON.stringify(mark) === JSON.stringify(restoredHere) && !mark.intervened) {
             forgetIfSaved(mark)
             return
         }
@@ -218,7 +221,7 @@
         }
         store.set(RECOVERY_KEY, { ...mark })
         try {
-            if (!(await store.flush())) return false
+            if (!(await store.flush().catch(() => false))) return false
             ctx.check()
             const budget = { left: MAX_CLICKS }
             if (!(await walk(LIKENESS, budget, ctx, mark))) return
@@ -236,7 +239,7 @@
         const mark = store.get(RECOVERY_KEY, null)
         const who = identity.current()
         if (!mark || !who.known || mark.legacyId !== who.legacyId || safety.prompt()) return
-        if (mark === restoredHere && !mark.intervened) {
+        if (JSON.stringify(mark) === JSON.stringify(restoredHere) && !mark.intervened) {
             forgetIfSaved(mark)
             return
         }

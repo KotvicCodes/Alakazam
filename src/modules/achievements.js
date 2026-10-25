@@ -132,7 +132,7 @@
         ) {
             store.forget(NAME_KEY)
             restoredName = null
-        } else if (mark !== restoredName) {
+        } else if (JSON.stringify(mark) !== JSON.stringify(restoredName)) {
             // A live restoration does not replace an earlier autosave of Orteil.
             restoredName = { ...mark }
             store.set(NAME_KEY, restoredName)
@@ -148,7 +148,7 @@
             store.forget(NAME_KEY)
             return false
         }
-        if (mark === restoredName) {
+        if (JSON.stringify(mark) === JSON.stringify(restoredName)) {
             finishNameRecovery(mark)
             return true
         }
@@ -199,7 +199,7 @@
             const original = String(input.value)
             store.set(NAME_KEY, { legacyId: who.legacyId, original, expected: 'Orteil' })
             // persist the undo record before any mutation can reach the game save
-            if (!(await store.flush())) return false
+            if (!(await store.flush().catch(() => false))) return false
             ctx.check()
             if (!safety.ownsPrompt('achievements', 'NameBakery') || String(input.value) !== original) {
                 store.forget(NAME_KEY)

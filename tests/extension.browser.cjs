@@ -21,7 +21,8 @@ async function until(check, description) {
 async function run() {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'alakazam-acceptance-'))
     const artifacts =
-        process.env.ALAKAZAM_ARTIFACTS || path.join(os.tmpdir(), 'alakazam-acceptance-artifacts')
+        process.env.ALAKAZAM_ARTIFACTS ||
+        fs.mkdtempSync(path.join(os.tmpdir(), 'alakazam-acceptance-artifacts-'))
     fs.mkdirSync(artifacts, { recursive: true })
     const context = await chromium.launchPersistentContext(profile, {
         executablePath: process.env.ALAKAZAM_CHROMIUM || undefined,
@@ -177,7 +178,10 @@ async function run() {
         const disabled = await popup.evaluate(() =>
             Object.fromEntries(Object.keys(Alakazam.ui.DEFAULTS).map(key => [key, key === 'hud']))
         )
-        await worker.evaluate(settings => chrome.storage.local.set({ settings }), disabled)
+        await popup.evaluate(async settings => {
+            for (const [key, value] of Object.entries(settings)) Alakazam.store.setSetting(key, value)
+            await Alakazam.store.flush()
+        }, disabled)
         await page.locator('#alakazam-hud-pause').focus()
         await page.keyboard.press('Enter')
         assert.equal(await page.locator('#alakazam-hud-pause').innerText(), 'Pause')

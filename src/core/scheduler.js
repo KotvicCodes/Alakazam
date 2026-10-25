@@ -244,6 +244,8 @@
     // saveWatch owns this transition and must not wait on its own busy slot.
     async function reconcile(who) {
         transitioning = true
+        window.Alakazam.safety.invalidate()
+        window.Alakazam.transactions?.cancel()
         try {
             while ([...state.entries()].some(([name, slot]) => name !== 'saveWatch' && slot.busy)) {
                 await new Promise(resolve => setTimeout(resolve, 10))

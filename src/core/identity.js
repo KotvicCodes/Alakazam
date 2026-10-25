@@ -46,7 +46,9 @@
             known: true,
             familyId,
             legacyId: familyId,
-            previousLegacyId: hash(run.seed + '|' + run.fullDate),
+            // old namespaces carry no variant metadata; import them only on the canonical key
+            previousLegacyId: variant === savefile.SAVE_KEY ? hash(run.seed + '|' + run.fullDate) : null,
+            previousRecoveryId: variant === savefile.SAVE_KEY ? hash('legacy|' + run.fullDate) : null,
             runId: hash(familyId + '|' + run.seed + '|' + run.startDate + '|' + ascensions),
             seed: run.seed,
             ascensions

@@ -32,12 +32,14 @@ outside the local fixture server. Do not point this suite at a real game/profile
 - **Game browser layer:** `tests/browser/game.spec.cjs` exercises save decoding,
   event-driven purchases, ascension DOM states, French game-generated tooltips,
   lump changes between saves, warehouse capacity, and live cosmetic changes. It
-  loads the content scripts in manifest order except `main.js`, disables the master
-  switch, and invokes specific actions. These scripts share the page's world;
+  loads the content scripts in manifest order except `main.js`, starts with the master
+  switch disabled, and enables it only for specific manually invoked actions.
+  Transaction restoration and live garden maturity with a selected seed have combined regressions. These scripts share the page's world;
   this project makes no isolated-world or native-storage claim.
 - **Unpacked-extension smoke:** `tests/browser/extension.spec.cjs` copies the
   extension into a temporary directory, generates a test-only key, and replaces
-  origin permissions/matches with localhost. Chromium loads it through
+  origin permissions/matches and the temporary popup/background origin guards with
+  localhost. Chromium loads it through
   `--load-extension`, including `main.js`. The test proves that the page's `Game`
   and the content scripts' `Alakazam` globals are isolated, the content script reads
   the game's real localStorage save, popup settings reach content scripts through
@@ -51,7 +53,8 @@ The disposable game is **Cookie Clicker 2.058**, from
 [ozh/cookieclicker at c77f00c51854a667da35a3135120797a579c2d72](https://github.com/ozh/cookieclicker/tree/c77f00c51854a667da35a3135120797a579c2d72).
 `tests/browser/game-pin.json` is the source of that pin. The fetch script checks out
 that exact commit into ignored `.cache/cookieclicker`; the server refuses another
-commit or tracked/untracked modifications. Port 4173 must be free. Remove the
+commit or tracked/untracked modifications. Port 4173 must be free; set
+`ALAKAZAM_TEST_PORT` to use another local port for a concurrent audit. Remove the
 disposable checkout and fetch again if it has been modified. Game assets are not
 vendored or published. The server binds only to 127.0.0.1 and stops with Playwright.
 
@@ -63,6 +66,23 @@ audit's evidence or certify the canonical site.
 
 A browser failure saves a trace under ignored `test-results/`; CI uploads failures
 for seven days. Inspect a trace with `npx playwright show-trace <trace.zip>`.
+
+## Broader installed-extension acceptance
+
+`tests/extension.browser.cjs` also exercises keyboard controls, focus and scroll
+preservation, dragging across refreshes, viewport clamping, two game tabs, active-tab
+selection, restrictions, module failures, and navigation/close cleanup. It uses a
+fresh Chromium profile and canonical game URLs. Route those requests to the pinned
+local mirror to run without a live-site dependency:
+
+```sh
+ALAKAZAM_GAME_DIR="$PWD/.cache/cookieclicker" node tests/extension.browser.cjs
+```
+
+The runner reports its screenshot directory and removes its disposable profile.
+`ALAKAZAM_ARTIFACTS` selects a screenshot directory; `ALAKAZAM_CHROMIUM` selects an
+executable. This verifies the installed extension with a local game mirror, not
+live-site availability, toolbar popup lifecycle, or a real player profile.
 
 ## Reusable fixtures
 
@@ -90,8 +110,8 @@ const h = boot({ clock: time, localStorage: scene.localStorage })
 scene.change({ cookieClicks: 1600, handmadeCookies: 1.6e6 })
 time.advance(60000)
 scene.publish()
-h.A.registry.get('saveWatch').tick()
-h.A.registry.get('clicks').tick()
+await h.A.registry.get('saveWatch').tick()
+await h.A.registry.get('clicks').tick()
 // Assert the owning feature's correct outcome here.
 ```
 

@@ -1,9 +1,9 @@
 const { test, expect, chromium } = require('@playwright/test')
-const { mkdtempSync, cpSync, writeFileSync, rmSync } = require('node:fs')
+const { mkdtempSync, cpSync, readFileSync, writeFileSync, rmSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 const { createHash, generateKeyPairSync } = require('node:crypto')
-const { root, manifest, localOnly, openGame } = require('./fixtures.cjs')
+const { root, manifest, origin, localOnly, openGame } = require('./fixtures.cjs')
 
 test('unpacked extension isolates globals and bridges popup through persistent Chrome storage', async () => {
     const temporary = mkdtempSync(join(tmpdir(), 'alakazam-smoke-'))
@@ -11,6 +11,17 @@ test('unpacked extension isolates globals and bridges popup through persistent C
     const profile = join(temporary, 'profile')
     for (const file of ['src', 'icons', 'popup.html', 'popup.js', 'popup.css']) {
         cpSync(join(root, file), join(extension, file), { recursive: true })
+    }
+    // Adapt only the disposable copy's canonical-origin guards to our local server.
+    for (const file of ['popup.js', 'src/background.js']) {
+        const target = join(extension, file)
+        const code = readFileSync(target, 'utf8')
+        const canonical = String.raw`/^https:\/\/orteil\.dashnet\.org\/cookieclicker\//`
+        expect(code.includes(canonical)).toBe(true)
+        writeFileSync(
+            target,
+            code.replace(canonical, String.raw`/^http:\/\/127\.0\.0\.1:${new URL(origin).port}\//`)
+        )
     }
     const publicKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({
         type: 'spki',
@@ -38,7 +49,7 @@ test('unpacked extension isolates globals and bridges popup through persistent C
         await popup.goto(`chrome-extension://${id}/popup.html`)
         await popup.evaluate(() => chrome.storage.local.set({ settings: { enabled: false } }))
         await popup.reload()
-        await expect(popup.getByRole('button', { name: 'PAUSED', exact: true })).toBeVisible()
+        await expect(popup.getByRole('button', { name: 'Resume automation', exact: true })).toBeVisible()
 
         const page = await context.newPage()
         const cdp = await context.newCDPSession(page)
@@ -74,24 +85,27 @@ test('unpacked extension isolates globals and bridges popup through persistent C
         expect(await isolated('Alakazam.savefile.read().ok')).toBe(true)
         expect(await isolated('Alakazam.store.setting("enabled")')).toBe(false)
 
-        await popup.getByRole('button', { name: 'Autoclicker: on', exact: true }).click()
+        await popup.evaluate(async url => {
+            const [tab] = await chrome.tabs.query({ url })
+            await chrome.tabs.update(tab.id, { active: true })
+            document.querySelector('#configuration').open = true
+        }, page.url())
+        await expect(popup.locator('#identity')).toContainText('Tab ')
+        await popup.locator('[data-key=autoclick]').click()
         await expect.poll(() => isolated('Alakazam.store.setting("autoclick")')).toBe(false)
         await isolated('Alakazam.store.setSetting("shimmers", false); Alakazam.store.flush()')
-        await popup.getByRole('button', { name: 'Refresh Data', exact: true }).click()
-        await expect(
-            popup.getByRole('button', { name: 'Golden cookies: off', exact: true })
-        ).toBeVisible()
+        await popup.getByRole('button', { name: 'Refresh status', exact: true }).click()
+        await expect(popup.locator('[data-key=shimmers]')).toHaveAttribute('aria-pressed', 'false')
 
-        // Use the HUD's real status writer, then read it from the actual popup.
-        await isolated('Alakazam.registry.get("hud").tick()')
-        await isolated('Alakazam.store.flush()')
+        // Use the status relay and real active-tab API, then read its document-bound record.
+        await isolated('Alakazam.status.publish()')
         await popup.reload()
         await expect(popup.locator('#gameData')).toBeVisible()
         expect(
             await popup.evaluate(async () => {
                 const all = await chrome.storage.local.get(null)
                 return Object.entries(all).some(
-                    ([key, value]) => key.startsWith('legacy:') && value.status
+                    ([key, value]) => key.startsWith('status:tab:') && value.documentId && value.pageId
                 )
             })
         ).toBe(true)
@@ -100,13 +114,11 @@ test('unpacked extension isolates globals and bridges popup through persistent C
         context = await launch()
         const reopened = await context.newPage()
         await reopened.goto(`chrome-extension://${id}/popup.html`)
+        await expect(reopened.locator('[data-key=autoclick]')).toHaveAttribute('aria-pressed', 'false')
+        await expect(reopened.locator('[data-key=shimmers]')).toHaveAttribute('aria-pressed', 'false')
         await expect(
-            reopened.getByRole('button', { name: 'Autoclicker: off', exact: true })
+            reopened.getByRole('button', { name: 'Resume automation', exact: true })
         ).toBeVisible()
-        await expect(
-            reopened.getByRole('button', { name: 'Golden cookies: off', exact: true })
-        ).toBeVisible()
-        await expect(reopened.getByRole('button', { name: 'PAUSED', exact: true })).toBeVisible()
     } finally {
         try {
             if (context) await context.close()

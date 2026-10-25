@@ -1,6 +1,6 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
-const { boot } = require('./harness')
+const { boot, waitFor } = require('./harness')
 const { storageFixture } = require('./storage')
 const fx = require('./fixtures')
 
@@ -326,26 +326,43 @@ test('popup uses the same field writer as tabs and reports failed setting writes
     const storage = storageFixture()
     const tab = boot({ storage }).A.store
     await tab.ready('game')
-    tab.set('status', { at: Date.now(), cookies: 123, cps: 4, lumps: 0 })
-    await tab.flush()
     const popup = boot({ storage })
     const doc = popup.game.doc
-    for (const id of ['status', 'controls', 'gameData', 'cookies', 'cps', 'buildings']) {
+    for (const id of [
+        'version',
+        'error',
+        'pauseBtn',
+        'refreshBtn',
+        'statusLine',
+        'identity',
+        'updated',
+        'decision',
+        'saveState',
+        'controls',
+        'gameData',
+        'cookies',
+        'cps',
+        'buildings',
+        'diagnostics'
+    ])
         doc.body.append(new El('div', { id }))
-    }
+    popup.ctx.chrome.runtime.getManifest = () => ({ version: 'test' })
+    popup.ctx.chrome.tabs = { query: (options, callback) => callback([]) }
+    popup.ctx.setInterval = () => 0
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'popup.js'), 'utf8'), popup.ctx)
-    await popup.ctx.render()
-    assert.equal(doc.getElementById('cookies').textContent, '123')
-    const purchase = doc.getElementById('controls').children.find(el => el.textContent === 'Buying: on')
+    doc.fire('DOMContentLoaded', {})
+    assert.ok(await waitFor(() => doc.getElementById('pauseBtn').textContent === 'Pause automation'))
+    const purchase = doc.querySelector('[data-key="purchase"]')
+    assert.equal(purchase.getAttribute('aria-pressed'), 'true')
     tab.setSetting('garden', false)
     storage.failNext('set', 'quota exceeded')
     await purchase.listeners.click[0]()
-    await popup.ctx.render()
-    assert.match(doc.getElementById('status').textContent, /could not be saved/)
+    assert.match(doc.getElementById('error').textContent, /Could not save settings/)
     assert.equal(popup.A.store.stats().pending, 1)
     await Promise.all([tab.flush(), popup.A.store.flush()])
     assert.equal(tab.setting('purchase'), false)
     assert.equal(popup.A.store.setting('garden'), false)
+    assert.equal(purchase.getAttribute('aria-pressed'), 'false')
     assert.equal(popup.A.store.stats().error, '')
 })
 
@@ -703,5 +720,47 @@ test('load reconciliation retains pending-write external events and newer local 
         await a.flush()
         assert.equal(storage.disk[a.fieldKey('legacy:same', 'value')].value, editAgain ? 3 : 2)
         assert.equal(a.stats().pending, 0)
+    }
+})
+
+test('identity reconciliation cancels old work before draining its cleanup into the old namespace', async () => {
+    const h = page({ entries: { CookieClickerGame: saved(1750000002000) } })
+    await h.A.save.connect()
+    const previous = stateOf(h)
+    for (const key of Object.keys(h.A.store.DEFAULTS))
+        h.A.store.setSetting(key, key === 'enabled' || key === 'purchase')
+    let resume
+    let spent = false
+    h.A.registry.register({
+        name: 'purchase',
+        interval: 1,
+        async tick({ task }) {
+            try {
+                await new Promise(resolve => {
+                    resume = resolve
+                })
+                task.check()
+                spent = true
+            } finally {
+                h.A.store.set('oldCleanup', true)
+            }
+        }
+    })
+    await h.A.scheduler.start()
+    try {
+        assert.ok(await waitFor(() => !!resume, 2000, 5))
+        const next = h.A.identity.fromSave(h.A.savefile.parse(fx.save({ fullDate: 1750000000001 }).text))
+        const switching = h.A.scheduler.reconcile(next)
+        assert.equal(h.A.safety.scope('purchase').active, false)
+        resume()
+        await switching
+        h.A.scheduler.stop()
+        assert.equal(spent, false)
+        assert.equal(h.A.store.get('oldCleanup', null), null)
+        await h.A.store.flush()
+        assert.equal(h.disk[h.A.store.fieldKey('legacy:' + previous.familyId, 'oldCleanup')].value, true)
+    } finally {
+        h.A.scheduler.stop()
+        if (resume) resume()
     }
 })

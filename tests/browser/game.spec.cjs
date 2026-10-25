@@ -8,6 +8,7 @@ const {
     lumpReserve,
     stockCapacity,
     cosmeticChange,
+    minigame,
     transition,
     researchTooltip,
     buffTooltip
@@ -120,4 +121,72 @@ test('cosmetic fixture keeps the latest appearance separate from its save', asyn
     expect(await game.evaluate(() => Game.YouCustomizer.currentGenes)).toEqual(live)
     expect(await game.evaluate(() => Alakazam.save.get().run.appearance)).toEqual(saved)
     expect(await game.evaluate(() => localStorage.getItem(Game.SaveTo))).toBe(raw)
+})
+
+test('store transactions restore player controls across successive real redraws', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookies = 1e6
+        Game.cookiesEarned = 1e6
+        Game.RefreshStore()
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await expect
+        .poll(() =>
+            game.evaluate(() => Alakazam.live.readProducts().some(product => product.index === 0))
+        )
+        .toBe(true)
+    await game.evaluate(() => {
+        window.transactionProduct = Alakazam.live.readProducts().find(product => product.index === 0)
+        Alakazam.input.simulateClick(document.getElementById('storeBulkSell'))
+        Alakazam.input.simulateClick(document.getElementById('storeBulk10'))
+    })
+    const before = await game.evaluate(() => Game.Objects.Cursor.amount)
+    for (let i = 0; i < 3; i++) {
+        const result = await game.evaluate(() =>
+            Alakazam.act.store.buy(window.transactionProduct, 1, 1000)
+        )
+        expect(result.bought, JSON.stringify(result)).toBe(true)
+        expect(result.amount).toBe(1)
+        expect(await game.evaluate(() => [Game.buyMode, Game.buyBulk])).toEqual([-1, 10])
+    }
+    expect(await game.evaluate(() => Game.Objects.Cursor.amount)).toBe(before + 3)
+})
+
+test('live maturity harvesting preserves the selected seed without replanting', async ({ game }) => {
+    await minigame(game, 'Farm')
+    await game.evaluate(() => {
+        const farm = Game.Objects.Farm
+        farm.amount = 300
+        farm.level = 9
+        const garden = farm.minigame
+        garden.nextStep = Date.now() + 1e9
+        garden.plants.bakeberry.unlocked = 0
+        garden.plants.bakerWheat.unlocked = 1
+        for (const row of garden.plot)
+            for (const tile of row) {
+                tile[0] = garden.plants.bakeberry.id + 1
+                tile[1] = 49
+            }
+        garden.buildPanel()
+        garden.buildPlot()
+        Game.cookies = 1e9
+        Game.cookiesEarned = 1e9
+        Alakazam.store.setSetting('enabled', true)
+        Alakazam.input.simulateClick(document.getElementById('gardenSeed-0'))
+    })
+    await publish(game)
+    await game.evaluate(() => Alakazam.registry.get('garden').tick())
+    expect(await game.evaluate(() => Game.Objects.Farm.minigame.plot[0][0])).toEqual([9, 49])
+    expect(await game.evaluate(() => Game.Objects.Farm.minigame.seedSelected)).toBe(0)
+    await game.evaluate(() => {
+        const garden = Game.Objects.Farm.minigame
+        garden.plot[0][0][1] = 50
+        garden.buildPlot()
+    })
+    await game.evaluate(() => Alakazam.registry.get('garden').tick())
+    expect(await game.evaluate(() => Game.Objects.Farm.minigame.plot[0][0][0])).toBe(0)
+    expect(await game.evaluate(() => Game.Objects.Farm.minigame.plants.bakeberry.unlocked)).toBe(1)
+    expect(await game.evaluate(() => Game.Objects.Farm.minigame.seedSelected)).toBe(0)
+    expect(await game.evaluate(() => Alakazam.store.get('gardenHarvests', 0))).toBe(1)
+    expect(await game.evaluate(() => Alakazam.save.get().buildings[2].minigame.plot[0][0].age)).toBe(49)
 })
