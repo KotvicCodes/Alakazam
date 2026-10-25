@@ -36,7 +36,8 @@
         'wrinklerAdviceAt',
         'giftCheckedAt'
     ])
-    let namespace = 'quarantine:' + Math.random().toString(36).slice(2)
+    const quarantine = 'quarantine:' + Math.random().toString(36).slice(2)
+    let namespace = quarantine
     let runNamespace = namespace
     let loaded = false
     let flushTimer = null
@@ -52,6 +53,35 @@
     const subscribers = []
     const clone = value => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)))
     const fieldKey = (scope, key) => PREFIX + encodeURIComponent(scope) + ':' + encodeURIComponent(key)
+    const RECOVERY_KEYS = new Set(['bakeryNameRecovery', 'cloneRecovery'])
+
+    // Undo records can originate in old namespaces, current fields or external
+    // storage events. Validate at promotion and at read time, leaving malformed
+    // evidence untouched rather than letting it drive the live game UI.
+    function validRecovery(key, mark) {
+        if (!mark || typeof mark !== 'object' || Array.isArray(mark)) return false
+        if (typeof mark.legacyId !== 'string' || !mark.legacyId) return false
+        for (const flag of ['intervened', 'earned']) {
+            if (flag in mark && typeof mark[flag] !== 'boolean') return false
+        }
+        if (key === 'bakeryNameRecovery') {
+            return typeof mark.original === 'string' && typeof mark.expected === 'string'
+        }
+        const choices = window.Alakazam.data?.clones?.CHOICES
+        const genes = value =>
+            !!choices &&
+            Array.isArray(value) &&
+            value.length === choices.length &&
+            choices.every(
+                (count, i) => Number.isSafeInteger(value[i]) && value[i] >= 0 && value[i] < count
+            )
+        return (
+            genes(mark.original) &&
+            genes(mark.expected) &&
+            (!('previous' in mark) || genes(mark.previous)) &&
+            (!('history' in mark) || (Array.isArray(mark.history) && mark.history.every(genes)))
+        )
+    }
 
     function backend() {
         return typeof chrome !== 'undefined' && chrome.storage ? chrome.storage.local : null
@@ -86,6 +116,13 @@
     function ready(identity) {
         const version = ++loadVersion
         loaded = false
+        const who = typeof identity === 'object' && identity ? identity : null
+        if (who && !who.known) {
+            // This must happen before the read: a failed/delayed load must never
+            // leave unknown writes pointed at the previously connected family.
+            namespace = quarantine
+            runNamespace = quarantine
+        }
         const request = async () => {
             // Listen before the read, including on first load. Each queued read
             // gets its own overlay so delayed snapshots cannot undo newer events.
@@ -97,11 +134,10 @@
                     if (value === undefined) delete all[key]
                     else all[key] = value
                 }
-                const who = typeof identity === 'object' && identity ? identity : null
                 const target = who
                     ? who.known
                         ? 'legacy:' + who.familyId
-                        : namespace
+                        : quarantine
                     : 'legacy:' + (identity || 'unknown')
                 const runTarget = who && who.known ? 'run:' + who.familyId + ':' + who.runId : target
                 const source = Object.assign(
@@ -113,9 +149,9 @@
                 for (const [key, held] of Object.entries(source)) {
                     if (who && RUN_KEYS.has(key)) continue
                     let value = held
-                    if (who && ['bakeryNameRecovery', 'cloneRecovery'].includes(key)) {
+                    if (who && RECOVERY_KEYS.has(key)) {
                         if (
-                            !held ||
+                            !validRecovery(key, held) ||
                             ![who.familyId, who.previousLegacyId, who.previousRecoveryId]
                                 .filter(Boolean)
                                 .includes(held.legacyId)
@@ -132,9 +168,13 @@
                 for (const key of new Set([...records.keys(), ...Object.keys(all)])) {
                     if (key.startsWith(PREFIX) && !dirty.has(key)) applyStored(key, all[key])
                 }
-                namespace = target
-                runNamespace = runTarget
-                loaded = version === loadVersion
+                // A superseded read may fill the cache, but cannot reselect an
+                // old family while a newer request has already quarantined it.
+                if (version === loadVersion) {
+                    namespace = target
+                    runNamespace = runTarget
+                    loaded = true
+                }
                 if (!dirty.size) lastError = ''
                 notify()
             } catch (err) {
@@ -182,7 +222,8 @@
         return clone(Object.prototype.hasOwnProperty.call(baseline, key) ? baseline[key] : fallback)
     }
     function get(key, fallback) {
-        return read(scopeFor(key), key, fallback)
+        const value = read(scopeFor(key), key, fallback)
+        return RECOVERY_KEYS.has(key) && !validRecovery(key, value) ? clone(fallback) : value
     }
     function set(key, value) {
         write(fieldKey(scopeFor(key), key), { value: clone(value) })

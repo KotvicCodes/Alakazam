@@ -34,11 +34,9 @@
 
     async function reconcile() {
         if (!connected) return
-        const who = identity.fromSave(current)
-        if (current.stale || !who.known) {
-            if (!activeIdentity && !store.isReady()) await store.ready(who)
-            return
-        }
+        // A stale parse can still contain plausible family metadata. It cannot
+        // authorize that namespace any more than a missing or malformed save.
+        const who = identity.fromSave(current.stale ? null : current)
         if (activeIdentity && activeIdentity.runId === who.runId && store.isReady()) return
         const scheduler = window.Alakazam.scheduler
         await scheduler.reconcile(who)

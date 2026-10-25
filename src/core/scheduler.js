@@ -244,13 +244,16 @@
     // saveWatch owns this transition and must not wait on its own busy slot.
     async function reconcile(who) {
         transitioning = true
+        const previousIdentity = window.__alakazam.identity
+        // Publish loss of identity even if loading quarantine fails. The watcher
+        // must remain runnable so the same save can retry or a valid one recover.
+        if (!who.known) window.__alakazam.identity = who
         window.Alakazam.safety.invalidate()
         window.Alakazam.transactions?.cancel()
         try {
             while ([...state.entries()].some(([name, slot]) => name !== 'saveWatch' && slot.busy)) {
                 await new Promise(resolve => setTimeout(resolve, 10))
             }
-            const previousIdentity = window.__alakazam.identity
             await store.ready(who)
             window.__alakazam.identity = who
             for (const mod of registry.all()) {
