@@ -42,27 +42,22 @@
         return panelOwner ? panelOwner.ctx : safety.context('dragon')
     }
 
-    // only open() may claim a panel. Refresh its DOM identity after our own
-    // training/confirmation redraws, never after an await or trusted player input.
+    // only open() may claim a panel. Game.ToggleSpecialMenu replaces the portrait
+    // and controls every three seconds, even during an await. The popup itself stays
+    // mounted; trusted player input revokes ownership even if they reopen it.
     function ownsPanel(ctx = panelContext()) {
         return !!(
             panelOwner &&
             panelOwner.ctx === ctx &&
             panelOwner.revision === safety.revision('dragonPanel') &&
             panelOwner.popup === el('specialPopup') &&
-            panelOwner.pic === el('specialPic') &&
             panelOpen()
         )
     }
 
     function panelInput(ctx, node) {
         if (!ownsPanel(ctx)) return false
-        const owned = panelOwner
-        const result = ctx.input('simulateClick', node)
-        if (panelOwner === owned && owned.revision === safety.revision('dragonPanel')) {
-            owned.pic = el('specialPic')
-        }
-        return result
+        return ctx.input('simulateClick', node)
     }
 
     // the last tab's centre, in the canvas's own pixels
@@ -136,12 +131,7 @@
         const owned = { ctx, revision: safety.revision('dragonPanel'), popup: el('specialPopup') }
         panelOwner = owned
         ctx.input('simulateClickAt', cv, x, y)
-        owned.pic = el('specialPic')
         await wait(DRAW_MS)
-        // the canvas click can be consumed on the game's next logic frame
-        if (!owned.pic && owned.revision === safety.revision('dragonPanel')) {
-            owned.pic = el('specialPic')
-        }
         ctx.check()
         return ownsPanel(ctx)
     }

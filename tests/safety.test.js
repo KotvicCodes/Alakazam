@@ -279,7 +279,53 @@ for (const paused of [false, true]) {
     })
 }
 
-for (const takeover of ['trusted input', 'replacement DOM']) {
+for (const paused of [false, true]) {
+    test(`an automatic dragon redraw preserves the visit${paused ? ' cleanup after pause' : ''}`, async () => {
+        const h = await ready({
+            save: fx.save({ dragonLevel: 5 }).raw,
+            game: {
+                bank: 1e9,
+                owned: [300, 0, 0, 0, 0, 0, 0, 0],
+                dragon: { level: 5, trainable: true }
+            }
+        })
+        const barrier = hold(h, 150)
+        const work = h.A.registry.get('dragon').tick()
+        assert.ok(await waitFor(() => barrier.pending.length > 0, 2000, 5))
+        const pic = h.game.doc.getElementById('specialPic')
+        // Game.ToggleSpecialMenu rebuilds the contents every three seconds, with no
+        // player interaction and without replacing the shared popup container.
+        h.game.drawDragon()
+        assert.notEqual(h.game.doc.getElementById('specialPic'), pic)
+        if (paused) h.A.scheduler.pause()
+        barrier.release()
+        await work
+        assert.equal(h.game.dragon.level, paused ? 5 : 15)
+        assert.equal(h.A.act.dragon.panelOpen(), false, 'the owned panel was closed')
+        assert.equal(h.A.scheduler.isPaused(), paused)
+        // a later operation can open the panel, rather than being stranded by an
+        // already-open panel that nobody can claim.
+        if (paused) h.A.scheduler.resume()
+        assert.equal(await h.A.act.dragon.open(), true)
+        assert.equal(h.A.act.dragon.train(), true)
+        assert.equal(h.game.dragon.level, paused ? 6 : 16)
+        assert.equal(await h.A.act.dragon.close(), true)
+    })
+}
+
+test('dragon actors retain ownership across an automatic redraw after opening', async () => {
+    const h = await ready({ game: { dragon: { level: 5, trainable: true } } })
+    assert.equal(await h.A.act.dragon.open(), true)
+    h.game.drawDragon()
+    assert.equal(h.A.act.dragon.ownsPanel(), true)
+    assert.equal(h.A.act.dragon.pet(), true)
+    assert.equal(h.A.act.dragon.train(), true)
+    assert.equal(h.game.dragon.level, 6)
+    assert.equal(h.game.dragon.pets, 1)
+    assert.equal(await h.A.act.dragon.close(), true)
+})
+
+for (const takeover of ['trusted input', 'replacement popup']) {
     test(`dragon actors refuse ${takeover} after opening`, async () => {
         const h = await ready({ game: { dragon: { level: 5, trainable: true } } })
         assert.equal(await h.A.act.dragon.open(), true)
@@ -288,7 +334,15 @@ for (const takeover of ['trusted input', 'replacement DOM']) {
                 isTrusted: true,
                 target: h.game.doc.getElementById('specialPic')
             })
-        } else h.game.drawDragon()
+            h.game.drawDragon()
+        } else {
+            const popup = h.game.specialPopup
+            const replacement = new El('div', { id: 'specialPopup' })
+            replacement.append(...popup.children)
+            h.game.doc.body.children = h.game.doc.body.children.map(node =>
+                node === popup ? replacement : node
+            )
+        }
         const pic = h.game.doc.getElementById('specialPic')
         assert.equal(h.A.act.dragon.train(), false)
         assert.equal(h.A.act.dragon.pet(), false)
@@ -303,6 +357,26 @@ for (const takeover of ['trusted input', 'replacement DOM']) {
 }
 
 for (const waitNumber of [1, 2]) {
+    test(`dragon aura selection survives an automatic redraw at wait ${waitNumber}`, async () => {
+        const h = await ready({
+            game: { owned: [10, 0, 0, 0, 0, 0, 0, 0], dragon: { level: 27 } }
+        })
+        await h.A.act.dragon.open()
+        const barrier = hold(h, 150)
+        const work = h.A.act.dragon.setAura(15, 0)
+        assert.equal(barrier.pending.length, 1)
+        if (waitNumber === 2) {
+            barrier.pending.shift()()
+            assert.ok(await waitFor(() => barrier.pending.length === 1, 1000, 5))
+        }
+        h.game.drawDragon()
+        barrier.release()
+        assert.equal(await work, true)
+        assert.equal(h.game.dragon.aura, 15)
+        assert.equal(h.game.state.owned[0], 9)
+        assert.equal(await h.A.act.dragon.close(), true)
+    })
+
     test(`dragon aura work & cancellation preserve a takeover at wait ${waitNumber}`, async () => {
         const h = await ready({
             game: { owned: [10, 0, 0, 0, 0, 0, 0, 0], dragon: { level: 27 } }
