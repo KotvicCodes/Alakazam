@@ -193,12 +193,14 @@
     }
 
     function stop() {
+        window.Alakazam.transactions?.cancel()
         running = false
         if (driver) clearInterval(driver)
         driver = null
     }
 
     function pause() {
+        window.Alakazam.transactions?.cancel()
         paused = true
     }
 

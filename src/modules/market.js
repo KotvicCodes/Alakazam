@@ -14,7 +14,7 @@
     // Trading is on by default. Switch it off and the module keeps watching and
     // reporting its signals to the HUD without touching your money.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick, hoverOn, hoverOff } = window.Alakazam.input
     const { save, store, registry } = window.Alakazam
 
     const INTERVAL_MS = 15000
@@ -49,6 +49,17 @@
     const MODES = ['stable', 'slow rise', 'slow fall', 'fast rise', 'fast fall', 'chaotic']
 
     let lastTradeAt = 0
+    const MAX_ATTEMPTS = 3
+    const { firstNumberIn } = window.Alakazam.parse
+
+    function number(id) {
+        const node = document.getElementById(id)
+        return node ? firstNumberIn(node.innerText) : NaN
+    }
+
+    function holdings(id) {
+        return number(`bankGood-${id}-stock`)
+    }
 
     //* restingValue
     // every good drifts toward this price, and the bank's sugar lump level raises
@@ -82,14 +93,17 @@
         const bank = save.building(5)
         if (!market || !bank || bank.level < 1) return null
 
-        const goods = market.goods.map(good => ({
-            ...good,
-            name: GOODS[good.id] || `good ${good.id}`,
-            mode: good.mode,
-            modeName: MODES[good.mode] || 'unknown',
-            resting: restingValue(good.id, bank.level),
-            signal: signalFor(good, bank.level)
-        }))
+        const goods = market.goods.map(good => {
+            const stock = holdings(good.id)
+            const current = { ...good, stock: Number.isFinite(stock) ? stock : good.stock }
+            return {
+                ...current,
+                name: GOODS[good.id] || `good ${good.id}`,
+                modeName: MODES[good.mode] || 'unknown',
+                resting: restingValue(good.id, bank.level),
+                signal: signalFor(current, bank.level)
+            }
+        })
 
         return {
             unlocked: true,
@@ -105,48 +119,72 @@
 
     //! Trading
 
-    function clickGood(id, suffix) {
-        const el = document.getElementById(`bankGood-${id}${suffix}`)
-        if (!el) return false
-        simulateClick(el)
-        return true
+    function candidate(good, selling, overhead) {
+        const id = good.id
+        const stock = holdings(id)
+        const button = document.getElementById(`bankGood-${id}${selling ? '_-All' : '_100'}`)
+        if (
+            !button ||
+            button.style.display === 'none' ||
+            button.classList.contains('bankButtonOff') ||
+            button.classList.contains('disabled') ||
+            !Number.isFinite(stock)
+        )
+            return null
+        if (selling) return stock > 0 ? { button, stock } : null
+        const capacity = number(`bankGood-${id}-stockMax`)
+        if (!Number.isFinite(capacity) || capacity <= stock) return null
+        const value = number(`bankGood-${id}-val`)
+        const scalars = save.get().scalars
+        const rawCps = scalars?.trusted ? scalars.cookiesPsRawHighest : NaN
+        const cost = value * rawCps * (1 + overhead) * Math.min(100, capacity - stock)
+        if (!Number.isFinite(cost) || cost < 0 || cost > window.Alakazam.live.readGlobals().cookies)
+            return null
+        return { button, stock }
     }
 
-    //* trade
-    // one action per market tick at most, on the strongest signal available.
-    // selling everything is safe; buying is capped at a hundred units so a single
-    // decision cannot commit the whole warehouse to one good.
-    function trade(s) {
-        const sells = s.goods.filter(g => g.stock > 0 && /sell/.test(g.signal))
-        if (sells.length > 0) {
-            // strongest signal first. sorting by the raw mode number would rank a
-            // merely overpriced stable good above one in freefall, because stable
-            // happens to be mode 0.
-            const rank = g => (g.signal === 'strong sell' ? 0 : 1)
-            const worst = sells.sort((a, b) => rank(a) - rank(b))[0]
-            if (clickGood(worst.id, '_-All')) {
-                console.log(`Alakazam: selling all ${worst.name} (${worst.modeName})`)
-                return true
+    async function trade(s, lease) {
+        const sells = s.goods
+            .filter(g => /sell/.test(g.signal))
+            .sort((a, b) => (a.signal === 'strong sell' ? 0 : 1) - (b.signal === 'strong sell' ? 0 : 1))
+        const buys = s.goods
+            .filter(g => g.signal === 'strong buy')
+            .sort((a, b) => a.value / a.resting - b.value / b.resting)
+        let attempts = 0
+        for (const good of sells.concat(buys)) {
+            if (!lease.valid() || attempts >= MAX_ATTEMPTS) break
+            const selling = /sell/.test(good.signal)
+            // reread holdings, capacity and funds after every preceding wait
+            const executable = candidate(good, selling, s.overhead)
+            if (!executable) continue
+            attempts++
+            simulateClick(executable.button)
+            // Trading changes internal holdings without dirtying the market graph.
+            // Enter the row again to request its normal DOM redraw, including when
+            // the pointer was already over this good before the trade.
+            const row = document.getElementById(`bankGood-${good.id}`) || executable.button
+            hoverOff(row)
+            hoverOn(row)
+            let filled
+            try {
+                filled = await window.Alakazam.transactions.until(lease, () => {
+                    const current = holdings(good.id)
+                    return selling ? current < executable.stock : current > executable.stock
+                })
+            } finally {
+                hoverOff(row)
             }
-        }
-
-        // warehouse capacity is derived from the office level and the building
-        // count rather than stored, so it is not checked here. Buying into a full
-        // warehouse simply buys fewer units, which is harmless.
-        const buys = s.goods.filter(g => g.signal === 'strong buy')
-        if (buys.length > 0) {
-            const best = buys.sort((a, b) => a.value / a.resting - b.value / b.resting)[0]
-            if (clickGood(best.id, '_100')) {
-                console.log(
-                    `Alakazam: buying ${best.name} at ${best.value.toFixed(2)} (${best.modeName})`
-                )
-                return true
-            }
+            const current = holdings(good.id)
+            const executed = selling ? current < executable.stock : current > executable.stock
+            if (!filled && !executed) continue
+            lastTradeAt = Date.now()
+            console.log(`Alakazam: ${selling ? 'sold' : 'bought'} ${good.name}`)
+            return true
         }
         return false
     }
 
-    function tick() {
+    async function tick() {
         const s = state()
         if (!s) return
 
@@ -165,7 +203,13 @@
 
         if (!s.trading) return
         if (Date.now() - lastTradeAt < TRADE_COOLDOWN_MS) return
-        if (trade(s)) lastTradeAt = Date.now()
+        const lease = window.Alakazam.transactions.acquire('marketTrading')
+        if (!lease) return
+        try {
+            await trade(s, lease)
+        } finally {
+            lease.release()
+        }
     }
 
     // gated on its own setting, which defaults to off: see the header

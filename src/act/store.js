@@ -11,9 +11,8 @@
     // So every change goes through withBulk(), which restores the previous mode in
     // a finally block. Nothing else in the extension may touch these elements.
     //
-    // All of this degrades safely. If the bulk controls cannot be found the module
-    // reports unavailable, callers fall back to buying one at a time, and no
-    // feature breaks: buy-one is the game's default mode.
+    // price reads wait for a changed store face after either kind of switch.
+    // quantities are scored only in Buy/1 and execution must change ownership.
 
     const { simulateClick } = window.Alakazam.input
     const { parseGameNumber } = window.Alakazam.parse
@@ -21,10 +20,6 @@
 
     const MODE_IDS = { buy: 'storeBulkBuy', sell: 'storeBulkSell' }
     const AMOUNT_IDS = { 1: 'storeBulk1', 10: 'storeBulk10', 100: 'storeBulk100', max: 'storeBulkMax' }
-
-    // how long to let the game redraw the store after changing the bulk amount:
-    // the price faces are rewritten on its draw loop, not synchronously
-    const REDRAW_MS = 40
 
     let warned = false
     // what we last set, used when the game gives us no selected marker to read
@@ -88,41 +83,105 @@
         return true
     }
 
-    function wait(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+    //! Store Transactions
+
+    let redraw = null
+
+    function prices() {
+        return Array.from(document.querySelectorAll('.product.unlocked .price'))
+            .map(node => node.innerText)
+            .join('|')
     }
 
-    //! withBulk
-    // Set the store to a mode and amount, run the body, put the store back exactly
-    // as it was. The restore runs even when the body throws, which is the whole
-    // reason this exists: a crash mid-purchase must never leave the store in Sell.
-    //
-    // Buying one at a time needs no mode change at all, so it skips the controls
-    // entirely and keeps working even when they are missing.
-    async function withBulk(mode, amount, body) {
-        if (mode === 'buy' && amount === 1 && currentMode() === 'buy' && currentAmount() === 1) {
-            return body()
-        }
-        if (!available()) {
-            warnOnce()
-            // only buy-one is safe without the controls; anything else is refused
-            // rather than silently doing something different from what was asked
-            if (mode === 'buy' && amount === 1) return body()
-            return null
-        }
+    function clearRedraw() {
+        redraw?.observer?.disconnect()
+        redraw = null
+    }
 
+    function observeRedraw(mode, amount) {
+        clearRedraw()
+        const pending = { before: prices(), mode, amount, drawn: false }
+        redraw = pending
+        // text assignments may redraw the same price (for example when a
+        // cancelled switch is restored before the next frame)
+        if (window.MutationObserver) {
+            pending.observer = new MutationObserver(records => {
+                pending.drawn ||= records.some(record => {
+                    const node =
+                        record.target.nodeType === 3 ? record.target.parentElement : record.target
+                    return node?.classList?.contains('price')
+                })
+            })
+            const products = el('products')
+            if (products)
+                pending.observer.observe(products, {
+                    childList: true,
+                    characterData: true,
+                    subtree: true
+                })
+        }
+    }
+
+    function change(mode, amount, refresh = false) {
+        if (refresh || currentMode() !== mode || currentAmount() !== amount) {
+            observeRedraw(mode, amount)
+        }
+        // mode first: the game converts Sell/all to Buy/100 automatically
+        if (currentMode() !== mode) setMode(mode)
+        if (refresh || currentAmount() !== amount) setAmount(amount)
+    }
+
+    async function ready(lease) {
+        if (!lease.valid()) return false
+        if (!redraw) return true
+        if (redraw.refresh || currentMode() !== redraw.mode || currentAmount() !== redraw.amount) {
+            // an unobserved purchase may not draw, or the player may have changed
+            // controls since release. Reapply their current quantity to request
+            // a fresh draw, even if it writes identical prices.
+            change(currentMode(), currentAmount(), true)
+        }
+        const pending = redraw
+        const drawn = await window.Alakazam.transactions.until(lease, () => {
+            if (currentMode() !== pending.mode || currentAmount() !== pending.amount) return false
+            return pending.drawn || prices() !== pending.before
+        })
+        if (!drawn || !lease.valid()) return false
+        // a changed face proves a redraw took place; a fixed sleep alone does not
+        if (redraw === pending) clearRedraw()
+        return true
+    }
+
+    function unitProducts() {
+        if (redraw || currentMode() !== 'buy' || currentAmount() !== 1) return []
+        return window.Alakazam.live.readProducts()
+    }
+
+    async function withBulk(mode, amount, body, lease) {
+        const own = !lease
+        lease = lease || window.Alakazam.transactions.acquire('purchase')
+        if (!lease || !lease.valid()) return null
         const prevMode = currentMode()
         const prevAmount = currentAmount()
-
         try {
-            if (prevMode !== mode) setMode(mode)
-            if (prevAmount !== amount) setAmount(amount)
-            // let the game rewrite the price faces for the new amount
-            if (prevAmount !== amount) await wait(REDRAW_MS)
-            return await body()
+            if (!available()) {
+                warnOnce()
+                if (mode !== 'buy' || amount !== 1 || prevMode !== 'buy' || prevAmount !== 1) return null
+            } else {
+                // finish any restoration redraw before interpreting another price
+                if (!(await ready(lease))) return null
+                change(mode, amount)
+                if (!(await ready(lease))) return null
+            }
+            if (!lease.valid() || currentMode() !== mode || currentAmount() !== amount) return null
+            return await body(lease)
         } finally {
-            if (currentAmount() !== prevAmount) setAmount(prevAmount)
-            if (currentMode() !== prevMode) setMode(prevMode)
+            // preserve controls the player chose while this transaction was waiting
+            if (!lease.userControls && currentMode() === mode && currentAmount() === amount) {
+                change(prevMode, prevAmount)
+            } else {
+                clearRedraw()
+            }
+            if (own) lease.release()
         }
     }
 
@@ -179,41 +238,76 @@
     //
     // Returns { bought, cost } so the caller can keep its own running balance
     // without waiting for the game to redraw the cookie counter.
-    async function buy(product, count, maxSpend) {
-        const budget = Number.isFinite(maxSpend) ? maxSpend : Infinity
-        let result = { bought: false, cost: 0 }
-
-        await withBulk('buy', count, () => {
-            const rendered = readBulkPrice(product)
-            const cost = Number.isFinite(rendered) ? rendered : sumPrice(product.price, count)
-            if (cost > budget) {
-                result = { bought: false, cost: 0, reason: 'rendered price exceeded budget' }
-                return
-            }
-            simulateClick(product.element)
-            result = { bought: true, cost }
-        })
-
+    async function buy(product, count, maxSpend, lease) {
+        let result = { bought: false, cost: 0, amount: 0, reason: 'store unavailable or cancelled' }
+        await withBulk(
+            'buy',
+            count,
+            async token => {
+                const live = window.Alakazam.live
+                const current = live.readProducts().find(p => p.index === product.index)
+                if (!current || !Number.isInteger(current.owned) || current.owned < 0) return
+                const cost = readBulkPrice(current)
+                const budget = Math.min(maxSpend ?? Infinity, live.readGlobals().cookies)
+                if (!Number.isFinite(cost) || cost <= 0 || cost > budget) {
+                    result.reason = 'verified price exceeded budget or unavailable'
+                    return
+                }
+                if (!token.valid()) return
+                // observe before clicking: a real redraw may retain the same price
+                observeRedraw('buy', count)
+                simulateClick(current.element)
+                const after = await window.Alakazam.transactions.until(token, () => {
+                    const p = live.readProducts().find(p => p.index === current.index)
+                    return p && p.owned > current.owned ? p : null
+                })
+                if (!after) {
+                    // a refused click may never draw; request a fresh quantity
+                    // draw under the next valid lease before allowing another buy
+                    if (redraw) redraw.refresh = true
+                    result.reason = 'purchase not observed'
+                    return
+                }
+                const amount = after.owned - current.owned
+                result = { bought: true, cost, amount }
+                // do not score another purchase against a price face from before this one
+                if (readBulkPrice(after) === cost) {
+                    await ready(token)
+                } else {
+                    clearRedraw()
+                }
+            },
+            lease
+        )
         return result
     }
 
-    //* sell
-    // sell `count` of a product. selling is how Godzamok's click boost is earned
-    // and how a couple of achievements are unlocked, and it is the reason the
-    // restore in withBulk has to be airtight.
-    async function sell(product, count) {
-        let issued = false
-        await withBulk('sell', count, () => {
-            simulateClick(product.element)
-            issued = true
-        })
-        return issued
+    async function sell(product, count, lease) {
+        let sold = false
+        await withBulk(
+            'sell',
+            count,
+            async token => {
+                const live = window.Alakazam.live
+                const before = live.readProducts().find(p => p.index === product.index)
+                if (!before || !(before.owned > 0) || !token.valid()) return
+                simulateClick(before.element)
+                sold = !!(await window.Alakazam.transactions.until(token, () => {
+                    const after = live.readProducts().find(p => p.index === product.index)
+                    return after && after.owned < before.owned
+                }))
+            },
+            lease
+        )
+        return sold
     }
 
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.act = window.Alakazam.act || {}
     window.Alakazam.act.store = {
         available,
+        ready,
+        unitProducts,
         withBulk,
         buy,
         sell,
