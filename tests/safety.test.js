@@ -1478,3 +1478,109 @@ test('clone restoration stops if its journal await crosses a run replacement', a
         if (release) release()
     }
 })
+
+for (const phase of ['clone styling', 'name wait', 'clone restoration']) {
+    test(`stale save quarantine during ${phase} preserves cosmetics and durable recovery`, async () => {
+        const original = [4, 5, 6, 1, 2, 3, 4]
+        const name = phase === 'name wait'
+        const cosmetic = name ? 'achievements' : 'clones'
+        const journalKey = name ? 'bakeryNameRecovery' : 'cloneRecovery'
+        const h = await ready({
+            save: fx.save({ amounts: { 19: 1 }, appearance: original.join(','), bakeryName: 'Original' })
+                .raw,
+            game: { genes: original, bakeryName: 'Original' }
+        })
+        await h.A.save.connect()
+        const before = h.A.identity.current()
+        for (const key of Object.keys(h.A.store.DEFAULTS))
+            h.A.store.setSetting(key, key === 'enabled' || key === cosmetic)
+        const flush = h.A.store.flush
+        const barrier = name ? hold(h, 600) : null
+        let writes = 0
+        let release
+        let task
+        if (!name)
+            h.A.store.flush = async () => {
+                const ok = await flush()
+                writes++
+                // Enter cleanup first, then suspend its own durable undo step.
+                if (phase === 'clone restoration' && writes === 5) h.A.scheduler.pause()
+                if (writes === (phase === 'clone restoration' ? 6 : 5))
+                    await new Promise(resolve => {
+                        release = resolve
+                    })
+                return ok
+            }
+        h.A.registry.register({
+            name: cosmetic,
+            interval: 100000,
+            tick(ctx) {
+                task = ctx.task
+                return name ? h.A.achievements.godComplex() : h.A.clones.tick()
+            }
+        })
+        await h.A.scheduler.start()
+        try {
+            assert.ok(await waitFor(() => (name ? barrier.pending.length === 1 : !!release), 2000, 5))
+            const partial = h.game.state.genes.slice()
+            if (name) assert.equal(h.game.state.bakeryName, 'Orteil')
+            else assert.notDeepEqual(partial, original)
+            const mark = JSON.parse(JSON.stringify(h.A.store.get(journalKey)))
+            const save = driftedScalars =>
+                fx.save({
+                    driftedScalars,
+                    amounts: { 19: 1 },
+                    appearance: partial.join(','),
+                    bakeryName: name ? 'Orteil' : 'Original'
+                }).raw
+            const setSave = raw => {
+                h.ctx.localStorage = { getItem: key => (key === 'CookieClickerGame' ? raw : null) }
+            }
+            setSave(save(true))
+            const parsed = h.A.savefile.read()
+            assert.equal(parsed.ok, true)
+            assert.equal(parsed.stale, true)
+            // Plausible metadata must not authorize UI work from this stale save.
+            assert.equal(h.A.identity.fromSave(parsed).runId, before.runId)
+            const switching = h.A.registry.get('saveWatch').tick()
+            assert.equal(task.active, false)
+            assert.equal(h.debug().identity.known, false)
+            if (release) release()
+            if (barrier) barrier.release()
+            await switching
+            h.A.scheduler.pause()
+            assert.deepEqual(h.game.state.genes, partial)
+            if (name) assert.equal(h.game.state.bakeryName, 'Orteil')
+            assert.equal(h.A.identity.current().known, false)
+            assert.equal(h.A.store.get(journalKey, null), null, 'quarantine cannot expose family undo')
+            const durableKey = h.A.store.fieldKey('legacy:' + before.familyId, journalKey)
+            assert.deepEqual(h.disk[durableKey].value, mark, 'the old family retains its durable undo')
+            if (name) h.A.achievements.recoverName()
+            else await h.A.clones.recover()
+            assert.deepEqual(h.game.state.genes, partial)
+            if (name) assert.equal(h.game.state.bakeryName, 'Orteil')
+
+            setSave(save(false))
+            await h.A.registry.get('saveWatch').tick()
+            assert.equal(h.A.identity.current().runId, before.runId)
+            if (name) h.A.achievements.recoverName()
+            else await h.A.clones.recover()
+            if (name) assert.equal(h.game.state.bakeryName, 'Original')
+            else assert.deepEqual(h.game.state.genes, original)
+            assert.equal(task.active, false, 'fresh recovery must not revive the cancelled task')
+            assert.ok(
+                h.A.store.get(journalKey, null),
+                'undo stays durable until the restoration is saved'
+            )
+            autosave(h)
+            if (name) h.A.achievements.recoverName()
+            else await h.A.clones.recover()
+            assert.equal(h.A.store.get(journalKey, null), null)
+        } finally {
+            h.A.scheduler.stop()
+            h.A.store.flush = flush
+            if (release) release()
+            if (barrier) barrier.release()
+        }
+    })
+}

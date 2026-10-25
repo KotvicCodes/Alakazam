@@ -204,6 +204,23 @@ test('identity degrades to a known-unknown rather than throwing', () => {
     assert.equal(unknown.legacyId, 'unknown')
 })
 
+test('current identity rejects stale saves before the watcher observes them and recovers when valid', () => {
+    const h = boot({ save: fx.save().raw })
+    const before = h.A.identity.current()
+    assert.equal(before.known, true)
+    let raw = fx.save({ driftedScalars: true }).raw
+    h.ctx.localStorage = { getItem: key => (key === 'CookieClickerGame' ? raw : null) }
+    const stale = h.A.savefile.read()
+    assert.equal(stale.ok, true)
+    assert.equal(stale.stale, true)
+    assert.equal(h.A.identity.fromSave(stale).runId, before.runId, 'metadata alone is still plausible')
+    assert.equal(h.A.save.trusted(), true, 'the watcher still holds its previous valid snapshot')
+    assert.equal(h.A.identity.current().known, false, 'live authorization must use the latest raw save')
+    assert.equal(h.A.identity.current().runId, 'unknown')
+    raw = fx.save().raw
+    assert.deepEqual(h.A.identity.current(), before)
+})
+
 //! Reading the save out of localStorage
 
 test('base64 is repaired before decoding rather than rejected', () => {

@@ -60,7 +60,9 @@
     // callers that need it every tick should hold onto the result and refresh it
     // only when the run id changes (that is, when the player ascends).
     function current() {
-        return fromSave(savefile.read())
+        const saved = savefile.read()
+        // plausible metadata in a stale parse cannot authorize live automation
+        return fromSave(saved.stale ? null : saved)
     }
 
     //* bakeryName
