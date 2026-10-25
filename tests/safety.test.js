@@ -1312,3 +1312,169 @@ test('cancelled clone cleanup cannot restore the previous family over an importe
     assert.equal(h.A.store.get('clonesStyled', false), false)
     assert.equal(h.A.safety.prompt(), null)
 })
+
+for (const cosmetic of ['clones', 'achievements']) {
+    test(`cancelled ${cosmetic} cleanup preserves a same-family replacement run and its journal`, async () => {
+        const original = [4, 5, 6, 1, 2, 3, 4]
+        const h = await ready({
+            save: fx.save({ amounts: { 19: 1 }, appearance: original.join(','), bakeryName: 'Original' })
+                .raw,
+            game: { genes: original, bakeryName: 'Original' }
+        })
+        await h.A.save.connect()
+        const before = h.A.identity.current()
+        for (const key of Object.keys(h.A.store.DEFAULTS))
+            h.A.store.setSetting(key, key === 'enabled' || key === cosmetic)
+        const journalKey = cosmetic === 'clones' ? 'cloneRecovery' : 'bakeryNameRecovery'
+        let release
+        let task
+        let work
+        let writes = 0
+        const flush = h.A.store.flush
+        const barrier = cosmetic === 'achievements' ? hold(h, 600) : null
+        if (cosmetic === 'clones')
+            h.A.store.flush = async () => {
+                const ok = await flush()
+                if (++writes === 5)
+                    await new Promise(resolve => {
+                        release = resolve
+                    })
+                return ok
+            }
+        h.A.registry.register({
+            name: cosmetic,
+            interval: 1,
+            tick(ctx) {
+                task = ctx.task
+                work = cosmetic === 'clones' ? h.A.clones.tick() : h.A.achievements.godComplex()
+                return work
+            }
+        })
+        await h.A.scheduler.start()
+        try {
+            assert.ok(
+                await waitFor(
+                    () => (cosmetic === 'clones' ? !!release : barrier.pending.length === 1),
+                    2000,
+                    5
+                )
+            )
+            const importedGenes = h.game.state.genes.slice()
+            const mark = JSON.parse(JSON.stringify(h.A.store.get(journalKey)))
+            if (cosmetic === 'clones') assert.notDeepEqual(importedGenes, original)
+            else assert.equal(h.game.state.bakeryName, 'Orteil')
+            const raw = fx.save({
+                seed: 'replacement-run',
+                amounts: { 19: 1 },
+                appearance: importedGenes.join(','),
+                bakeryName: 'Orteil'
+            }).raw
+            h.ctx.localStorage = { getItem: key => (key === 'CookieClickerGame' ? raw : null) }
+            const next = h.A.identity.current()
+            assert.equal(next.familyId, before.familyId)
+            assert.notEqual(next.runId, before.runId)
+            const switching = h.A.scheduler.reconcile(next)
+            assert.equal(task.active, false)
+            if (release) release()
+            if (barrier) barrier.release()
+            await switching
+            h.A.scheduler.stop()
+            await work.catch(err => {
+                if (!h.A.safety.isCancellation(err)) throw err
+            })
+            assert.deepEqual(h.game.state.genes, importedGenes)
+            if (cosmetic === 'achievements') assert.equal(h.game.state.bakeryName, 'Orteil')
+            assert.deepEqual(JSON.parse(JSON.stringify(h.A.store.get(journalKey))), mark)
+            assert.equal(h.A.store.get('clonesStyled', false), false)
+            await flush()
+            assert.deepEqual(
+                h.disk[h.A.store.fieldKey('legacy:' + before.familyId, journalKey)].value,
+                mark
+            )
+            assert.equal(task.active, false, 'draining never revives the old task')
+
+            // a fresh, explicit recovery decision can still use the family journal
+            if (cosmetic === 'clones') await h.A.clones.recover()
+            else h.A.achievements.recoverName()
+            if (cosmetic === 'clones') assert.deepEqual(h.game.state.genes, original)
+            else assert.equal(h.game.state.bakeryName, 'Original')
+            assert.equal(task.active, false)
+            assert.ok(h.A.store.get(journalKey, null), 'retain undo until the restored value is saved')
+            autosave(h)
+            if (cosmetic === 'clones') await h.A.clones.recover()
+            else h.A.achievements.recoverName()
+            assert.equal(h.A.store.get(journalKey, null), null)
+        } finally {
+            h.A.scheduler.stop()
+            h.A.store.flush = flush
+            if (release) release()
+            if (barrier) barrier.release()
+        }
+    })
+}
+
+test('clone restoration stops if its journal await crosses a run replacement', async () => {
+    const original = [4, 5, 6, 1, 2, 3, 4]
+    const h = await ready({
+        save: fx.save({ amounts: { 19: 1 }, appearance: original.join(',') }).raw,
+        game: { genes: original }
+    })
+    await h.A.save.connect()
+    const before = h.A.identity.current()
+    for (const key of Object.keys(h.A.store.DEFAULTS))
+        h.A.store.setSetting(key, key === 'enabled' || key === 'clones')
+    const flush = h.A.store.flush
+    let writes = 0
+    let release
+    let task
+    h.A.store.flush = async () => {
+        const ok = await flush()
+        if (++writes === 5) h.A.scheduler.pause()
+        if (writes === 6)
+            await new Promise(resolve => {
+                release = resolve
+            })
+        return ok
+    }
+    h.A.registry.register({
+        name: 'clones',
+        interval: 1,
+        tick(ctx) {
+            task = ctx.task
+            return h.A.clones.tick()
+        }
+    })
+    await h.A.scheduler.start()
+    try {
+        assert.ok(await waitFor(() => !!release, 2000, 5))
+        const importedGenes = h.game.state.genes.slice()
+        assert.notDeepEqual(importedGenes, original)
+        const mark = JSON.parse(JSON.stringify(h.A.store.get('cloneRecovery')))
+        const raw = fx.save({
+            seed: 'replacement-during-restore',
+            amounts: { 19: 1 },
+            appearance: importedGenes.join(',')
+        }).raw
+        h.ctx.localStorage = { getItem: key => (key === 'CookieClickerGame' ? raw : null) }
+        const next = h.A.identity.current()
+        assert.equal(next.familyId, before.familyId)
+        assert.notEqual(next.runId, before.runId)
+        const switching = h.A.scheduler.reconcile(next)
+        assert.equal(task.active, false)
+        release()
+        await switching
+        assert.deepEqual(h.game.state.genes, importedGenes)
+        assert.deepEqual(JSON.parse(JSON.stringify(h.A.store.get('cloneRecovery'))), mark)
+        assert.equal(h.A.store.get('clonesStyled', false), false)
+        assert.equal(task.active, false)
+        await flush()
+        assert.deepEqual(
+            h.disk[h.A.store.fieldKey('legacy:' + before.familyId, 'cloneRecovery')].value,
+            mark
+        )
+    } finally {
+        h.A.scheduler.stop()
+        h.A.store.flush = flush
+        if (release) release()
+    }
+})

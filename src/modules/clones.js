@@ -113,8 +113,15 @@
     //* walk
     // click toward a target appearance. Returns whether everything now matches,
     // so the caller can stop rather than carry on with a half-walked set.
-    async function walk(target, budget, ctx = safety.scope('clones'), mark = null) {
+    async function walk(
+        target,
+        budget,
+        ctx = safety.scope('clones'),
+        mark = null,
+        runId = identity.current().runId
+    ) {
         while (budget.left > 0) {
+            if (identity.current().runId !== runId) return false
             ctx.check()
             const genes = currentGenes()
             if (!genes || !safety.ownsPrompt('clones', 'CustomizeYou')) return false
@@ -122,13 +129,13 @@
             const gene = target.findIndex((value, i) => value !== genes[i])
             if (gene === -1) return true
             const direction = Math.sign(stepsTo(gene, genes[gene], target[gene]))
-            if (!(await move(gene, direction, ctx, mark))) return false
+            if (!(await move(gene, direction, ctx, mark, runId))) return false
             budget.left--
         }
         return equal(currentGenes(), target)
     }
 
-    async function move(gene, direction, ctx, mark) {
+    async function move(gene, direction, ctx, mark, runId = identity.current().runId) {
         const before = currentGenes()
         if (!before) return false
         const next = before.slice()
@@ -145,15 +152,16 @@
             if (!(await store.flush().catch(() => false))) return false
         }
         ctx.check()
+        if (identity.current().runId !== runId) return false
         if (revision !== safety.revision() || !equal(currentGenes(), before)) return false
         if (!safety.ownsPrompt('clones', 'CustomizeYou') || !step(gene, direction, ctx)) return false
         return equal(currentGenes(), next)
     }
 
-    async function restore(mark, ctx) {
+    async function restore(mark, ctx, runId) {
         // an import can replace the live customizer before cancelled work drains
         const who = identity.current()
-        if (!who.known || mark.legacyId !== who.legacyId) return false
+        if (!who.known || mark.legacyId !== who.legacyId || who.runId !== runId) return false
         const superseded = () => {
             store.forget(RECOVERY_KEY)
             store.set(DONE_KEY, true)
@@ -174,8 +182,8 @@
         // A reload can resume at any journaled step, not just the latest write.
         mark.expected = live
         mark.previous = live
-        if (!(await walk(mark.original, { left: MAX_CLICKS }, ctx, mark))) return false
-        if (!equal(currentGenes(), mark.original)) return false
+        if (!(await walk(mark.original, { left: MAX_CLICKS }, ctx, mark, runId))) return false
+        if (identity.current().runId !== runId || !equal(currentGenes(), mark.original)) return false
         restoredHere = { ...mark }
         store.set(RECOVERY_KEY, restoredHere)
         forgetIfSaved(mark)
@@ -205,7 +213,7 @@
         }
         if (!safety.ownsPrompt('clones', 'CustomizeYou')) return
         if (mark) {
-            await ctx.cleanup(() => restore(mark, ctx))
+            await ctx.cleanup(() => restore(mark, ctx, who.runId))
             return
         }
         const original = currentGenes()
@@ -224,14 +232,14 @@
             if (!(await store.flush().catch(() => false))) return false
             ctx.check()
             const budget = { left: MAX_CLICKS }
-            if (!(await walk(LIKENESS, budget, ctx, mark))) return
+            if (!(await walk(LIKENESS, budget, ctx, mark, who.runId))) return
             // the game checks this achievement only inside an arrow handler
-            if (!(await move(FREE_GENE, 1, ctx, mark))) return
-            if (!(await move(FREE_GENE, -1, ctx, mark))) return
+            if (!(await move(FREE_GENE, 1, ctx, mark, who.runId))) return
+            if (!(await move(FREE_GENE, -1, ctx, mark, who.runId))) return
             mark.earned = true
             store.set(RECOVERY_KEY, { ...mark })
         } finally {
-            await ctx.cleanup(() => restore(mark, ctx))
+            await ctx.cleanup(() => restore(mark, ctx, who.runId))
         }
     }
 
@@ -246,7 +254,7 @@
         const ctx = safety.context('clones')
         await ctx.cleanup(async () => {
             ctx.input('simulateClick', customizeButton())
-            await restore(mark, ctx)
+            await restore(mark, ctx, who.runId)
         })
     }
 

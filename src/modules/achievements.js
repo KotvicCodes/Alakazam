@@ -139,11 +139,13 @@
         }
     }
 
-    function recoverName() {
+    function recoverName(runId) {
         const { safety, identity } = window.Alakazam
         const mark = store.get(NAME_KEY, null)
         const who = identity.current()
         if (!mark || !who.known || mark.legacyId !== who.legacyId) return false
+        // a cancelled task may undo its own run, never a replacement run
+        if (runId && who.runId !== runId) return false
         if (mark.intervened) {
             store.forget(NAME_KEY)
             return false
@@ -210,7 +212,7 @@
             await wait(600)
             return true
         } finally {
-            recoverName()
+            recoverName(who.runId)
         }
     }
 
