@@ -294,6 +294,7 @@
     }
 
     async function tick() {
+        if (await dragonAct.recover()) return
         const dragon = dragonState()
         if (!dragon) return
 

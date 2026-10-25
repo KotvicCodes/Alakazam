@@ -243,6 +243,123 @@ test('pausing during a dragon panel await prevents training and remains paused a
     assert.equal(h.A.act.dragon.panelOpen(), false)
 })
 
+async function interruptedDragon(paused = false) {
+    const h = await ready({
+        save: fx.save({ dragonLevel: 5 }).raw,
+        game: {
+            bank: 1e9,
+            owned: [300, 0, 0, 0, 0, 0, 0, 0],
+            dragon: { level: 5, trainable: true }
+        }
+    })
+    const barrier = hold(h, 150)
+    const work = h.A.registry.get('dragon').tick()
+    assert.ok(await waitFor(() => barrier.pending.length > 0, 2000, 5))
+    const task = h.A.safety.scope('dragon')
+    h.game.doc.fire('keydown', { isTrusted: true, target: h.game.doc.body, key: 'o', ctrlKey: true })
+    let answered = 0
+    h.game.prompt('ImportSave', [
+        ['Load', () => answered++],
+        ['Cancel', () => answered++]
+    ])
+    const foreign = h.A.safety.prompt()
+    if (paused) h.A.scheduler.pause()
+    barrier.release()
+    await work
+    assert.equal(h.A.safety.prompt(), foreign, 'cleanup never answers the foreign prompt')
+    assert.equal(answered, 0)
+    assert.equal(h.A.act.dragon.panelOpen(), true)
+    assert.equal(h.game.dragon.level, 5)
+    assert.equal(task.active, false)
+    const start = Date.now()
+    let offset = 6000
+    h.ctx.Date = class extends Date {
+        static now() {
+            return start + offset
+        }
+    }
+    h.retryDragon = async () => {
+        offset += 6000
+        await h.A.registry.get('dragon').tick()
+    }
+    return { h, task, foreign }
+}
+
+for (const paused of [false, true]) {
+    test(`a foreign prompt defers dragon cleanup${paused ? ' after pause' : ''}`, async () => {
+        const { h, task, foreign } = await interruptedDragon(paused)
+        if (paused) h.A.scheduler.resume()
+        await h.retryDragon()
+        assert.equal(h.A.safety.prompt(), foreign)
+        assert.equal(h.game.dragon.level, 5)
+        h.A.input.simulateClick(h.game.doc.getElementById('promptOption1'))
+        h.game.drawDragon()
+        await h.retryDragon()
+        assert.equal(h.A.act.dragon.panelOpen(), false, 'a fresh task closes only the owned panel')
+        assert.equal(h.game.dragon.level, 5, 'recovery does not resume abandoned work')
+        assert.equal(task.active, false)
+        assert.equal(h.A.act.dragon.train(task), false)
+        assert.throws(() => task.check(), { name: 'CancellationError' })
+        await h.retryDragon()
+        assert.equal(h.game.dragon.level, 15, 'a later visit can train again')
+        assert.equal(h.A.act.dragon.panelOpen(), false, 'the later visit closes its panel')
+    })
+}
+
+for (const change of [
+    'player panel',
+    'popup',
+    'legacy',
+    'run',
+    'ascension',
+    'missing save',
+    'import click',
+    'import enter'
+]) {
+    test(`deferred dragon cleanup rejects a changed ${change}`, async () => {
+        const { h } = await interruptedDragon()
+        const doc = h.game.doc
+        if (change === 'player panel') {
+            const close = doc.querySelector('#specialPopup .close')
+            doc.fire('pointerdown', { isTrusted: true, target: close })
+            h.A.input.simulateClick(close)
+            doc.fire('pointerdown', { isTrusted: true, target: h.game.leftCanvas })
+            h.A.input.simulateClickAt(h.game.leftCanvas, 24, h.game.leftCanvas.height - 72)
+        } else if (change === 'popup') {
+            const popup = h.game.specialPopup
+            const replacement = new El('div', { id: 'specialPopup' })
+            replacement.append(...popup.children)
+            doc.body.children = doc.body.children.map(node => (node === popup ? replacement : node))
+        } else if (change.startsWith('import')) {
+            // Even an import of the same run must revoke recovery. Cancellation
+            // of the import dialog, in contrast, leaves panel ownership intact.
+            doc.fire(change === 'import click' ? 'pointerdown' : 'keydown', {
+                isTrusted: true,
+                target: change === 'import click' ? doc.getElementById('promptOption0') : doc.body,
+                key: 'Enter'
+            })
+        } else {
+            const raw =
+                change === 'missing save'
+                    ? null
+                    : fx.save({
+                          dragonLevel: 5,
+                          ...(change === 'legacy' ? { fullDate: 1740000000000 } : {}),
+                          ...(change === 'run' ? { seed: 'new-run' } : {}),
+                          ...(change === 'ascension' ? { resets: 1 } : {})
+                      }).raw
+            h.ctx.localStorage = { getItem: () => raw }
+        }
+        h.A.input.simulateClick(doc.getElementById('promptOption1'))
+        const pic = doc.getElementById('specialPic')
+        await h.retryDragon()
+        await h.retryDragon()
+        assert.equal(doc.getElementById('specialPic'), pic)
+        assert.equal(h.A.act.dragon.panelOpen(), true)
+        assert.equal(h.game.dragon.level, 5)
+    })
+}
+
 for (const paused of [false, true]) {
     test(`a player replacement dragon panel survives the old visit${
         paused ? ' after pause' : ''

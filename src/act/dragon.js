@@ -37,22 +37,32 @@
 
     const { safety } = window.Alakazam
     let panelOwner = null
+    let deferredPanel = null
 
     function panelContext() {
         return panelOwner ? panelOwner.ctx : safety.context('dragon')
+    }
+
+    function sameRun(owned) {
+        const now = window.Alakazam.identity.current()
+        return ['known', 'legacyId', 'runId', 'ascensions'].every(key => now[key] === owned.run[key])
+    }
+
+    function samePanel(owned) {
+        return !!(
+            owned &&
+            owned.revision === safety.revision('dragonPanel') &&
+            owned.popup === el('specialPopup') &&
+            sameRun(owned) &&
+            panelOpen()
+        )
     }
 
     // only open() may claim a panel. Game.ToggleSpecialMenu replaces the portrait
     // and controls every three seconds, even during an await. The popup itself stays
     // mounted; trusted player input revokes ownership even if they reopen it.
     function ownsPanel(ctx = panelContext()) {
-        return !!(
-            panelOwner &&
-            panelOwner.ctx === ctx &&
-            panelOwner.revision === safety.revision('dragonPanel') &&
-            panelOwner.popup === el('specialPopup') &&
-            panelOpen()
-        )
+        return !!(panelOwner && panelOwner.ctx === ctx && samePanel(panelOwner))
     }
 
     function panelInput(ctx, node) {
@@ -128,8 +138,13 @@
         const cv = canvas()
         if (!cv) return false
         const { x, y } = tabPoint(cv)
-        const owned = { ctx, revision: safety.revision('dragonPanel'), popup: el('specialPopup') }
-        panelOwner = owned
+        deferredPanel = null
+        panelOwner = {
+            ctx,
+            revision: safety.revision('dragonPanel'),
+            popup: el('specialPopup'),
+            run: window.Alakazam.identity.current()
+        }
         ctx.input('simulateClickAt', cv, x, y)
         await wait(DRAW_MS)
         ctx.check()
@@ -141,6 +156,14 @@
     // mistimed, rather than a second canvas click
     async function close(ctx = panelContext()) {
         if (!ownsPanel(ctx)) return false
+        if (safety.prompt() && !pickerOpen()) {
+            // keep only permission to clean up this panel, never the abandoned
+            // task or permission to train. Foreign prompts must remain untouched.
+            const { popup, revision, run } = panelOwner
+            deferredPanel = { popup, revision, run }
+            panelOwner = null
+            return false
+        }
         const popup = el('specialPopup')
         const button = popup && popup.querySelector ? popup.querySelector('.close') : null
         if (!button) return false
@@ -148,6 +171,28 @@
         panelOwner = null
         await wait(DRAW_MS)
         return !panelOpen()
+    }
+
+    //* recover
+    // a fresh tick may finish deferred cleanup after the foreign prompt is gone.
+    // It closes only the same panel in the same run, then ends that tick. Opening
+    // and training belong to a later visit, so wasOpen cannot preserve this panel.
+    async function recover(ctx = safety.context('dragon')) {
+        ctx.check()
+        const owned = deferredPanel
+        if (!owned) return false
+        if (!owned.run.known || !samePanel(owned)) {
+            deferredPanel = null
+            return true
+        }
+        if (safety.prompt()) return true
+        const button = owned.popup.querySelector('.close')
+        if (!button) return true
+        ctx.input('simulateClick', button)
+        if (deferredPanel === owned) deferredPanel = null
+        await wait(DRAW_MS)
+        ctx.check()
+        return true
     }
 
     //* nextStep
@@ -272,6 +317,7 @@
         ownsPanel,
         open,
         close,
+        recover,
         nextStep,
         train,
         auraCrate,
