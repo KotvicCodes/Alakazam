@@ -19,6 +19,8 @@
     let current = null
     let buttons
     let refreshing = false
+    let saveError = ''
+    let statusError = ''
     const diagnostics = new Map()
 
     function call(api, method, ...args) {
@@ -31,22 +33,31 @@
         })
     }
 
-    function showError(error) {
+    function showErrors() {
+        const error = [saveError, statusError].filter(Boolean).join('\n')
         byId('error').hidden = !error
         text(byId('error'), error || '')
+    }
+
+    async function persistSettings() {
+        await ready()
+        const saved = await store.flush()
+        const persistence = store.stats()
+        if (saved && !persistence.pending && !persistence.error) saveError = ''
+        settings = store.allSettings()
+        update()
+        showErrors()
     }
 
     async function toggle(key) {
         try {
             await ready()
             store.setSetting(key, store.setting(key) === false)
-            await store.flush()
-            settings = store.allSettings()
-            showError('')
-            update()
+            await persistSettings()
             await refresh()
         } catch (error) {
-            showError(`Could not save settings: ${error.message}`)
+            saveError = `Could not save settings: ${error.message}`
+            showErrors()
         }
     }
 
@@ -119,6 +130,7 @@
                 call(chrome.tabs, 'query', { active: true, currentWindow: true }),
                 ready()
             ])
+            statusError = ''
             settings = store.allSettings()
             const tab = tabs[0]
             activeTabId = tab?.id ?? null
@@ -147,12 +159,12 @@
             }
             current = status
             update()
-            showError('')
         } catch (error) {
             disconnected('Could not read game status')
-            showError(error.message)
+            statusError = error.message
         } finally {
             refreshing = false
+            showErrors()
         }
     }
 
@@ -163,11 +175,10 @@
         byId('pauseBtn').addEventListener('click', () => toggle('enabled'))
         byId('refreshBtn').addEventListener('click', async () => {
             try {
-                await ready()
-                await store.flush()
-                showError('')
+                await persistSettings()
             } catch (error) {
-                showError(`Could not save settings: ${error.message}`)
+                saveError = `Could not save settings: ${error.message}`
+                showErrors()
             }
             await refresh()
         })

@@ -8,12 +8,14 @@
         summaryBody,
         pauseButton,
         foldButton,
+        dockButton,
         stripStatus,
         controls,
         retryButton,
         discardButton
     let dock = 'bottom-left'
     let dragPosition = null
+    let cancelDrag = () => {}
     const cells = new Map()
     let cellIndex = 0
     let currentSection = ''
@@ -75,8 +77,7 @@
         foldButton.setAttribute('aria-controls', 'alakazam-hud-body')
         head.append(title, stripStatus, pauseButton, foldButton)
         body = el('div', { id: 'alakazam-hud-body' })
-        body.hidden = store.get('hudFolded', true)
-        const dockButton = button('alakazam-hud-dock', 'Dock: bottom left', () => {
+        dockButton = button('alakazam-hud-dock', 'Dock: bottom left', () => {
             const docks = ['bottom-left', 'top-left', 'bottom-center']
             dock = docks[(docks.indexOf(dock) + 1) % docks.length]
             store.set('hudDock', dock)
@@ -103,12 +104,17 @@
         body.append(retryButton, discardButton)
         root.append(head, body)
         document.body.appendChild(root)
-        dock = store.get('hudDock', 'bottom-left')
-        text(dockButton, `Dock: ${dock.replace('-', ' ')}`)
-        place()
+        loadPreferences()
         makeDraggable(head)
         window.addEventListener('resize', () => place())
         document.addEventListener('fullscreenchange', () => place())
+    }
+
+    function loadPreferences() {
+        dock = store.get('hudDock', 'bottom-left')
+        body.hidden = store.get('hudFolded', true)
+        text(dockButton, `Dock: ${dock.replace('-', ' ')}`)
+        place()
     }
 
     function clamp(value, low, high) {
@@ -141,6 +147,12 @@
         let pointer = null
         let offsetX = 0,
             offsetY = 0
+        cancelDrag = () => {
+            if (pointer !== null && handle.hasPointerCapture(pointer))
+                handle.releasePointerCapture(pointer)
+            pointer = null
+            dragPosition = null
+        }
         handle.addEventListener('pointerdown', event => {
             if (!event.isTrusted || event.button !== 0) return
             if ([pauseButton, foldButton].some(node => node.contains(event.target))) return
@@ -422,6 +434,16 @@
         render()
     }
 
-    registry.register({ name: 'hud', interval: 1000, always: true, setup, tick: render })
+    function reset({ previousIdentity, identity } = {}) {
+        if (previousIdentity?.familyId === identity?.familyId) return
+        // A drag belongs to the old family; its eventual release must not write
+        // that position into the newly loaded save's preferences.
+        cancelDrag()
+        if (!root) return
+        loadPreferences()
+        render()
+    }
+
+    registry.register({ name: 'hud', interval: 1000, always: true, setup, reset, tick: render })
     window.Alakazam.hud = { render, format }
 })()
