@@ -190,3 +190,141 @@ test('live maturity harvesting preserves the selected seed without replanting', 
     expect(await game.evaluate(() => Alakazam.store.get('gardenHarvests', 0))).toBe(1)
     expect(await game.evaluate(() => Alakazam.save.get().buildings[2].minigame.plot[0][0].age)).toBe(49)
 })
+
+test('beta-keyed exports verify empty and live wrinkler hoards', async ({ game }) => {
+    await game.evaluate(() => {
+        // The pinned mirror serves the live game; select the beta storage variant
+        // explicitly without changing the export or identity implementation.
+        history.replaceState({}, '', '/cookieclicker/beta/')
+        Game.SaveTo = 'CookieClickerGameBeta'
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await publish(game)
+    const empty = await game.evaluate(() => Alakazam.act.ascend.liveHoard())
+    expect(empty).not.toBeNull()
+    expect(empty.hoard).toBe(0)
+    expect(empty.runId).toBe(await game.evaluate(() => Alakazam.identity.current().runId))
+    await game.evaluate(() => {
+        for (const [index, amount] of [1e9, 2e9].entries()) {
+            const wrinkler = Game.wrinklers[index]
+            wrinkler.phase = 2
+            wrinkler.type = index
+            wrinkler.sucked = amount
+        }
+    })
+    const valuable = await game.evaluate(() => Alakazam.act.ascend.liveHoard())
+    expect(valuable).not.toBeNull()
+    expect(valuable.hoard).toBe(3e9)
+    expect(valuable.active).toBe(2)
+    // Exporting must not update the stale zero-hoard autosave.
+    expect(await game.evaluate(() => Alakazam.save.get().scalars.wrinklersAmount)).toBe(0)
+})
+
+test('rounded-price refusal stops unchanged retries and recovers after funding', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookies = 1e6
+        Game.cookiesEarned = 2e6
+        Game.Objects.Cursor.basePrice = 1000400
+        Game.Objects.Cursor.refresh()
+        Game.RefreshStore()
+        Alakazam.store.setSetting('enabled', true)
+        window.refusedClicks = 0
+        document.addEventListener('click', event => {
+            if (event.target.closest('#product0')) window.refusedClicks++
+        })
+    })
+    await expect.poll(() => game.evaluate(() => Alakazam.live.readGlobals().cookies)).toBe(1e6)
+    await expect
+        .poll(() => game.evaluate(() => Alakazam.live.readProducts().some(item => item.index === 0)))
+        .toBe(true)
+    const attempt = () =>
+        game.evaluate(() => {
+            const product = Alakazam.live.readProducts().find(item => item.index === 0)
+            return Alakazam.act.store.buy(product, 1, Infinity)
+        })
+    expect((await attempt()).bought).toBe(false)
+    for (let i = 0; i < 3; i++) expect((await attempt()).bought).toBe(false)
+    expect(await game.evaluate(() => window.refusedClicks)).toBe(1)
+    expect(await game.evaluate(() => Game.Objects.Cursor.amount)).toBe(0)
+    await game.evaluate(() => {
+        Game.cookies = 1.1e6
+        Game.Objects.Cursor.refresh()
+    })
+    await expect.poll(() => game.evaluate(() => Alakazam.live.readGlobals().cookies)).toBe(1.1e6)
+    expect((await attempt()).bought).toBe(true)
+    expect(await game.evaluate(() => Game.Objects.Cursor.amount)).toBe(1)
+    expect(await game.evaluate(() => [Game.buyMode, Game.buyBulk])).toEqual([1, 1])
+})
+
+for (const cancellation of ['pause', 'foreign prompt']) {
+    test(`cancelled lump confirmation releases its reservation after ${cancellation}`, async ({
+        game
+    }) => {
+        await lumpReserve(game)
+        await game.evaluate(() => {
+            const wizard = Game.Objects['Wizard tower']
+            wizard.amount = 1
+            wizard.highest = 1
+            wizard.level = 2
+            wizard.refresh()
+            Game.lumps = 103
+            Game.lumpsTotal = 200
+            Game.lumpT = Date.now()
+            Game.prefs.askLumps = 1
+            Game.computeLumpTimes()
+            Game.Draw()
+            Alakazam.store.setSetting('enabled', true)
+        })
+        await publish(game)
+        await expect(game.locator('#lumpsAmount')).toHaveText('103')
+        await expect
+            .poll(() =>
+                game.evaluate(() =>
+                    Alakazam.parse.firstNumberIn(document.getElementById('productLevel7').innerText)
+                )
+            )
+            .toBe(2)
+        expect(await game.evaluate(() => Alakazam.lumps.nextSpend(103)?.cost)).toBe(3)
+        await game.evaluate(() => {
+            const until = Alakazam.transactions.until
+            window.restoreLumpWait = () => (Alakazam.transactions.until = until)
+            Alakazam.transactions.until = async (...args) => {
+                const outcome = await until(...args)
+                if (document.getElementById('promptContentSpendLump') && !window.releaseLumpWait) {
+                    await new Promise(resolve => (window.releaseLumpWait = resolve))
+                }
+                return outcome
+            }
+            window.pendingLumpTick = Alakazam.registry.get('lumps').tick()
+        })
+        await expect(game.locator('#promptContentSpendLump')).toHaveCount(1)
+        if (cancellation === 'pause') {
+            await game.evaluate(() => Alakazam.store.setSetting('enabled', false))
+            await game.locator('#promptOption1').click()
+        } else {
+            await game.locator('#promptOption1').click()
+            await game.keyboard.press('Control+o')
+            await expect(game.locator('#promptContentImportSave')).toHaveCount(1)
+        }
+        await game.evaluate(async () => {
+            window.releaseLumpWait()
+            await window.pendingLumpTick
+            window.restoreLumpWait()
+        })
+        expect(await game.evaluate(() => Game.lumps)).toBe(103)
+        expect(await game.evaluate(() => Game.Objects['Wizard tower'].level)).toBe(2)
+        if (cancellation === 'foreign prompt') {
+            await expect(game.locator('#promptContentImportSave')).toHaveCount(1)
+            await game.locator('#promptOption1').click()
+        }
+        await publish(game)
+        await game.evaluate(() => Alakazam.store.setSetting('enabled', true))
+        expect(await game.evaluate(() => Alakazam.lumps.nextSpend(103)?.cost)).toBe(3)
+        await game.evaluate(async () => {
+            Game.prefs.askLumps = 0
+            await Alakazam.registry.get('lumps').tick()
+        })
+        expect(await game.evaluate(() => Game.lumps)).toBe(100)
+        expect(await game.evaluate(() => Game.Objects['Wizard tower'].level)).toBe(3)
+    })
+}
