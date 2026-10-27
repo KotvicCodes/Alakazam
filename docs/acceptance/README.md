@@ -34,3 +34,12 @@ The subsequent integrated review also corrected store-control restoration behind
 a foreign prompt, durable gift-code capture on cancellation, and cosmetic
 recovery verification after same-document text and file imports. These are follow-up fixes,
 not changes to the historical native results.
+
+The final combined review also found that a second game tab could retire an
+active cosmetic undo journal. Journal claims and writes now pass through the
+extension worker and belong to a browser document. The added `webNavigation`
+permission lets the worker check document liveness without treating a frozen
+tab as expired; a reload preserves the handoff to the original game tab.
+Installed-extension regressions exercise two tabs sharing real Chrome storage,
+followed by a reload during the temporary name or appearance change. These
+checks use the pinned local game mirror, not a new native macOS acceptance run.

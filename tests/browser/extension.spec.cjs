@@ -110,6 +110,115 @@ test('unpacked extension isolates globals and bridges popup through persistent C
             })
         ).toBe(true)
 
+        // A second real content-script document must not retire the first
+        // document's durable undo while that document is between mutations.
+        for (const kind of ['name', 'clones']) {
+            const originalGenes = [4, 5, 6, 1, 2, 3, 4]
+            const originalName = 'Shared tab original'
+            const key = kind === 'name' ? 'bakeryNameRecovery' : 'cloneRecovery'
+            await page.evaluate(
+                ({ originalGenes, originalName }) => {
+                    Game.ClosePrompt()
+                    Game.Objects.You.amount = 1
+                    Game.bakeryName = originalName
+                    Game.bakeryNameRefresh()
+                    Game.YouCustomizer.load(originalGenes.join(','))
+                    Game.WriteSave()
+                },
+                { originalGenes, originalName }
+            )
+            await isolated('Alakazam.registry.get("saveWatch").tick()')
+            const other = await context.newPage()
+            const otherCdp = await context.newCDPSession(other)
+            let otherWorld
+            otherCdp.on('Runtime.executionContextCreated', ({ context }) => {
+                if (context.origin === `chrome-extension://${id}`) otherWorld = context
+            })
+            await otherCdp.send('Runtime.enable')
+            await openGame(other)
+            await expect.poll(() => Boolean(otherWorld)).toBe(true)
+            const otherIsolated = async expression => {
+                const result = await otherCdp.send('Runtime.evaluate', {
+                    contextId: otherWorld.id,
+                    expression,
+                    awaitPromise: true,
+                    returnByValue: true
+                })
+                if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
+                return result.result.value
+            }
+            await expect.poll(() => otherIsolated('Boolean(Alakazam.store.isReady())')).toBe(true)
+            await isolated(`(() => {
+                const kind = ${JSON.stringify(kind)}
+                const wait = Alakazam.safety.wait
+                const flush = Alakazam.store.flush
+                let writes = 0
+                Alakazam.safety.wait = async (owner, ms) => {
+                    if (kind === 'name' && owner === 'achievements' && ms === 600)
+                        await new Promise(resolve => window.releaseSharedMutation = resolve)
+                    else await wait(owner, ms)
+                }
+                Alakazam.store.flush = async () => {
+                    const ok = await flush()
+                    if (kind === 'clones' && ++writes === 5)
+                        await new Promise(resolve => window.releaseSharedMutation = resolve)
+                    return ok
+                }
+                window.pendingSharedMutation = Alakazam.safety.run(
+                    { name: kind === 'name' ? 'achievements' : 'clones', always: true },
+                    () => kind === 'name' ? Alakazam.achievements.godComplex() : Alakazam.clones.tick()
+                )
+                return true
+            })()`)
+            await expect.poll(() => isolated('typeof window.releaseSharedMutation')).toBe('function')
+            const current = () =>
+                page.evaluate(
+                    kind => (kind === 'name' ? Game.bakeryName : Game.YouCustomizer.currentGenes),
+                    kind
+                )
+            expect(await current()).not.toEqual(kind === 'name' ? originalName : originalGenes)
+            await expect
+                .poll(() => otherIsolated(`Boolean(Alakazam.store.get(${JSON.stringify(key)}, null))`))
+                .toBe(true)
+            for (let attempt = 0; attempt < 2; attempt++) {
+                await otherIsolated(
+                    kind === 'name' ? 'Alakazam.achievements.recoverName()' : 'Alakazam.clones.recover()'
+                )
+                await otherIsolated('Alakazam.store.flush()')
+                expect(
+                    await otherIsolated(`Boolean(Alakazam.store.get(${JSON.stringify(key)}, null))`)
+                ).toBe(true)
+                expect(await isolated(`Boolean(Alakazam.store.get(${JSON.stringify(key)}, null))`)).toBe(
+                    true
+                )
+            }
+            // Autosave the temporary value, then destroy A without releasing
+            // its old task. Recovery must survive in the replacement document.
+            await page.evaluate(() => Game.WriteSave())
+            await page.reload()
+            await otherIsolated(
+                kind === 'name' ? 'Alakazam.achievements.recoverName()' : 'Alakazam.clones.recover()'
+            )
+            expect(
+                await otherIsolated(`Boolean(Alakazam.store.get(${JSON.stringify(key)}, null))`)
+            ).toBe(true)
+            await page.waitForFunction(() => window.Game?.ready)
+            await expect
+                .poll(() => {
+                    world = [...worlds.values()].find(
+                        value => value.origin === `chrome-extension://${id}`
+                    )
+                    return Boolean(world)
+                })
+                .toBe(true)
+            await expect.poll(() => isolated('Boolean(Alakazam.store.isReady())')).toBe(true)
+            await isolated(
+                kind === 'name' ? 'Alakazam.achievements.recoverName()' : 'Alakazam.clones.recover()'
+            )
+            await expect.poll(current).toEqual(kind === 'name' ? originalName : originalGenes)
+            await other.close()
+        }
+
         await context.close()
         context = await launch()
         const reopened = await context.newPage()
