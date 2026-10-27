@@ -488,6 +488,198 @@ test('a stale save is not mistaken for a fresh run worth ascending', async () =>
     assert.equal(h.debug().ascend.waitingForSave, true)
 })
 
+//! Export identity & interrupted ascensions
+
+function variantAscent(key, opts = {}) {
+    const raw = fx.save({ cookiesEarned: S.cookiesFor(365), ...opts.save }).raw
+    const localStorage = fx.storage({
+        CookieClickerGame: fx.save({ fullDate: 1700000000000, seed: 'other-live' }).raw,
+        CookieClickerGameBeta: fx.save({ fullDate: 1710000000000, seed: 'other-beta' }).raw,
+        [key]: raw
+    })
+    return boot({
+        save: raw,
+        localStorage,
+        location: {
+            pathname: '/cookieclicker/' + (key.endsWith('Beta') ? 'beta/' : '')
+        },
+        game: opts.game,
+        disk: opts.disk
+    })
+}
+
+for (const key of ['CookieClickerGame', 'CookieClickerGameBeta']) {
+    test(`${key} zero-hoard export permits ascent with both variants saved`, async () => {
+        const h = variantAscent(key)
+        await pump(h, 3)
+        assert.equal(h.A.act.ascend.onAscendScreen(), true)
+        assert.equal(h.A.save.get().key, key)
+        assert.equal(h.A.safety.prompt(), null)
+    })
+
+    test(`${key} valuable live hoard blocks loans and ascent until collected`, async () => {
+        const h = variantAscent(key, { game: { officeLevel: 5 } })
+        h.game.state.wrinklerHoard = 5e15
+        h.game.state.wrinklers = 8
+        await pump(h, 3)
+        assert.match(h.debug().ascend.blocked, /Collect/)
+        assert.equal(h.debug().ascend.wrinklerHoard, 5e15)
+        assert.equal(h.game.state.loansTaken.length, 0)
+        assert.equal(h.A.act.ascend.onAscendScreen(), false)
+        h.game.state.wrinklerHoard = 0
+        h.game.state.wrinklers = 0
+        await h.A.registry.get('ascend').tick()
+        await h.A.registry.get('ascend').tick()
+        assert.equal(h.game.state.loansTaken.length, 1)
+    })
+
+    test(`${key} rejects the other variant's unrelated export`, async () => {
+        const h = variantAscent(key, { game: { officeLevel: 5 } })
+        const other = key.endsWith('Beta') ? 'CookieClickerGame' : 'CookieClickerGameBeta'
+        h.game.state.exportSave = () => h.ctx.localStorage.getItem(other)
+        await pump(h, 3)
+        assert.equal(h.game.state.loansTaken.length, 0)
+        assert.equal(h.A.act.ascend.onAscendScreen(), false)
+        assert.match(h.debug().ascend.blocked, /verify/)
+        assert.equal(h.A.safety.prompt(), null)
+    })
+
+    test(`${key} rechecks a newly valuable hoard before confirming ascent`, async () => {
+        const h = variantAscent(key)
+        await pump(h, 2)
+        assert.equal(h.A.safety.prompt().id, 'promptContentAscend')
+        h.game.state.wrinklerHoard = 5e15
+        h.game.state.wrinklers = 1
+        await h.A.registry.get('ascend').tick()
+        assert.equal(h.debug().ascend.hoardBlocked, true)
+        assert.equal(h.A.act.ascend.onAscendScreen(), false)
+        assert.equal(h.A.safety.prompt(), null)
+    })
+}
+
+async function heavenlyReload({ key = 'CookieClickerGame', phase = 'shopping', hoard = 0 } = {}) {
+    const disk = {}
+    const first = variantAscent(key, { disk })
+    await first.A.save.connect()
+    for (let i = 0; i < 4; i++) await first.A.registry.get('ascend').tick()
+    assert.equal(first.A.act.ascend.onAscendScreen(), true)
+    assert.equal(first.A.ascend.state().phase, 'shopping')
+    assert.equal(first.A.store.get('ascendAwaitReset', null), 0)
+    if (phase !== 'shopping') first.A.store.set('ascendPhase', phase)
+    await first.A.store.flush()
+
+    // A real interrupted heavenly reload restores the old saved run in play.
+    const h = variantAscent(key, { disk })
+    h.game.state.wrinklerHoard = hoard
+    h.game.state.wrinklers = hoard ? 1 : 0
+    await h.A.save.connect()
+    return h
+}
+
+for (const key of ['CookieClickerGame', 'CookieClickerGameBeta']) {
+    for (const phase of ['shopping', 'watching', 'returning', 'ascending']) {
+        test(`${key} reload recovers pending reset zero from ${phase} with unchanged live run`, async () => {
+            const h = await heavenlyReload({ key, phase })
+            const mod = h.A.registry.get('ascend')
+            await mod.tick()
+            assert.equal(h.A.store.get('ascendAwaitReset', null), null)
+            assert.equal(h.A.ascend.state().phase, 'loans')
+            assert.equal(h.debug().ascend.waitingForSave, undefined)
+            await mod.tick()
+            await mod.tick()
+            assert.equal(h.A.act.ascend.onAscendScreen(), true)
+        })
+    }
+}
+
+test('interrupted recovery clears the marker without discarding a valuable hoard', async () => {
+    const h = await heavenlyReload({ hoard: 5e15 })
+    await h.A.registry.get('ascend').tick()
+    assert.equal(h.A.store.get('ascendAwaitReset', null), null)
+    assert.equal(h.A.ascend.state().phase, 'ready')
+    assert.equal(h.debug().ascend.hoardBlocked, true)
+    assert.match(h.debug().ascend.blocked, /Collect/)
+    assert.equal(h.A.act.ascend.onAscendScreen(), false)
+})
+
+test('interrupted recovery waits for the player prompt and then verifies the unchanged run', async () => {
+    const h = await heavenlyReload()
+    h.game.prompt('ImportSave', [['Load'], ['Cancel']])
+    const playerPrompt = h.A.safety.prompt()
+    await h.A.registry.get('ascend').tick()
+    assert.equal(h.A.safety.prompt(), playerPrompt)
+    assert.equal(h.A.store.get('ascendAwaitReset', null), 0)
+    assert.equal(h.game.state.log.includes('prompt Ascend'), false)
+    h.game.closePrompt()
+    await h.A.registry.get('ascend').tick()
+    assert.equal(h.A.store.get('ascendAwaitReset', null), null)
+    assert.equal(h.A.ascend.state().phase, 'loans')
+})
+
+for (const changed of [
+    { seed: 'different-run' },
+    { startDate: 1750000002000 },
+    { lastDate: 1000 },
+    { driftedScalars: true }
+]) {
+    test(`interrupted recovery retains its marker for unproven live run ${JSON.stringify(changed)}`, async () => {
+        const h = await heavenlyReload({ phase: 'watching' })
+        h.game.state.exportSave = () => fx.save({ cookiesEarned: S.cookiesFor(365), ...changed }).raw
+        for (let i = 0; i < 3; i++) await h.A.registry.get('ascend').tick()
+        assert.equal(h.A.store.get('ascendAwaitReset', null), 0)
+        assert.equal(h.debug().ascend.waitingForSave, true)
+        assert.equal(h.game.state.log.includes('prompt Ascend'), false)
+        assert.equal(h.A.safety.prompt(), null)
+    })
+}
+
+test('a restored heavenly sequence completes once and keeps waiting for its reset save', async () => {
+    const h = await heavenlyReload()
+    h.game.setMode('ascending')
+    h.game.drawTree()
+    for (let i = 0; i < 15; i++) await h.A.registry.get('ascend').tick()
+    assert.equal(h.game.state.log.filter(line => line === 'reincarnated').length, 1)
+    assert.equal(h.game.state.log.includes('prompt Ascend'), false)
+    assert.equal(h.A.store.get('ascendAwaitReset', null), 0)
+    assert.equal(h.debug().ascend.waitingForSave, true)
+})
+
+test('completed reincarnation after reload waits for its save despite the old ready run', async () => {
+    const disk = {}
+    const first = variantAscent('CookieClickerGame', { disk })
+    await first.A.save.connect()
+    for (let i = 0; i < 15; i++) await first.A.registry.get('ascend').tick()
+    assert.equal(first.game.state.log.filter(line => line === 'reincarnated').length, 1)
+    assert.equal(first.A.store.get('ascendAwaitReset', null), 0)
+    assert.equal(first.A.ascend.state().phase, 'watching')
+    await first.A.store.flush()
+    const h = variantAscent('CookieClickerGame', { disk })
+    await h.A.save.connect()
+    const mod = h.A.registry.get('ascend')
+    // The disk still describes the ready old run; only the fresh export sees the reset.
+    const completed = {
+        cookies: 0,
+        cookiesEarned: 0,
+        cookiesReset: S.cookiesFor(365),
+        resets: 1,
+        seed: 'reincarnated',
+        startDate: Date.now()
+    }
+    h.game.state.exportSave = () => fx.save(completed).raw
+    for (let i = 0; i < 8; i++) await mod.tick()
+    assert.equal(h.debug().ascend.waitingForSave, true)
+    assert.equal(h.A.store.get('ascendAwaitReset', null), 0)
+    assert.equal(h.game.state.log.includes('prompt Ascend'), false)
+
+    h.ctx.localStorage.setItem('CookieClickerGame', fx.save(completed).raw)
+    await h.A.registry.get('saveWatch').tick()
+    await mod.tick()
+    assert.equal(h.A.store.get('ascendAwaitReset', null), null)
+    assert.equal(h.debug().ascend.waitingForSave, undefined)
+    assert.equal(h.A.ascend.state().phase, 'watching')
+    await h.A.store.flush()
+})
+
 test('heavenly upgrades are bought in the guide order', async () => {
     const state = await pump(ascender())
     const order = state.log.filter(l => l.indexOf('heavenly ') === 0).map(l => l.slice(9))
@@ -640,7 +832,7 @@ test('a permanent slot with nothing worth taking is left empty', async () => {
     assert.ok(state.log.indexOf('reincarnated') !== -1)
 })
 
-test('crate names are cached so a second ascension costs no hovers', async () => {
+test('cached crate names avoid naming hovers on a second shopping pass', async () => {
     const disk = {}
     const first = boot({
         save: ascendSave({ earned: S.cookiesFor(365) }),
@@ -661,7 +853,14 @@ test('crate names are cached so a second ascension costs no hovers', async () =>
     })
     await second.A.store.ready('t')
     const before = second.A.catalog.stats().hovers
-    await pump(second)
+    // Stop after shopping: the later permanent-slot audit deliberately hovers
+    // owned crates for their live contents, even when their names are cached.
+    await pump(second, 5)
+    assert.deepEqual(second.game.state.heavenlyBought, [
+        'Legacy',
+        'Heavenly cookies',
+        'How to bake your dragon'
+    ])
     assert.equal(second.A.catalog.stats().hovers, before, 'named every crate from the cache')
 })
 

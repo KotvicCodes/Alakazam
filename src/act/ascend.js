@@ -132,6 +132,9 @@
             if (!field) return null
             const { savefile, identity } = window.Alakazam
             const snapshot = savefile.parse(savefile.decode(field.value))
+            // Exports carry no storage key. They came from this page's UI, so
+            // use its selected variant before deriving the family/run identity.
+            snapshot.key = snapshot.key || savefile.selectedKey()
             const who = identity.fromSave(snapshot)
             const current = identity.current()
             if (
@@ -154,6 +157,7 @@
             return {
                 at: requestedAt,
                 runId: who.runId,
+                resets: s.resets,
                 hoard: s.wrinklersAmount + s.wrinklersShinyAmount,
                 active: s.wrinklersNumber + s.wrinklersShiny
             }

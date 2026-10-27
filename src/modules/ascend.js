@@ -108,6 +108,11 @@
     // what is being read is the new run rather than an echo of the old one.
     let awaitingReset = null
 
+    // A reload may restore play from the save made before reaching heaven.
+    // Only a restored marker can be reconsidered; an observed return in this
+    // document must still wait for the completed reset's save.
+    let verifyInterrupted = false
+
     // crates whose name could not be read, or that were clicked without the chip
     // count moving. either way there is no point going back to them this visit.
     let skipped = new Set()
@@ -158,11 +163,13 @@
     function awaitReset(count) {
         if (awaitingReset !== null) return
         awaitingReset = count
+        verifyInterrupted = false
         store.set('ascendAwaitReset', count)
     }
 
     function clearAwait() {
         awaitingReset = null
+        verifyInterrupted = false
         store.forget('ascendAwaitReset')
     }
 
@@ -745,6 +752,31 @@
 
         // an ascension has happened and the save has not admitted it yet
         if (awaitingReset !== null && s.ascensions > awaitingReset) clearAwait()
+
+        if (verifyInterrupted && awaitingReset !== null) {
+            if (act.screen() !== 'playing') {
+                // Once this document has seen the sequence in progress, returning
+                // to play can mean a real reincarnation. Keep the anti-echo wait.
+                verifyInterrupted = false
+            } else {
+                const evidence = act.liveHoard()
+                const savedRun = window.Alakazam.identity.fromSave(save.get())
+                if (
+                    !evidence ||
+                    evidence.resets !== awaitingReset ||
+                    evidence.runId !== savedRun.runId
+                ) {
+                    window.__alakazam.ascend = { ...s, phase, waitingForSave: true }
+                    return
+                }
+                // Fresh live identity, including seed/start date/reset count,
+                // proves the old saved run is still playing. Replan from scratch;
+                // this grants no consent to discard its hoard or confirm a prompt.
+                clearAwait()
+                setPhase('watching')
+                decision = null
+            }
+        }
         const echo = awaitingReset !== null && phase === 'watching'
 
         // the target coming and going is a real transition, not noise: production
@@ -797,12 +829,14 @@
             ['ascending', 'shopping', 'returning'].includes(phase)
         ) {
             awaitingReset = null
+            verifyInterrupted = false
             store.set('ascendPhase', phase)
             return
         }
         phase = 'watching'
         announced = false
         awaitingReset = null
+        verifyInterrupted = false
         skipped = new Set()
         bought = []
         taken = []
@@ -817,7 +851,8 @@
         const saved = store.get('ascendPhase', 'watching')
         if (PHASES.indexOf(saved) !== -1) phase = saved
         const pending = store.get('ascendAwaitReset', null)
-        if (typeof pending === 'number') awaitingReset = pending
+        awaitingReset = typeof pending === 'number' ? pending : null
+        verifyInterrupted = awaitingReset !== null
     }
 
     registry.register({ name: 'ascend', interval: INTERVAL_MS, setup, reset, tick })
