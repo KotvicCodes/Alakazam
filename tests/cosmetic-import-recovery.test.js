@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const { boot } = require('./harness')
 const { El } = require('./dom')
 const fx = require('./fixtures')
+const { clock } = require('./clock')
 
 const ORIGINAL = [4, 5, 6, 1, 2, 3, 4]
 const KEY = { clones: 'cloneRecovery', name: 'bakeryNameRecovery' }
@@ -393,6 +394,7 @@ for (const replacement of ['family', 'run', 'same run']) {
             h.A.store.flush = flush
         }
         assert.equal(importedOnce, true)
+        assert.equal(h.A.safety.prompt(), null, 'dismiss the still-owned customizer after import')
         assert.deepEqual(h.game.state.genes, genes)
         assert.equal(h.game.state.bakeryName, 'Orteil')
         assert.deepEqual(plain(h.A.store.get(KEY.clones)), mark)
@@ -442,6 +444,7 @@ for (const replacement of ['family', 'run']) {
                 h.ctx.setTimeout = timer
                 h.A.store.flush = flush
             }
+            assert.equal(h.A.safety.prompt(), null, 'dismiss the still-owned name prompt after import')
             assert.equal(h.game.state.bakeryName, 'Orteil')
             assert.deepEqual(h.game.state.genes, [6, 5, 6, 1, 2, 3, 4])
             assert.deepEqual(plain(h.A.store.get(KEY.name, null)), mark)
@@ -523,3 +526,187 @@ test('clone restoration rechecks a file completion after awaiting an already mat
     assert.deepEqual(plain(h.A.store.get(KEY.clones)), mark)
     assert.equal(h.ctx.localStorage.getItem('CookieClickerGame'), raw)
 })
+
+for (const kind of ['name', 'clones']) {
+    for (const invalid of ['unavailable', 'malformed', 'unknown', 'stale', 'future']) {
+        test(`${kind} retries a transient ${invalid} export after the cooldown without a DOM or identity change`, async () => {
+            const { h, raw } = await restored(kind)
+            const time = clock(Date.now())
+            h.ctx.Date = time.Date
+            importFile(h, raw)()
+            const label = h.game.doc.getElementById('bakeryName').firstChild
+            const who = plain(h.A.identity.current())
+            const importedName = h.game.state.bakeryName
+            const importedGenes = h.game.state.genes.slice()
+            const mark = plain(h.A.store.get(KEY[kind]))
+            let fresh = false
+            let exports = 0
+            h.game.state.exportSave = () => {
+                exports++
+                if (!fresh && invalid === 'malformed') return 'not a save'
+                const sections = h.A.savefile.decode(liveExport(h, raw)).split('|')
+                const run = sections[2].split(';')
+                run[2] = String(time.now())
+                if (!fresh) {
+                    if (invalid === 'unknown') run[4] = ''
+                    else run[2] = String(time.now() + (invalid === 'stale' ? -10000 : 10000))
+                }
+                sections[2] = run.join(';')
+                return fx.encode(sections.join('|'))
+            }
+            const prefs = h.game.doc.getElementById('prefsButton')
+            if (invalid === 'unavailable') prefs.id = 'missingPrefsButton'
+            await recover(h, kind)
+            prefs.id = 'prefsButton'
+            const firstExports = invalid === 'unavailable' ? 0 : 1
+            assert.equal(exports, firstExports)
+            assert.equal(h.A.safety.prompt(), null)
+            assert.deepEqual(plain(h.A.store.get(KEY[kind])), mark)
+            assert.equal(h.game.state.bakeryName, importedName)
+            assert.deepEqual(h.game.state.genes, importedGenes)
+            fresh = true
+            // A normal autosave changes storage without changing live identity or label.
+            autosave(h)
+            assert.deepEqual(plain(h.A.identity.current()), who)
+            time.advance(4999)
+            await recover(h, kind)
+            await recover(h, kind)
+            assert.equal(exports, firstExports, 'do not retry before the interval')
+            assert.deepEqual(plain(h.A.store.get(KEY[kind])), mark)
+            assert.equal(h.game.doc.getElementById('bakeryName').firstChild, label)
+            time.advance(1)
+            const result = kind === 'name' ? h.A.achievements.recoverName() : h.A.clones.recover()
+            if (kind === 'name') assert.equal(result, true, 'recoverName stays synchronous')
+            await result
+            assert.equal(exports, firstExports + 1)
+            assertOriginal(h, kind)
+            assert.equal(h.A.safety.prompt(), null)
+            assert.ok(h.A.store.get(KEY[kind]), 'retain recovery until a restored autosave')
+            autosave(h)
+            await recover(h, kind)
+            assert.equal(h.A.store.get(KEY[kind], null), null)
+        })
+    }
+
+    test(`${kind} caches a concrete mismatch beyond the transient retry interval`, async () => {
+        const { h } = await restored(kind)
+        const time = clock(Date.now())
+        h.ctx.Date = time.Date
+        const imported = fx.save({
+            fullDate: 1750000009000,
+            amounts: { 19: 1 },
+            appearance: '6,5,6,1,2,3,4',
+            bakeryName: 'Orteil'
+        }).raw
+        importFile(h, imported)()
+        const mark = plain(h.A.store.get(KEY[kind]))
+        let exports = 0
+        h.game.state.exportSave = () => {
+            exports++
+            const sections = h.A.savefile.decode(liveExport(h, imported)).split('|')
+            const run = sections[2].split(';')
+            run[2] = String(time.now())
+            sections[2] = run.join(';')
+            return fx.encode(sections.join('|'))
+        }
+        await recover(h, kind)
+        for (let i = 0; i < 3; i++) {
+            time.advance(6000)
+            await recover(h, kind)
+        }
+        assert.equal(exports, 1, 'a known mismatch must not reopen export on each retry interval')
+        assert.deepEqual(plain(h.A.store.get(KEY[kind])), mark)
+        assert.equal(h.game.state.bakeryName, 'Orteil')
+        assert.deepEqual(h.game.state.genes, [6, 5, 6, 1, 2, 3, 4])
+        assert.equal(h.A.safety.prompt(), null)
+    })
+}
+
+for (const phase of [
+    'name menu',
+    'name journal',
+    'clone journal',
+    'clone tick journal',
+    'clone new journal'
+]) {
+    for (const promptState of ['owned', 'foreign', 'replacement', 'player']) {
+        test(`${phase} import abort ${promptState === 'owned' ? 'dismisses its own prompt' : `preserves a ${promptState} prompt`}`, async () => {
+            const kind = phase.startsWith('name') ? 'name' : 'clones'
+            const { h, raw } =
+                kind === 'clones' && phase !== 'clone new journal'
+                    ? await restored(kind)
+                    : { h: await ready() }
+            if (raw) importFile(h, raw)()
+            const imported = fx.save({
+                fullDate: 1750000009000,
+                amounts: { 19: 1 },
+                appearance: '2,4,1,0,3,5,7',
+                bakeryName: 'Imported bakery'
+            }).raw
+            const complete = importFile(h, imported)
+            let mark
+            let heldPrompt
+            let loaded = false
+            let answered = 0
+            const load = () => {
+                if (loaded) return
+                loaded = true
+                mark = plain(h.A.store.get(KEY[kind], null))
+                complete()
+                heldPrompt = h.A.safety.prompt()
+                if (promptState === 'foreign' || promptState === 'replacement') {
+                    const name =
+                        promptState === 'foreign'
+                            ? 'WipeSave'
+                            : kind === 'name'
+                              ? 'NameBakery'
+                              : 'CustomizeYou'
+                    h.game.prompt(name, [
+                        ['Confirm', () => answered++],
+                        ['Other', () => answered++],
+                        ['Cancel', () => answered++]
+                    ])
+                    heldPrompt = h.A.safety.prompt()
+                } else if (promptState === 'player') {
+                    h.game.doc.fire('pointerdown', { isTrusted: true, target: heldPrompt })
+                }
+            }
+            const flush = h.A.store.flush
+            h.A.store.flush = async () => {
+                const ok = await flush()
+                if (phase.endsWith('journal')) load()
+                return ok
+            }
+            const timer = h.ctx.setTimeout
+            h.ctx.setTimeout = (fn, ms, ...args) => {
+                if (ms === 350 || ms === 600) {
+                    if (phase === 'name menu' && ms === 350) load()
+                    return fn()
+                }
+                return timer(fn, ms, ...args)
+            }
+            try {
+                if (kind === 'name')
+                    await h.A.safety.run({ name: 'achievements' }, () => h.A.achievements.godComplex())
+                else await recover(h, kind, phase === 'clone journal' ? 'recovery' : 'tick')
+            } finally {
+                h.A.store.flush = flush
+                h.ctx.setTimeout = timer
+            }
+            assert.equal(loaded, true)
+            assert.equal(h.A.safety.prompt(), promptState === 'owned' ? null : heldPrompt)
+            assert.equal(answered, 0)
+            assert.equal(h.game.state.bakeryName, 'Imported bakery')
+            assert.deepEqual(h.game.state.genes, [2, 4, 1, 0, 3, 5, 7])
+            // Trusted player input may mark the journal as intervened, but never consumes it.
+            const expected =
+                promptState === 'player' && kind === 'clones' ? { ...mark, intervened: true } : mark
+            assert.deepEqual(plain(h.A.store.get(KEY[kind], null)), expected)
+            await h.A.store.flush()
+            if (mark) {
+                const key = h.A.store.fieldKey('legacy:' + mark.legacyId, KEY[kind])
+                assert.deepEqual(h.disk[key].value, expected)
+            }
+        })
+    }
+}

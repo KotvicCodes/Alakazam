@@ -56,6 +56,22 @@
         )
     }
 
+    // Cosmetic guards may abort while the task is still active. Dismiss only
+    // its exact original prompt; imports can leave it up, while trusted input
+    // or a replacement prompt forfeits ownership. These options never commit edits.
+    function dismissCosmeticPrompt(ctx, node) {
+        const name = ctx.owner === 'achievements' ? 'NameBakery' : 'CustomizeYou'
+        if (
+            !['achievements', 'clones'].includes(ctx.owner) ||
+            !node ||
+            prompt() !== node ||
+            !ownsPrompt(ctx.owner, name)
+        )
+            return
+        const option = document.getElementById('promptOption' + (name === 'NameBakery' ? 2 : 0))
+        if (option) ctx.cleanup(() => ctx.input('simulateClick', option))
+    }
+
     function acquire(resource, owner) {
         if (leases.has(resource)) return null
         const lease = { owner, revision: revision(resource) }
@@ -253,11 +269,13 @@
     }
 
     let cosmeticIdentityProof = null
+    const COSMETIC_RETRY_MS = 5000
 
     // Autosave identity can lag a file load. A fresh DOM export must agree with
     // it before recovery may consume a journal, including discarding one for a
-    // newer player choice. Cache refusals too, until either identity or the live
-    // label changes, so an unavailable/mismatched export never thrashes prompts.
+    // newer player choice. Concrete mismatches stay cached until identity or
+    // the live label changes. Unavailable/stale exports retry after a cooldown:
+    // WriteSave(1) can temporarily reuse a snapshot when Game.time is throttled.
     function cosmeticIdentity(ctx, who) {
         const { identity, savefile, act } = window.Alakazam
         const current = () => {
@@ -265,7 +283,11 @@
             return live.known && live.runId === who.runId && live.legacyId === who.legacyId
         }
         if (!who.known || !current()) return null
-        if (cosmeticIdentityProof?.valid()) return cosmeticIdentityProof.proven
+        if (
+            cosmeticIdentityProof?.valid() &&
+            (cosmeticIdentityProof.retryAt === null || Date.now() < cosmeticIdentityProof.retryAt)
+        )
+            return cosmeticIdentityProof.proven
         if (prompt()) return null
         const unchanged = cosmeticCheck()
         const key = savefile.selectedKey()
@@ -276,7 +298,11 @@
             valid() && live.known && live.runId === who.runId && live.legacyId === who.legacyId
                 ? valid
                 : null
-        cosmeticIdentityProof = { valid, proven }
+        cosmeticIdentityProof = {
+            valid,
+            proven,
+            retryAt: live.known ? null : Date.now() + COSMETIC_RETRY_MS
+        }
         return proven
     }
 
@@ -359,6 +385,7 @@
         acquire,
         prompt,
         ownsPrompt,
+        dismissCosmeticPrompt,
         invalidate,
         pause,
         resume,

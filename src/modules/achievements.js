@@ -218,6 +218,7 @@
         if (!safety.cosmeticIdentity(ctx, who)) return false
         let unchanged = safety.cosmeticCheck()
         simulateClick(document.getElementById('bakeryName'))
+        const ownedPrompt = safety.prompt()
         try {
             await wait(MENU_MS)
             if (!unchanged() || !safety.ownsPrompt('achievements', 'NameBakery')) return false
@@ -239,7 +240,11 @@
             await wait(600)
             return true
         } finally {
-            recoverName(who.runId, unchanged)
+            try {
+                recoverName(who.runId, unchanged)
+            } finally {
+                safety.dismissCosmeticPrompt(ctx, ownedPrompt)
+            }
         }
     }
 

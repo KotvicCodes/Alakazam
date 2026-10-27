@@ -244,34 +244,39 @@
             simulateClick(button)
         }
         if (!safety.ownsPrompt('clones', 'CustomizeYou')) return
-        if (mark) {
-            await ctx.cleanup(() => restore(mark, ctx, who.runId, unchanged))
-            return
-        }
-        const original = currentGenes()
-        if (!original) return
-        // the save's appearance can be minutes old; only the open customizer is live
-        store.set(THEIRS_KEY, original.slice())
-        mark = {
-            legacyId: who.legacyId,
-            original: original.slice(),
-            expected: original.slice(),
-            previous: original.slice(),
-            history: [original.slice()]
-        }
-        store.set(RECOVERY_KEY, { ...mark })
+        const ownedPrompt = safety.prompt()
         try {
-            if (!(await store.flush().catch(() => false))) return false
-            ctx.check()
-            const budget = { left: MAX_CLICKS }
-            if (!(await walk(LIKENESS, budget, ctx, mark, who.runId, unchanged))) return
-            // the game checks this achievement only inside an arrow handler
-            if (!(await move(FREE_GENE, 1, ctx, mark, who.runId, unchanged))) return
-            if (!(await move(FREE_GENE, -1, ctx, mark, who.runId, unchanged))) return
-            mark.earned = true
+            if (mark) {
+                await ctx.cleanup(() => restore(mark, ctx, who.runId, unchanged))
+                return
+            }
+            const original = currentGenes()
+            if (!original) return
+            // the save's appearance can be minutes old; only the open customizer is live
+            store.set(THEIRS_KEY, original.slice())
+            mark = {
+                legacyId: who.legacyId,
+                original: original.slice(),
+                expected: original.slice(),
+                previous: original.slice(),
+                history: [original.slice()]
+            }
             store.set(RECOVERY_KEY, { ...mark })
+            try {
+                if (!(await store.flush().catch(() => false))) return false
+                ctx.check()
+                const budget = { left: MAX_CLICKS }
+                if (!(await walk(LIKENESS, budget, ctx, mark, who.runId, unchanged))) return
+                // the game checks this achievement only inside an arrow handler
+                if (!(await move(FREE_GENE, 1, ctx, mark, who.runId, unchanged))) return
+                if (!(await move(FREE_GENE, -1, ctx, mark, who.runId, unchanged))) return
+                mark.earned = true
+                store.set(RECOVERY_KEY, { ...mark })
+            } finally {
+                await ctx.cleanup(() => restore(mark, ctx, who.runId, unchanged))
+            }
         } finally {
-            await ctx.cleanup(() => restore(mark, ctx, who.runId, unchanged))
+            safety.dismissCosmeticPrompt(ctx, ownedPrompt)
         }
     }
 
@@ -288,7 +293,12 @@
             const unchanged = safety.cosmeticIdentity(ctx, who)
             if (!unchanged) return
             ctx.input('simulateClick', customizeButton())
-            await restore(mark, ctx, who.runId, unchanged)
+            const ownedPrompt = safety.prompt()
+            try {
+                await restore(mark, ctx, who.runId, unchanged)
+            } finally {
+                safety.dismissCosmeticPrompt(ctx, ownedPrompt)
+            }
         })
     }
 
