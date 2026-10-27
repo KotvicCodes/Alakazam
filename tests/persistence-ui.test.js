@@ -8,8 +8,8 @@ const { El } = require('./dom')
 const { storageFixture } = require('./storage')
 const fx = require('./fixtures')
 
-async function popupScene() {
-    const storage = storageFixture()
+async function popupScene({ paused = false, runtimeAvailable = false } = {}) {
+    const storage = storageFixture(paused ? { settings: { enabled: false } } : {})
     const tab = boot({ storage, save: fx.save().raw })
     await tab.A.store.ready('game')
     const popup = boot({ storage })
@@ -38,6 +38,19 @@ async function popupScene() {
     const snapshot = { ...tab.A.status.snapshot(), tabId: 1 }
     storage.disk['status:tab:1'] = snapshot
     popup.ctx.chrome.runtime.getManifest = () => ({ version: 'test' })
+    const runtimeMessages = []
+    if (runtimeAvailable) {
+        // The real worker ignores journal messages from a popup: its sender has
+        // no tab/document identity, and Chrome closes the unanswered message port.
+        popup.ctx.chrome.runtime.sendMessage = (message, callback) => {
+            runtimeMessages.push(message)
+            popup.ctx.chrome.runtime.lastError = {
+                message: 'The message port closed before a response was received.'
+            }
+            callback()
+            delete popup.ctx.chrome.runtime.lastError
+        }
+    }
     popup.ctx.chrome.tabs = {
         query: (options, callback) =>
             callback([{ id: 1, url: 'https://orteil.dashnet.org/cookieclicker/' }]),
@@ -47,17 +60,42 @@ async function popupScene() {
     popup.ctx.setInterval = fn => ((periodic = fn), 0)
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'popup.js'), 'utf8'), popup.ctx)
     doc.fire('DOMContentLoaded', {})
-    assert.ok(await waitFor(() => doc.getElementById('identity').textContent.includes('Tab 1')))
+    assert.ok(
+        await waitFor(
+            () =>
+                doc.getElementById('identity').textContent.includes('Tab 1') ||
+                (runtimeAvailable &&
+                    doc.getElementById('error').textContent.includes('message port closed'))
+        )
+    )
     return {
         storage,
         tab,
         popup,
         doc,
+        runtimeMessages,
         refresh: () => periodic(),
         retry: () => doc.getElementById('refreshBtn').listeners.click[0](),
         toggle: key => doc.querySelector(`[data-key="${key}"]`).listeners.click[0]()
     }
 }
+
+test('popup loads paused settings and resumes without sending game-document journal messages', async () => {
+    const p = await popupScene({ paused: true, runtimeAvailable: true })
+    const pause = p.doc.getElementById('pauseBtn')
+    assert.equal(pause.textContent, 'Resume automation')
+    assert.equal(p.popup.A.store.isReady(), true)
+    assert.equal(p.popup.A.store.error(), '')
+    assert.equal(p.doc.getElementById('error').hidden, true)
+    await pause.listeners.click[0]()
+    assert.equal(pause.textContent, 'Pause automation')
+    assert.equal(p.tab.A.store.setting('enabled'), true)
+    assert.equal(p.storage.disk[p.popup.A.store.fieldKey('settings', 'enabled')].value, true)
+    p.tab.A.store.setSetting('enabled', false)
+    await p.tab.A.store.flush()
+    assert.equal(pause.textContent, 'Resume automation')
+    assert.deepEqual(p.runtimeMessages, [])
+})
 
 test('popup retains failed settings errors across successful status reads until a durable retry', async () => {
     const p = await popupScene()

@@ -198,9 +198,12 @@
         // The scheduler has drained old actions before this lifecycle boundary.
         // Invalidate an earlier unrelated scope immediately, even if this read
         // queues behind another load. Unknown/quarantined saves never release it.
-        const announcement = mediatedRecovery()
-            ? journalMessage({ operation: 'namespace', scope: null, version, settled: false })
-            : null
+        // String namespaces also serve settings-only clients such as the popup;
+        // only structured save identities participate in document ownership.
+        const announcement =
+            who && mediatedRecovery()
+                ? journalMessage({ operation: 'namespace', scope: null, version, settled: false })
+                : null
         if (announcement) void announcement.catch(() => {}) // request below reports/rethrows
         if (who && (!who.known || target !== namespace)) {
             // This must happen before the read: a failed/delayed load must never
@@ -255,7 +258,7 @@
                 if (version === loadVersion) {
                     namespace = target
                     runNamespace = runTarget
-                    if (mediatedRecovery())
+                    if (announcement)
                         await journalMessage({
                             operation: 'namespace',
                             scope: who?.known ? target : null,
