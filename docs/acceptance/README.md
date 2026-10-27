@@ -40,6 +40,10 @@ active cosmetic undo journal. Journal claims and writes now pass through the
 extension worker and belong to a browser document. The added `webNavigation`
 permission lets the worker check document liveness without treating a frozen
 tab as expired; a reload preserves the handoff to the original game tab.
+Versioned namespace announcements release that reservation once a replacement
+document confirms a different save, including a stable-to-beta switch. Unknown
+or initializing replacements keep the reservation; popup settings loads do not
+participate in the game-document protocol.
 Installed-extension regressions exercise two tabs sharing real Chrome storage,
-followed by a reload during the temporary name or appearance change. These
+followed by a reload or beta navigation during the temporary name or appearance change. These
 checks use the pinned local game mirror, not a new native macOS acceptance run.

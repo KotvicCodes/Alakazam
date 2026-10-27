@@ -5,7 +5,7 @@ const { join } = require('node:path')
 const { createHash, generateKeyPairSync } = require('node:crypto')
 const { root, manifest, origin, localOnly, openGame } = require('./fixtures.cjs')
 
-test('unpacked extension isolates globals and bridges popup through persistent Chrome storage', async () => {
+async function extensionAcceptance(handoff) {
     const temporary = mkdtempSync(join(tmpdir(), 'alakazam-smoke-'))
     const extension = join(temporary, 'extension')
     const profile = join(temporary, 'profile')
@@ -45,6 +45,16 @@ test('unpacked extension isolates globals and bridges popup through persistent C
     try {
         context = await launch()
         await localOnly(context)
+        // Keep the pinned assets unchanged while exercising the real beta URL
+        // and its separate native save key in this disposable browser profile.
+        await context.route(`${origin}/cookieclicker/beta/**`, route =>
+            route.continue({
+                url: route
+                    .request()
+                    .url()
+                    .replace(origin + '/cookieclicker/beta/', origin + '/')
+            })
+        )
         const popup = await context.newPage()
         await popup.goto(`chrome-extension://${id}/popup.html`)
         await popup.evaluate(() => chrome.storage.local.set({ settings: { enabled: false } }))
@@ -77,6 +87,17 @@ test('unpacked extension isolates globals and bridges popup through persistent C
             })
             if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
             return result.result.value
+        }
+        const readyWorld = async () => {
+            await expect
+                .poll(() => {
+                    world = [...worlds.values()].find(
+                        value => value.origin === `chrome-extension://${id}`
+                    )
+                    return Boolean(world)
+                })
+                .toBe(true)
+            await expect.poll(() => isolated('Boolean(window.Alakazam?.store.isReady())')).toBe(true)
         }
         await expect.poll(() => isolated('Boolean(window.Alakazam?.store.isReady())')).toBe(true)
         expect(await page.evaluate(() => typeof window.Alakazam)).toBe('undefined')
@@ -195,31 +216,86 @@ test('unpacked extension isolates globals and bridges popup through persistent C
             // Autosave the temporary value, then destroy A without releasing
             // its old task. Recovery must survive in the replacement document.
             await page.evaluate(() => Game.WriteSave())
-            await page.reload()
-            await otherIsolated(
-                kind === 'name' ? 'Alakazam.achievements.recoverName()' : 'Alakazam.clones.recover()'
-            )
-            expect(
-                await otherIsolated(`Boolean(Alakazam.store.get(${JSON.stringify(key)}, null))`)
-            ).toBe(true)
-            await page.waitForFunction(() => window.Game?.ready)
-            await expect
-                .poll(() => {
-                    world = [...worlds.values()].find(
-                        value => value.origin === `chrome-extension://${id}`
-                    )
-                    return Boolean(world)
+            if (handoff === 'reload') {
+                await page.reload()
+                await otherIsolated(
+                    kind === 'name' ? 'Alakazam.achievements.recoverName()' : 'Alakazam.clones.recover()'
+                )
+                expect(
+                    await otherIsolated(`Boolean(Alakazam.store.get(${JSON.stringify(key)}, null))`)
+                ).toBe(true)
+                await page.waitForFunction(() => window.Game?.ready)
+                await expect
+                    .poll(() => {
+                        world = [...worlds.values()].find(
+                            value => value.origin === `chrome-extension://${id}`
+                        )
+                        return Boolean(world)
+                    })
+                    .toBe(true)
+                await expect.poll(() => isolated('Boolean(Alakazam.store.isReady())')).toBe(true)
+                await isolated(
+                    kind === 'name' ? 'Alakazam.achievements.recoverName()' : 'Alakazam.clones.recover()'
+                )
+                await expect.poll(current).toEqual(kind === 'name' ? originalName : originalGenes)
+            } else {
+                await page.evaluate(() =>
+                    localStorage.setItem('CookieClickerGameBeta', localStorage.getItem(Game.SaveTo))
+                )
+                await page.goto(origin + '/cookieclicker/beta/')
+                await page.waitForFunction(
+                    () => window.Game?.ready && Game.SaveTo === 'CookieClickerGameBeta'
+                )
+                await readyWorld()
+                expect(await isolated('Alakazam.identity.current().legacyId')).not.toBe(
+                    await otherIsolated('Alakazam.identity.current().legacyId')
+                )
+                // B loads the stable temporary save while A stays open on beta.
+                await other.evaluate(() => {
+                    Game.LoadSave()
+                    Game.ClosePrompt()
                 })
-                .toBe(true)
-            await expect.poll(() => isolated('Boolean(Alakazam.store.isReady())')).toBe(true)
-            await isolated(
-                kind === 'name' ? 'Alakazam.achievements.recoverName()' : 'Alakazam.clones.recover()'
-            )
-            await expect.poll(current).toEqual(kind === 'name' ? originalName : originalGenes)
+                await otherIsolated('Alakazam.registry.get("saveWatch").tick()')
+                await expect
+                    .poll(async () => {
+                        await otherIsolated(
+                            kind === 'name'
+                                ? 'Alakazam.achievements.recoverName()'
+                                : 'Alakazam.clones.recover()'
+                        )
+                        return other.evaluate(
+                            kind =>
+                                kind === 'name' ? Game.bakeryName : Game.YouCustomizer.currentGenes,
+                            kind
+                        )
+                    })
+                    .toEqual(kind === 'name' ? originalName : originalGenes)
+                // Persist restoration before returning A to the stable document.
+                await other.evaluate(() => Game.WriteSave())
+                await otherIsolated(
+                    kind === 'name' ? 'Alakazam.achievements.recoverName()' : 'Alakazam.clones.recover()'
+                )
+                await otherIsolated('Alakazam.store.flush()')
+                await page.goto(origin)
+                await page.waitForFunction(() => window.Game?.ready)
+                await readyWorld()
+            }
             await other.close()
         }
 
         await context.close()
+        // Keep extension storage and preferences across restart, while bounding
+        // generated browser caches in this disposable profile on shared runners.
+        for (const cache of [
+            'Default/Cache',
+            'Default/Code Cache',
+            'Default/GPUCache',
+            'ShaderCache',
+            'GrShaderCache',
+            'GraphiteDawnCache'
+        ]) {
+            rmSync(join(profile, cache), { recursive: true, force: true })
+        }
         context = await launch()
         const reopened = await context.newPage()
         await reopened.goto(`chrome-extension://${id}/popup.html`)
@@ -235,4 +311,9 @@ test('unpacked extension isolates globals and bridges popup through persistent C
             rmSync(temporary, { recursive: true, force: true })
         }
     }
-})
+}
+
+for (const handoff of ['reload', 'beta']) {
+    test(`unpacked extension isolates globals, bridges popup and recovers journals after ${handoff}`, () =>
+        extensionAcceptance(handoff))
+}
