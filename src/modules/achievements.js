@@ -123,7 +123,7 @@
     let restoredName = null
 
     function finishNameRecovery(mark) {
-        const { savefile, identity } = window.Alakazam
+        const { savefile, identity, safety } = window.Alakazam
         const saved = savefile.read()
         if (
             saved.ok &&
@@ -132,10 +132,15 @@
         ) {
             store.forget(NAME_KEY)
             restoredName = null
-        } else if (JSON.stringify(mark) !== JSON.stringify(restoredName)) {
+        } else {
             // A live restoration does not replace an earlier autosave of Orteil.
-            restoredName = { ...mark }
-            store.set(NAME_KEY, restoredName)
+            if (JSON.stringify(mark) !== JSON.stringify(restoredName?.mark))
+                store.set(NAME_KEY, { ...mark })
+            restoredName = {
+                mark: { ...mark },
+                runId: identity.current().runId,
+                revision: safety.revision('prompt')
+            }
         }
     }
 
@@ -150,7 +155,16 @@
             store.forget(NAME_KEY)
             return false
         }
-        if (JSON.stringify(mark) === JSON.stringify(restoredName)) {
+        // Import Save can leave the journal and run unchanged while replacing
+        // the live name. Recheck the naming input after any trusted prompt use;
+        // an already open prompt also needs its actual input checked below.
+        if (
+            restoredName &&
+            restoredName.runId === who.runId &&
+            restoredName.revision === safety.revision('prompt') &&
+            JSON.stringify(mark) === JSON.stringify(restoredName.mark) &&
+            !safety.prompt()
+        ) {
             finishNameRecovery(mark)
             return true
         }

@@ -34,6 +34,20 @@
     const equal = (a, b) =>
         Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i])
 
+    function stillRestored(mark, who) {
+        // A trusted import can replace the live look without changing the run,
+        // save or journal. Any prompt interaction retires our live verification;
+        // reopen the customizer and check ownership before restoring again.
+        return (
+            restoredHere &&
+            restoredHere.runId === who.runId &&
+            restoredHere.revision === safety.revision('prompt') &&
+            JSON.stringify(mark) === JSON.stringify(restoredHere.mark) &&
+            !mark.intervened &&
+            !safety.prompt()
+        )
+    }
+
     function forgetIfSaved(mark) {
         const saved = window.Alakazam.savefile.read()
         if (
@@ -184,8 +198,8 @@
         mark.previous = live
         if (!(await walk(mark.original, { left: MAX_CLICKS }, ctx, mark, runId))) return false
         if (identity.current().runId !== runId || !equal(currentGenes(), mark.original)) return false
-        restoredHere = { ...mark }
-        store.set(RECOVERY_KEY, restoredHere)
+        restoredHere = { mark: { ...mark }, runId, revision: safety.revision('prompt') }
+        store.set(RECOVERY_KEY, restoredHere.mark)
         forgetIfSaved(mark)
         if (mark.earned) store.set(DONE_KEY, true)
         ctx.input('simulateClick', el('promptOption0'))
@@ -199,9 +213,9 @@
         let mark = store.get(RECOVERY_KEY, null)
         if (!mark && (done() || !ownsAYou())) return
         if (mark && mark.legacyId !== who.legacyId) return
-        // We already verified the live UI this session. Wait for autosave without
-        // repeatedly opening the customizer while the journal is still needed.
-        if (mark && JSON.stringify(mark) === JSON.stringify(restoredHere) && !mark.intervened) {
+        // Reuse live verification only while no prompt interaction could have
+        // replaced it. An open customizer always goes through the live check.
+        if (mark && stillRestored(mark, who)) {
             forgetIfSaved(mark)
             return
         }
@@ -247,7 +261,7 @@
         const mark = store.get(RECOVERY_KEY, null)
         const who = identity.current()
         if (!mark || !who.known || mark.legacyId !== who.legacyId || safety.prompt()) return
-        if (JSON.stringify(mark) === JSON.stringify(restoredHere) && !mark.intervened) {
+        if (stillRestored(mark, who)) {
             forgetIfSaved(mark)
             return
         }
