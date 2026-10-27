@@ -113,6 +113,20 @@
             },
             input(method, ...args) {
                 this.check()
+                // store restoration may cross a foreign prompt, but only during
+                // cleanup and only for the game's exact mode/quantity controls.
+                // return before prompt bookkeeping so ownership stays untouched.
+                if (method === 'restoreStoreControl') {
+                    const node = args[0]
+                    if (
+                        !cleanup ||
+                        args.length !== 1 ||
+                        !/^storeBulk(Buy|Sell|1|10|100|Max)$/.test(node?.id || '') ||
+                        document.getElementById(node.id) !== node
+                    )
+                        throw cancelled()
+                    return window.Alakazam.input.simulateClick(node)
+                }
                 if (expected[owner] && scopes.get(owner) === this && !promptLease) {
                     promptLease = acquire('prompt', owner)
                     if (!promptLease) throw cancelled()

@@ -69,18 +69,18 @@
         return assumedAmount
     }
 
-    function setMode(mode) {
+    function setMode(mode, click = simulateClick) {
         const node = el(MODE_IDS[mode])
         if (!node) return false
-        simulateClick(node)
+        click(node)
         assumedMode = mode
         return true
     }
 
-    function setAmount(amount) {
+    function setAmount(amount, click = simulateClick) {
         const node = el(AMOUNT_IDS[amount])
         if (!node) return false
-        simulateClick(node)
+        click(node)
         assumedAmount = amount
         return true
     }
@@ -124,13 +124,13 @@
         }
     }
 
-    function change(mode, amount, refresh = false) {
+    function change(mode, amount, refresh = false, click = simulateClick) {
         if (refresh || currentMode() !== mode || currentAmount() !== amount) {
             observeRedraw(mode, amount)
         }
         // mode first: the game converts Sell/all to Buy/100 automatically
-        if (currentMode() !== mode) setMode(mode)
-        if (refresh || currentAmount() !== amount) setAmount(amount)
+        if (currentMode() !== mode) setMode(mode, click)
+        if (refresh || currentAmount() !== amount) setAmount(amount, click)
     }
 
     async function ready(lease) {
@@ -185,7 +185,11 @@
             // preserve controls the player chose while this transaction was waiting
             try {
                 if (!lease.userControls && currentMode() === mode && currentAmount() === amount) {
-                    lease.ctx.cleanup(() => change(prevMode, prevAmount))
+                    lease.ctx.cleanup(() =>
+                        change(prevMode, prevAmount, false, node =>
+                            lease.ctx.input('restoreStoreControl', node)
+                        )
+                    )
                 } else {
                     clearRedraw()
                 }
