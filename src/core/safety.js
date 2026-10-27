@@ -14,8 +14,8 @@
     const revisions = new Map()
     const settingEpochs = new Map()
     const expected = {
-        achievements: ['NameBakery'],
-        clones: ['CustomizeYou'],
+        achievements: ['NameBakery', 'ExportSave'],
+        clones: ['CustomizeYou', 'ExportSave'],
         gifts: ['GiftSend', 'GiftSendReady', 'GiftRedeem'],
         ascend: ['Ascend', 'Reincarnate', 'PickPermaUpgrade', 'ExportSave'],
         dragon: ['PickDragonAura'],
@@ -252,6 +252,34 @@
             label.textContent === text
     }
 
+    let cosmeticIdentityProof = null
+
+    // Autosave identity can lag a file load. A fresh DOM export must agree with
+    // it before recovery may consume a journal, including discarding one for a
+    // newer player choice. Cache refusals too, until either identity or the live
+    // label changes, so an unavailable/mismatched export never thrashes prompts.
+    function cosmeticIdentity(ctx, who) {
+        const { identity, savefile, act } = window.Alakazam
+        const current = () => {
+            const live = identity.current()
+            return live.known && live.runId === who.runId && live.legacyId === who.legacyId
+        }
+        if (!who.known || !current()) return null
+        if (cosmeticIdentityProof?.valid()) return cosmeticIdentityProof.proven
+        if (prompt()) return null
+        const unchanged = cosmeticCheck()
+        const key = savefile.selectedKey()
+        const valid = () => unchanged() && key === savefile.selectedKey() && current()
+        const snapshot = act.ascend.liveSave(ctx)
+        const live = identity.fromSave(snapshot)
+        const proven =
+            valid() && live.known && live.runId === who.runId && live.legacyId === who.legacyId
+                ? valid
+                : null
+        cosmeticIdentityProof = { valid, proven }
+        return proven
+    }
+
     function invalidate() {
         generation++
     }
@@ -337,6 +365,7 @@
         isolate,
         isCancellation,
         revision,
-        cosmeticCheck
+        cosmeticCheck,
+        cosmeticIdentity
     }
 })()
