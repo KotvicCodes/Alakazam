@@ -267,3 +267,52 @@ test('status and settings storage failures are observable and recover', async ()
     assert.equal(h.A.status.snapshot().storageError, '')
     assert.equal((await h.A.status.publish()).publicationError, '')
 })
+
+for (const invalid of ['stale', 'missing', 'malformed']) {
+    test(`published identity follows quarantine for a ${invalid} save and recovers`, async () => {
+        const valid = fx.save().raw
+        const localStorage = fx.storage({ CookieClickerGame: valid })
+        const h = boot({ localStorage })
+        await h.A.save.connect()
+        const original = h.A.status.snapshot().identity
+        assert.equal(original.known, true)
+        if (invalid === 'missing') localStorage.removeItem('CookieClickerGame')
+        else
+            localStorage.setItem(
+                'CookieClickerGame',
+                invalid === 'stale' ? fx.save({ driftedScalars: true }).raw : 'malformed'
+            )
+        await h.A.registry.get('saveWatch').tick()
+        const next = await h.A.status.publish()
+        assert.equal(h.debug().identity.known, false)
+        assert.equal(next.identity.known, false)
+        assert.equal(next.identity.legacyId, h.debug().identity.legacyId)
+        assert.equal(next.identity.runId, h.debug().identity.runId)
+        assert.ok(next.blockedReasons.includes('Save identity unresolved'))
+        localStorage.setItem('CookieClickerGame', valid)
+        await h.A.registry.get('saveWatch').tick()
+        assert.deepEqual(h.A.status.snapshot().identity, original)
+    })
+}
+
+test('foreign status publications do not notify store subscribers; mixed settings batches still do', async () => {
+    const h = boot()
+    await h.A.store.ready('t')
+    const notifications = []
+    h.A.store.subscribe(settings => notifications.push(settings.enabled))
+    notifications.length = 0
+    const other = h.storage.chrome().storage.local
+    const put = values => new Promise(resolve => other.set(values, resolve))
+    for (let tabId = 1; tabId <= 3; tabId++) {
+        await put({ ['status:tab:' + tabId]: { at: tabId, identity: { known: true } } })
+    }
+    assert.deepEqual(notifications, [])
+    await put({
+        'status:tab:1': { at: 4 },
+        [h.A.store.fieldKey('settings', 'enabled')]: { value: false },
+        [h.A.store.fieldKey('legacy:t', 'marker')]: { value: 'external' }
+    })
+    assert.deepEqual(notifications, [false])
+    assert.equal(h.A.store.setting('enabled'), false)
+    assert.equal(h.A.store.get('marker'), 'external')
+})

@@ -434,14 +434,16 @@
         listening = true
         chrome.storage.onChanged.addListener((changes, area) => {
             if (area !== 'local') return
+            let relevant = false
             for (const [key, change] of Object.entries(changes)) {
                 if (!key.startsWith(PREFIX)) continue
+                relevant = true
                 receivedVersions.set(key, (receivedVersions.get(key) || 0) + 1)
                 if (loadChanges) loadChanges.set(key, clone(change.newValue))
                 if (dirty.has(key)) receivedWhileDirty.set(key, clone(change.newValue))
                 else applyStored(key, change.newValue)
             }
-            notify()
+            if (relevant) notify()
         })
     }
     function subscribe(fn) {

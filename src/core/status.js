@@ -8,7 +8,7 @@
     let inFlight = null
 
     function snapshot() {
-        const who = identity.fromSave(save.get())
+        const who = identity.fromSave(save.trusted() ? save.get() : null)
         const modules = scheduler.stats()
         const globals = live.readGlobals()
         // zero-owned products have an empty counter and may not be unlocked;

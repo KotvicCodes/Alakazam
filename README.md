@@ -146,7 +146,8 @@ registers itself, so adding one is a file and a manifest line.
   the changing seed, run start and reset count.
 - `src/core/store.js` — `chrome.storage.local`, scoped to families and runs, with
   one entry per field so unrelated writes cannot overwrite one another. Also the
-  bridge to the popup, so there is no background worker.
+  bridge to the popup. Recovery-journal claims and writes go through the
+  background worker (`src/background.js`).
 - `src/core/status.js` / `src/background.js` — live tab-specific status, including
   paused and hidden sessions. The popup verifies the active document before reading
   its record; closed and navigating tabs discard old records.
