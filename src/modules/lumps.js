@@ -303,6 +303,11 @@
         }
     }
 
+    function spendPrompt() {
+        const node = window.Alakazam.safety.prompt()
+        return node?.id === 'promptContentSpendLump' ? node : null
+    }
+
     //* levelUp
     // The level control is #productLevel<n>. It is not part of the store product
     // it belongs to: the game builds it into the building's own row, over on the
@@ -314,11 +319,11 @@
         const before = banked()
         const level = levels()[spend.index]?.level
         if (level + 1 !== spend.cost || before - spend.cost < spend.reserve) return false
-        const previousPrompt = el('promptContentSpendLump')
+        const previousPrompt = spendPrompt()
         if (previousPrompt) return false
         simulateClick(badge)
         // remember a confirmation even if the player dismisses it before the wait
-        let prompt = el('promptContentSpendLump')
+        let prompt = spendPrompt()
         const spent = () => {
             const badgeLevel = window.Alakazam.parse.firstNumberIn(badge.innerText)
             const amount = el('lumpsAmount')
@@ -344,7 +349,7 @@
         try {
             // confirmations may arrive on a later draw; there is no detached timer
             const outcome = await window.Alakazam.transactions.until(lease, () => {
-                const currentPrompt = el('promptContentSpendLump')
+                const currentPrompt = spendPrompt()
                 if (currentPrompt) prompt = currentPrompt
                 return currentPrompt || spent()
             })
@@ -368,7 +373,7 @@
                 )
                     return false
                 const option = el('promptOption0')
-                if (!option || el('promptContentSpendLump') !== prompt) return false
+                if (!option || spendPrompt() !== prompt) return false
                 simulateClick(option)
             }
             // account for this spend immediately, before the next autosave or draw
@@ -377,7 +382,7 @@
             if (observed) reservation.uncertain = false
             return !!observed
         } finally {
-            if (prompt && el('promptContentSpendLump') === prompt) {
+            if (prompt && spendPrompt() === prompt) {
                 const cancel = el('promptOption1')
                 if (cancel) simulateClick(cancel)
             }
