@@ -26,6 +26,7 @@ function boot(opts = {}) {
     if (!storageByDisk.has(disk)) storageByDisk.set(disk, storageFixture(disk))
     const storage = opts.storage || storageByDisk.get(disk)
     const chrome = storage.chrome()
+    opts.connectChrome?.(chrome)
 
     const rafQueue = []
     const events = []

@@ -49,6 +49,7 @@
     }
 
     function forgetIfSaved(mark) {
+        if (!store.ownsRecovery(RECOVERY_KEY)) return false
         const saved = window.Alakazam.savefile.read()
         if (
             !saved.ok ||
@@ -159,6 +160,7 @@
         unchanged = safety.cosmeticCheck()
     ) {
         if (!unchanged() || identity.current().runId !== runId) return false
+        if (mark && !store.ownsRecovery(RECOVERY_KEY)) return false
         const before = currentGenes()
         if (!before) return false
         const next = before.slice()
@@ -175,6 +177,7 @@
             if (!(await store.flush().catch(() => false))) return false
         }
         ctx.check()
+        if (mark && !store.ownsRecovery(RECOVERY_KEY)) return false
         if (!unchanged() || identity.current().runId !== runId) return false
         if (revision !== safety.revision() || !equal(currentGenes(), before)) return false
         if (!safety.ownsPrompt('clones', 'CustomizeYou') || !step(gene, direction, ctx)) return false
@@ -184,6 +187,7 @@
     async function restore(mark, ctx, runId, unchanged) {
         // an import can replace the live customizer before cancelled work drains
         const who = identity.current()
+        if (!store.ownsRecovery(RECOVERY_KEY)) return false
         if (!unchanged() || !who.known || mark.legacyId !== who.legacyId || who.runId !== runId)
             return false
         const superseded = () => {
@@ -229,6 +233,7 @@
         let mark = store.get(RECOVERY_KEY, null)
         if (!mark && (done() || !ownsAYou())) return
         if (mark && mark.legacyId !== who.legacyId) return
+        if (mark && !store.ownsRecovery(RECOVERY_KEY)) return
         // Reuse verification only while its live DOM proof still holds. An open
         // customizer always goes through the live check.
         if (mark && stillRestored(mark, who)) {
@@ -252,8 +257,7 @@
             }
             const original = currentGenes()
             if (!original) return
-            // the save's appearance can be minutes old; only the open customizer is live
-            store.set(THEIRS_KEY, original.slice())
+            if (store.get(RECOVERY_KEY, null)) return
             mark = {
                 legacyId: who.legacyId,
                 original: original.slice(),
@@ -261,6 +265,13 @@
                 previous: original.slice(),
                 history: [original.slice()]
             }
+            if (!store.ownsRecovery(RECOVERY_KEY, false)) {
+                if (!(await store.claimRecovery(RECOVERY_KEY, mark))) return
+                ctx.check()
+                if (!unchanged() || identity.current().runId !== who.runId) return
+            }
+            // the save's appearance can be minutes old; only the open customizer is live
+            store.set(THEIRS_KEY, original.slice())
             store.set(RECOVERY_KEY, { ...mark })
             try {
                 if (!(await store.flush().catch(() => false))) return false
@@ -284,6 +295,7 @@
         const mark = store.get(RECOVERY_KEY, null)
         const who = identity.current()
         if (!mark || !who.known || mark.legacyId !== who.legacyId || safety.prompt()) return
+        if (!store.ownsRecovery(RECOVERY_KEY)) return
         if (stillRestored(mark, who)) {
             forgetIfSaved(mark)
             return

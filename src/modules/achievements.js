@@ -123,6 +123,7 @@
     let restoredName = null
 
     function finishNameRecovery(mark) {
+        if (!store.ownsRecovery(NAME_KEY)) return
         const { savefile, identity, safety } = window.Alakazam
         const saved = savefile.read()
         if (
@@ -150,6 +151,7 @@
         const mark = store.get(NAME_KEY, null)
         const who = identity.current()
         if (!mark || !who.known || mark.legacyId !== who.legacyId) return false
+        if (!store.ownsRecovery(NAME_KEY)) return false
         // a cancelled task may undo its own run, never a replacement run
         if (runId && who.runId !== runId) return false
         if (unchanged && !unchanged()) return false
@@ -224,12 +226,19 @@
             if (!unchanged() || !safety.ownsPrompt('achievements', 'NameBakery')) return false
             const input = document.getElementById('bakeryNameInput')
             if (!input) return false
+            if (store.get(NAME_KEY, null)) return false
             const original = String(input.value)
-            store.set(NAME_KEY, { legacyId: who.legacyId, original, expected: 'Orteil' })
+            const mark = { legacyId: who.legacyId, original, expected: 'Orteil' }
+            if (!store.ownsRecovery(NAME_KEY, false)) {
+                if (!(await store.claimRecovery(NAME_KEY, mark))) return false
+                ctx.check()
+                if (!unchanged() || identity.current().runId !== who.runId) return false
+            }
+            store.set(NAME_KEY, mark)
             // persist the undo record before any mutation can reach the game save
             if (!(await store.flush().catch(() => false))) return false
             ctx.check()
-            if (!unchanged()) return false
+            if (!unchanged() || !store.ownsRecovery(NAME_KEY)) return false
             if (!safety.ownsPrompt('achievements', 'NameBakery') || String(input.value) !== original) {
                 store.forget(NAME_KEY)
                 return false

@@ -3,7 +3,7 @@
     "name": "Alakazam",
     "version": "1.3.3",
     "description": "Analyzes and optimizes Cookie Clicker strategy",
-    "permissions": ["activeTab", "storage"],
+    "permissions": ["activeTab", "storage", "webNavigation"],
     "host_permissions": ["https://orteil.dashnet.org/*"],
     "action": {
         "default_popup": "popup.html",

@@ -54,6 +54,79 @@
     const clone = value => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)))
     const fieldKey = (scope, key) => PREFIX + encodeURIComponent(scope) + ':' + encodeURIComponent(key)
     const RECOVERY_KEYS = new Set(['bakeryNameRecovery', 'cloneRecovery'])
+    const recoveryClaims = new Map()
+    const receivedVersions = new Map()
+    let documentOwner = null
+    const mediatedRecovery = () => typeof chrome !== 'undefined' && !!chrome.runtime?.sendMessage
+    const sameOwner = owner =>
+        !!owner &&
+        !!documentOwner &&
+        owner.tabId === documentOwner.tabId &&
+        owner.documentId === documentOwner.documentId
+
+    function journalMessage(message) {
+        return new Promise((resolve, reject) => {
+            try {
+                chrome.runtime.sendMessage({ type: 'alakazam:journal', ...message }, result => {
+                    const error = chrome.runtime.lastError?.message || result?.error
+                    if (error || !result) reject(new Error(error || 'Recovery worker unavailable'))
+                    else resolve(result)
+                })
+            } catch (error) {
+                reject(error)
+            }
+        })
+    }
+
+    function claimRecovery(key, initial) {
+        if (!mediatedRecovery()) return Promise.resolve(true)
+        if (!loaded || !RECOVERY_KEYS.has(key)) return Promise.resolve(false)
+        const scope = namespace
+        const field = fieldKey(scope, key)
+        const ownerField = fieldKey(scope, '@owner:' + key)
+        const fieldVersion = receivedVersions.get(field)
+        const ownerVersion = receivedVersions.get(ownerField)
+        if (recoveryClaims.has(field)) return recoveryClaims.get(field)
+        const work = journalMessage({
+            operation: 'claim',
+            scope,
+            key,
+            begin: initial !== undefined,
+            mark: initial === undefined ? get(key, null) : clone(initial)
+        })
+            .then(result => {
+                // onChanged normally supplies these first. Apply the reply too
+                // so an acquired claim is usable before a delayed event arrives.
+                if (!dirty.has(field) && receivedVersions.get(field) === fieldVersion)
+                    applyStored(field, result.record)
+                if (receivedVersions.get(ownerField) === ownerVersion)
+                    applyStored(ownerField, result.owner ? { value: result.owner } : undefined)
+                if (result.owned) documentOwner = result.owner
+                if (!dirty.size) lastError = ''
+                return (
+                    scope === namespace &&
+                    loaded &&
+                    result.owned &&
+                    sameOwner(read(scope, '@owner:' + key, null))
+                )
+            })
+            .catch(error => {
+                report(error)
+                return false
+            })
+            .finally(() => recoveryClaims.delete(field))
+        recoveryClaims.set(field, work)
+        return work
+    }
+
+    function ownsRecovery(key, request = true) {
+        if (!mediatedRecovery()) return true
+        if (sameOwner(read(namespace, '@owner:' + key, null))) return true
+        // A later tick can acquire a crashed/reloaded owner's journal without
+        // changing recoverName's synchronous boolean API or opening any prompt.
+        if (request && get(key, null)) void claimRecovery(key)
+        return false
+    }
 
     // Undo records can originate in old namespaces, current fields or external
     // storage events. Validate at promotion and at read time, leaving malformed
@@ -168,14 +241,19 @@
                 for (const key of new Set([...records.keys(), ...Object.keys(all)])) {
                     if (key.startsWith(PREFIX) && !dirty.has(key)) applyStored(key, all[key])
                 }
+                if (!dirty.size) lastError = ''
                 // A superseded read may fill the cache, but cannot reselect an
                 // old family while a newer request has already quarantined it.
                 if (version === loadVersion) {
                     namespace = target
                     runNamespace = runTarget
                     loaded = true
+                    // Startup recovery remains synchronous after ready(). A
+                    // live foreign document simply makes this claim return false.
+                    for (const key of RECOVERY_KEYS) {
+                        if (get(key, null)) await claimRecovery(key)
+                    }
                 }
-                if (!dirty.size) lastError = ''
                 notify()
             } catch (err) {
                 report(err)
@@ -202,7 +280,17 @@
         if (!all[sourceKey]) throw new Error('legacy namespace not found')
         for (const [key, value] of Object.entries(all[sourceKey])) {
             const record = records.get(fieldKey(namespace, key))
-            if (!RUN_KEYS.has(key) && !record && get(key, undefined) === undefined) set(key, value)
+            if (RUN_KEYS.has(key) || record || get(key, undefined) !== undefined) continue
+            if (RECOVERY_KEYS.has(key)) {
+                const familyId = destination.slice('legacy:'.length)
+                if (!validRecovery(key, value) || ![sourceId, familyId].includes(value.legacyId))
+                    continue
+                const mark = { ...value, legacyId: familyId }
+                if (!(await claimRecovery(key, mark))) continue
+                if (namespace !== destination || !loaded)
+                    throw new Error('save changed during copy; retry')
+                set(key, mark)
+            } else set(key, value)
         }
         await flush()
     }
@@ -226,9 +314,11 @@
         return RECOVERY_KEYS.has(key) && !validRecovery(key, value) ? clone(fallback) : value
     }
     function set(key, value) {
+        if (RECOVERY_KEYS.has(key) && !ownsRecovery(key)) return
         write(fieldKey(scopeFor(key), key), { value: clone(value) })
     }
     function forget(key) {
+        if (RECOVERY_KEYS.has(key) && !ownsRecovery(key)) return
         write(fieldKey(scopeFor(key), key), { deleted: true })
     }
     function update(key, fallback, fn) {
@@ -273,7 +363,38 @@
         const pending = new Map(dirty)
         const perform = async () => {
             try {
-                await call('set', Object.fromEntries(pending))
+                let persisted = true
+                const regular = new Map(pending)
+                if (mediatedRecovery()) {
+                    for (const [field, record] of pending) {
+                        const parts = field.slice(PREFIX.length).split(':').map(decodeURIComponent)
+                        if (parts.length !== 2 || !RECOVERY_KEYS.has(parts[1])) continue
+                        regular.delete(field)
+                        const version = receivedVersions.get(field)
+                        const ownerField = fieldKey(parts[0], '@owner:' + parts[1])
+                        const ownerVersion = receivedVersions.get(ownerField)
+                        const result = await journalMessage({
+                            operation: 'write',
+                            scope: parts[0],
+                            key: parts[1],
+                            record
+                        })
+                        if (!result.owned) {
+                            // A thawed/replaced document must drop its stale
+                            // write, without blocking unrelated pending fields
+                            // forever or authorizing the next cosmetic input.
+                            persisted = false
+                            if (receivedVersions.get(field) === version)
+                                receivedWhileDirty.set(field, clone(result.record))
+                            if (receivedVersions.get(ownerField) === ownerVersion)
+                                applyStored(
+                                    ownerField,
+                                    result.owner ? { value: result.owner } : undefined
+                                )
+                        }
+                    }
+                }
+                if (regular.size) await call('set', Object.fromEntries(regular))
                 let changed = false
                 for (const [key, record] of pending) {
                     if (dirty.get(key) !== record) continue
@@ -288,6 +409,7 @@
                 }
                 lastError = ''
                 if (changed) notify()
+                return persisted
             } catch (err) {
                 report(err)
                 throw err
@@ -295,8 +417,7 @@
         }
         inFlight = perform()
         try {
-            await inFlight
-            return true
+            return await inFlight
         } finally {
             inFlight = null
         }
@@ -315,6 +436,7 @@
             if (area !== 'local') return
             for (const [key, change] of Object.entries(changes)) {
                 if (!key.startsWith(PREFIX)) continue
+                receivedVersions.set(key, (receivedVersions.get(key) || 0) + 1)
                 if (loadChanges) loadChanges.set(key, clone(change.newValue))
                 if (dirty.has(key)) receivedWhileDirty.set(key, clone(change.newValue))
                 else applyStored(key, change.newValue)
@@ -344,6 +466,8 @@
         copyLegacy,
         isReady,
         get,
+        ownsRecovery,
+        claimRecovery,
         set,
         update,
         forget,
