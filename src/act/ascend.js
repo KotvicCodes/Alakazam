@@ -102,12 +102,13 @@
         return true
     }
 
-    //* liveHoard
-    // Export save renders Game.WriteSave(1) into a read-only textarea. Reading
-    // that UI gives a live snapshot without calling game APIs or trusting autosave.
-    function liveHoard(ctx = window.Alakazam.safety.context('ascend')) {
+    //* liveSave
+    // ExportSave renders a fresh WriteSave(1) into a read-only textarea. Share
+    // that DOM route with cosmetic recovery; ownership belongs to its caller.
+    function liveSave(ctx = window.Alakazam.safety.context('ascend')) {
         ctx.check()
-        if (window.Alakazam.safety.prompt()) return null
+        const { safety, savefile, identity } = window.Alakazam
+        if (safety.prompt()) return null
         const prefs = el('prefsButton')
         if (!prefs) return null
         const previous = ['prefsButton', 'statsButton', 'logButton']
@@ -126,46 +127,59 @@
             )
             if (!button) return null
             const requestedAt = Date.now()
+            const key = savefile.selectedKey()
+            const unchanged = safety.cosmeticCheck()
             ctx.input('simulateClick', button)
-            if (!window.Alakazam.safety.ownsPrompt('ascend', 'ExportSave')) return null
+            if (!safety.ownsPrompt(ctx.owner, 'ExportSave')) return null
             const field = el('textareaPrompt')
             if (!field) return null
-            const { savefile, identity } = window.Alakazam
             const snapshot = savefile.parse(savefile.decode(field.value))
-            const who = identity.fromSave(snapshot)
-            const current = identity.current()
+            // Exports have no key; only this page's selected variant authorizes it.
+            snapshot.key = key
             if (
                 !snapshot.ok ||
                 snapshot.stale ||
                 !snapshot.scalars ||
-                !who.known ||
-                who.runId !== current.runId ||
-                who.legacyId !== current.legacyId ||
-                Math.abs(requestedAt - snapshot.run.lastDate) > 2000
+                !identity.fromSave(snapshot).known ||
+                Math.abs(requestedAt - snapshot.run.lastDate) > 2000 ||
+                !unchanged() ||
+                key !== savefile.selectedKey()
             )
                 return null
-            const s = snapshot.scalars
-            if (
-                ![s.wrinklersAmount, s.wrinklersShinyAmount, s.wrinklersNumber, s.wrinklersShiny].every(
-                    value => Number.isFinite(value) && value >= 0
-                )
-            )
-                return null
-            return {
-                at: requestedAt,
-                runId: who.runId,
-                hoard: s.wrinklersAmount + s.wrinklersShinyAmount,
-                active: s.wrinklersNumber + s.wrinklersShiny
-            }
+            return snapshot
         } finally {
             ctx.cleanup(() => {
-                if (window.Alakazam.safety.ownsPrompt('ascend', 'ExportSave')) {
+                if (safety.ownsPrompt(ctx.owner, 'ExportSave')) {
                     ctx.input('simulateClick', el('promptOption0'))
                 }
-                if (opened && !window.Alakazam.safety.prompt() && prefs.classList.contains('selected')) {
+                if (opened && !safety.prompt() && prefs.classList.contains('selected')) {
                     ctx.input('simulateClick', previous || prefs)
                 }
             })
+        }
+    }
+
+    //* liveHoard
+    function liveHoard(ctx = window.Alakazam.safety.context('ascend')) {
+        const snapshot = liveSave(ctx)
+        if (!snapshot) return null
+        const { identity } = window.Alakazam
+        const who = identity.fromSave(snapshot)
+        const current = identity.current()
+        if (who.runId !== current.runId || who.legacyId !== current.legacyId) return null
+        const s = snapshot.scalars
+        if (
+            ![s.wrinklersAmount, s.wrinklersShinyAmount, s.wrinklersNumber, s.wrinklersShiny].every(
+                value => Number.isFinite(value) && value >= 0
+            )
+        )
+            return null
+        return {
+            at: snapshot.run.lastDate,
+            runId: who.runId,
+            resets: s.resets,
+            hoard: s.wrinklersAmount + s.wrinklersShinyAmount,
+            active: s.wrinklersNumber
         }
     }
 
@@ -301,6 +315,7 @@
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.act = window.Alakazam.act || {}
     window.Alakazam.act.ascend = {
+        liveSave,
         liveHoard,
         screen,
         onAscendScreen,

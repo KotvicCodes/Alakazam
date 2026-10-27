@@ -123,7 +123,7 @@
     let restoredName = null
 
     function finishNameRecovery(mark) {
-        const { savefile, identity } = window.Alakazam
+        const { savefile, identity, safety } = window.Alakazam
         const saved = savefile.read()
         if (
             saved.ok &&
@@ -132,33 +132,56 @@
         ) {
             store.forget(NAME_KEY)
             restoredName = null
-        } else if (JSON.stringify(mark) !== JSON.stringify(restoredName)) {
+        } else {
             // A live restoration does not replace an earlier autosave of Orteil.
-            restoredName = { ...mark }
-            store.set(NAME_KEY, restoredName)
+            if (JSON.stringify(mark) !== JSON.stringify(restoredName?.mark))
+                store.set(NAME_KEY, { ...mark })
+            restoredName = {
+                mark: { ...mark },
+                runId: identity.current().runId,
+                revision: safety.revision('prompt'),
+                unchanged: safety.cosmeticCheck()
+            }
         }
     }
 
-    function recoverName(runId) {
+    function recoverName(runId, unchanged) {
         const { safety, identity } = window.Alakazam
         const mark = store.get(NAME_KEY, null)
         const who = identity.current()
         if (!mark || !who.known || mark.legacyId !== who.legacyId) return false
         // a cancelled task may undo its own run, never a replacement run
         if (runId && who.runId !== runId) return false
-        if (mark.intervened) {
-            store.forget(NAME_KEY)
-            return false
-        }
-        if (JSON.stringify(mark) === JSON.stringify(restoredName)) {
+        if (unchanged && !unchanged()) return false
+        // Imports can leave the journal and run unchanged while replacing the
+        // live name. Check the label too: file loads do not use a prompt. An
+        // already open prompt needs its actual input checked below.
+        if (
+            !mark.intervened &&
+            restoredName &&
+            restoredName.runId === who.runId &&
+            restoredName.revision === safety.revision('prompt') &&
+            restoredName.unchanged() &&
+            JSON.stringify(mark) === JSON.stringify(restoredName.mark) &&
+            !safety.prompt()
+        ) {
             finishNameRecovery(mark)
             return true
         }
         const ctx = safety.scope('achievements')
         return ctx.cleanup(() => {
+            const proven =
+                restoredName?.runId === who.runId && restoredName.unchanged()
+                    ? restoredName.unchanged
+                    : safety.cosmeticIdentity(ctx, who)
+            if (!proven) return false
+            if (mark.intervened) {
+                store.forget(NAME_KEY)
+                return false
+            }
             if (safety.prompt() && !safety.ownsPrompt('achievements', 'NameBakery')) return false
             if (!safety.prompt()) ctx.input('simulateClick', document.getElementById('bakeryName'))
-            if (!safety.ownsPrompt('achievements', 'NameBakery')) return false
+            if (!proven() || !safety.ownsPrompt('achievements', 'NameBakery')) return false
             const input = document.getElementById('bakeryNameInput')
             if (!input) return false
             if (String(input.value) === mark.original) {
@@ -192,10 +215,13 @@
         const ctx = safety.scope('achievements')
         const who = identity.current()
         if (!who.known || safety.prompt() || store.get(NAME_KEY, null)) return false
+        if (!safety.cosmeticIdentity(ctx, who)) return false
+        let unchanged = safety.cosmeticCheck()
         simulateClick(document.getElementById('bakeryName'))
+        const ownedPrompt = safety.prompt()
         try {
             await wait(MENU_MS)
-            if (!safety.ownsPrompt('achievements', 'NameBakery')) return false
+            if (!unchanged() || !safety.ownsPrompt('achievements', 'NameBakery')) return false
             const input = document.getElementById('bakeryNameInput')
             if (!input) return false
             const original = String(input.value)
@@ -203,16 +229,22 @@
             // persist the undo record before any mutation can reach the game save
             if (!(await store.flush().catch(() => false))) return false
             ctx.check()
+            if (!unchanged()) return false
             if (!safety.ownsPrompt('achievements', 'NameBakery') || String(input.value) !== original) {
                 store.forget(NAME_KEY)
                 return false
             }
             typeInto(input, 'Orteil')
             simulateClick(document.getElementById('promptOption0'))
+            unchanged = safety.cosmeticCheck()
             await wait(600)
             return true
         } finally {
-            recoverName(who.runId)
+            try {
+                recoverName(who.runId, unchanged)
+            } finally {
+                safety.dismissCosmeticPrompt(ctx, ownedPrompt)
+            }
         }
     }
 

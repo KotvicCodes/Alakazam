@@ -34,6 +34,20 @@
     const equal = (a, b) =>
         Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i])
 
+    function stillRestored(mark, who) {
+        // Imports can replace the live look without changing the run, save or
+        // journal. File loads refresh the bakery label without using a prompt.
+        return (
+            restoredHere &&
+            restoredHere.runId === who.runId &&
+            restoredHere.revision === safety.revision('prompt') &&
+            restoredHere.unchanged() &&
+            JSON.stringify(mark) === JSON.stringify(restoredHere.mark) &&
+            !mark.intervened &&
+            !safety.prompt()
+        )
+    }
+
     function forgetIfSaved(mark) {
         const saved = window.Alakazam.savefile.read()
         if (
@@ -118,10 +132,11 @@
         budget,
         ctx = safety.scope('clones'),
         mark = null,
-        runId = identity.current().runId
+        runId = identity.current().runId,
+        unchanged = safety.cosmeticCheck()
     ) {
         while (budget.left > 0) {
-            if (identity.current().runId !== runId) return false
+            if (!unchanged() || identity.current().runId !== runId) return false
             ctx.check()
             const genes = currentGenes()
             if (!genes || !safety.ownsPrompt('clones', 'CustomizeYou')) return false
@@ -129,13 +144,21 @@
             const gene = target.findIndex((value, i) => value !== genes[i])
             if (gene === -1) return true
             const direction = Math.sign(stepsTo(gene, genes[gene], target[gene]))
-            if (!(await move(gene, direction, ctx, mark, runId))) return false
+            if (!(await move(gene, direction, ctx, mark, runId, unchanged))) return false
             budget.left--
         }
         return equal(currentGenes(), target)
     }
 
-    async function move(gene, direction, ctx, mark, runId = identity.current().runId) {
+    async function move(
+        gene,
+        direction,
+        ctx,
+        mark,
+        runId = identity.current().runId,
+        unchanged = safety.cosmeticCheck()
+    ) {
+        if (!unchanged() || identity.current().runId !== runId) return false
         const before = currentGenes()
         if (!before) return false
         const next = before.slice()
@@ -152,16 +175,17 @@
             if (!(await store.flush().catch(() => false))) return false
         }
         ctx.check()
-        if (identity.current().runId !== runId) return false
+        if (!unchanged() || identity.current().runId !== runId) return false
         if (revision !== safety.revision() || !equal(currentGenes(), before)) return false
         if (!safety.ownsPrompt('clones', 'CustomizeYou') || !step(gene, direction, ctx)) return false
         return equal(currentGenes(), next)
     }
 
-    async function restore(mark, ctx, runId) {
+    async function restore(mark, ctx, runId, unchanged) {
         // an import can replace the live customizer before cancelled work drains
         const who = identity.current()
-        if (!who.known || mark.legacyId !== who.legacyId || who.runId !== runId) return false
+        if (!unchanged() || !who.known || mark.legacyId !== who.legacyId || who.runId !== runId)
+            return false
         const superseded = () => {
             store.forget(RECOVERY_KEY)
             store.set(DONE_KEY, true)
@@ -182,10 +206,16 @@
         // A reload can resume at any journaled step, not just the latest write.
         mark.expected = live
         mark.previous = live
-        if (!(await walk(mark.original, { left: MAX_CLICKS }, ctx, mark, runId))) return false
-        if (identity.current().runId !== runId || !equal(currentGenes(), mark.original)) return false
-        restoredHere = { ...mark }
-        store.set(RECOVERY_KEY, restoredHere)
+        if (!(await walk(mark.original, { left: MAX_CLICKS }, ctx, mark, runId, unchanged))) return false
+        if (!unchanged() || identity.current().runId !== runId || !equal(currentGenes(), mark.original))
+            return false
+        restoredHere = {
+            mark: { ...mark },
+            runId,
+            revision: safety.revision('prompt'),
+            unchanged: safety.cosmeticCheck()
+        }
+        store.set(RECOVERY_KEY, restoredHere.mark)
         forgetIfSaved(mark)
         if (mark.earned) store.set(DONE_KEY, true)
         ctx.input('simulateClick', el('promptOption0'))
@@ -199,47 +229,54 @@
         let mark = store.get(RECOVERY_KEY, null)
         if (!mark && (done() || !ownsAYou())) return
         if (mark && mark.legacyId !== who.legacyId) return
-        // We already verified the live UI this session. Wait for autosave without
-        // repeatedly opening the customizer while the journal is still needed.
-        if (mark && JSON.stringify(mark) === JSON.stringify(restoredHere) && !mark.intervened) {
+        // Reuse verification only while its live DOM proof still holds. An open
+        // customizer always goes through the live check.
+        if (mark && stillRestored(mark, who)) {
             forgetIfSaved(mark)
             return
         }
         if (safety.prompt() && !safety.ownsPrompt('clones', 'CustomizeYou')) return
+        const unchanged = ctx.cleanup(() => safety.cosmeticIdentity(ctx, who))
+        if (!unchanged) return
         if (!safety.prompt()) {
             const button = customizeButton()
             if (!button) return
             simulateClick(button)
         }
         if (!safety.ownsPrompt('clones', 'CustomizeYou')) return
-        if (mark) {
-            await ctx.cleanup(() => restore(mark, ctx, who.runId))
-            return
-        }
-        const original = currentGenes()
-        if (!original) return
-        // the save's appearance can be minutes old; only the open customizer is live
-        store.set(THEIRS_KEY, original.slice())
-        mark = {
-            legacyId: who.legacyId,
-            original: original.slice(),
-            expected: original.slice(),
-            previous: original.slice(),
-            history: [original.slice()]
-        }
-        store.set(RECOVERY_KEY, { ...mark })
+        const ownedPrompt = safety.prompt()
         try {
-            if (!(await store.flush().catch(() => false))) return false
-            ctx.check()
-            const budget = { left: MAX_CLICKS }
-            if (!(await walk(LIKENESS, budget, ctx, mark, who.runId))) return
-            // the game checks this achievement only inside an arrow handler
-            if (!(await move(FREE_GENE, 1, ctx, mark, who.runId))) return
-            if (!(await move(FREE_GENE, -1, ctx, mark, who.runId))) return
-            mark.earned = true
+            if (mark) {
+                await ctx.cleanup(() => restore(mark, ctx, who.runId, unchanged))
+                return
+            }
+            const original = currentGenes()
+            if (!original) return
+            // the save's appearance can be minutes old; only the open customizer is live
+            store.set(THEIRS_KEY, original.slice())
+            mark = {
+                legacyId: who.legacyId,
+                original: original.slice(),
+                expected: original.slice(),
+                previous: original.slice(),
+                history: [original.slice()]
+            }
             store.set(RECOVERY_KEY, { ...mark })
+            try {
+                if (!(await store.flush().catch(() => false))) return false
+                ctx.check()
+                const budget = { left: MAX_CLICKS }
+                if (!(await walk(LIKENESS, budget, ctx, mark, who.runId, unchanged))) return
+                // the game checks this achievement only inside an arrow handler
+                if (!(await move(FREE_GENE, 1, ctx, mark, who.runId, unchanged))) return
+                if (!(await move(FREE_GENE, -1, ctx, mark, who.runId, unchanged))) return
+                mark.earned = true
+                store.set(RECOVERY_KEY, { ...mark })
+            } finally {
+                await ctx.cleanup(() => restore(mark, ctx, who.runId, unchanged))
+            }
         } finally {
-            await ctx.cleanup(() => restore(mark, ctx, who.runId))
+            safety.dismissCosmeticPrompt(ctx, ownedPrompt)
         }
     }
 
@@ -247,14 +284,21 @@
         const mark = store.get(RECOVERY_KEY, null)
         const who = identity.current()
         if (!mark || !who.known || mark.legacyId !== who.legacyId || safety.prompt()) return
-        if (JSON.stringify(mark) === JSON.stringify(restoredHere) && !mark.intervened) {
+        if (stillRestored(mark, who)) {
             forgetIfSaved(mark)
             return
         }
         const ctx = safety.context('clones')
         await ctx.cleanup(async () => {
+            const unchanged = safety.cosmeticIdentity(ctx, who)
+            if (!unchanged) return
             ctx.input('simulateClick', customizeButton())
-            await restore(mark, ctx, who.runId)
+            const ownedPrompt = safety.prompt()
+            try {
+                await restore(mark, ctx, who.runId, unchanged)
+            } finally {
+                safety.dismissCosmeticPrompt(ctx, ownedPrompt)
+            }
         })
     }
 

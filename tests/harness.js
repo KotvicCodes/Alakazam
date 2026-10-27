@@ -89,7 +89,9 @@ function boot(opts = {}) {
     g.state.shinyWrinklers = scalar.wrinklersShiny || 0
     g.state.exportSave = () => {
         const fx = require('./fixtures')
-        const decoded = savefile.decode(opts.save || fx.save().raw)
+        const decoded = savefile.decode(
+            ctx.localStorage.getItem(savefile.selectedKey()) || opts.save || fx.save().raw
+        )
         const sections = decoded.split('|')
         const run = sections[2].split(';')
         run[2] = String(Date.now())

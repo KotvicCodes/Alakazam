@@ -14,8 +14,8 @@
     const revisions = new Map()
     const settingEpochs = new Map()
     const expected = {
-        achievements: ['NameBakery'],
-        clones: ['CustomizeYou'],
+        achievements: ['NameBakery', 'ExportSave'],
+        clones: ['CustomizeYou', 'ExportSave'],
         gifts: ['GiftSend', 'GiftSendReady', 'GiftRedeem'],
         ascend: ['Ascend', 'Reincarnate', 'PickPermaUpgrade', 'ExportSave'],
         dragon: ['PickDragonAura'],
@@ -54,6 +54,22 @@
             promptOwner.node === node &&
             (!name || node.id === 'promptContent' + name)
         )
+    }
+
+    // Cosmetic guards may abort while the task is still active. Dismiss only
+    // its exact original prompt; imports can leave it up, while trusted input
+    // or a replacement prompt forfeits ownership. These options never commit edits.
+    function dismissCosmeticPrompt(ctx, node) {
+        const name = ctx.owner === 'achievements' ? 'NameBakery' : 'CustomizeYou'
+        if (
+            !['achievements', 'clones'].includes(ctx.owner) ||
+            !node ||
+            prompt() !== node ||
+            !ownsPrompt(ctx.owner, name)
+        )
+            return
+        const option = document.getElementById('promptOption' + (name === 'NameBakery' ? 2 : 0))
+        if (option) ctx.cleanup(() => ctx.input('simulateClick', option))
     }
 
     function acquire(resource, owner) {
@@ -113,6 +129,20 @@
             },
             input(method, ...args) {
                 this.check()
+                // store restoration may cross a foreign prompt, but only during
+                // cleanup and only for the game's exact mode/quantity controls.
+                // return before prompt bookkeeping so ownership stays untouched.
+                if (method === 'restoreStoreControl') {
+                    const node = args[0]
+                    if (
+                        !cleanup ||
+                        args.length !== 1 ||
+                        !/^storeBulk(Buy|Sell|1|10|100|Max)$/.test(node?.id || '') ||
+                        document.getElementById(node.id) !== node
+                    )
+                        throw cancelled()
+                    return window.Alakazam.input.simulateClick(node)
+                }
                 if (expected[owner] && scopes.get(owner) === this && !promptLease) {
                     promptLease = acquire('prompt', owner)
                     if (!promptLease) throw cancelled()
@@ -180,7 +210,10 @@
             try {
                 if (!task.active && ownsPrompt(mod.name)) {
                     const name = prompt().id.slice(13)
-                    const option = ['CustomizeYou', 'ExportSave', 'GiftSendReady'].includes(name)
+                    // Gifts dismiss completed Wrap results only after persisting
+                    // their code. Failed storage must leave that result visible.
+                    if (name === 'GiftSendReady') return
+                    const option = ['CustomizeYou', 'ExportSave'].includes(name)
                         ? 0
                         : name === 'NameBakery'
                           ? 2
@@ -217,6 +250,60 @@
 
     function revision(resource) {
         return resource ? revisions.get(resource) || 0 : userRevision
+    }
+
+    // LoadSave refreshes this label with textContent, replacing its text node
+    // even when the imported name is unchanged. Check the node synchronously:
+    // FileReader.onload can finish long after selection and any intervening
+    // recovery. Prompt revisions alone cannot prove cosmetics are still live.
+    function cosmeticCheck() {
+        const label = document.getElementById('bakeryName')
+        const content = label?.firstChild
+        const text = label?.textContent
+        return () =>
+            !!label &&
+            !!text &&
+            document.getElementById('bakeryName') === label &&
+            label.firstChild === content &&
+            label.textContent === text
+    }
+
+    let cosmeticIdentityProof = null
+    const COSMETIC_RETRY_MS = 5000
+
+    // Autosave identity can lag a file load. A fresh DOM export must agree with
+    // it before recovery may consume a journal, including discarding one for a
+    // newer player choice. Concrete mismatches stay cached until identity or
+    // the live label changes. Unavailable/stale exports retry after a cooldown:
+    // WriteSave(1) can temporarily reuse a snapshot when Game.time is throttled.
+    function cosmeticIdentity(ctx, who) {
+        const { identity, savefile, act } = window.Alakazam
+        const current = () => {
+            const live = identity.current()
+            return live.known && live.runId === who.runId && live.legacyId === who.legacyId
+        }
+        if (!who.known || !current()) return null
+        if (
+            cosmeticIdentityProof?.valid() &&
+            (cosmeticIdentityProof.retryAt === null || Date.now() < cosmeticIdentityProof.retryAt)
+        )
+            return cosmeticIdentityProof.proven
+        if (prompt()) return null
+        const unchanged = cosmeticCheck()
+        const key = savefile.selectedKey()
+        const valid = () => unchanged() && key === savefile.selectedKey() && current()
+        const snapshot = act.ascend.liveSave(ctx)
+        const live = identity.fromSave(snapshot)
+        const proven =
+            valid() && live.known && live.runId === who.runId && live.legacyId === who.legacyId
+                ? valid
+                : null
+        cosmeticIdentityProof = {
+            valid,
+            proven,
+            retryAt: live.known ? null : Date.now() + COSMETIC_RETRY_MS
+        }
+        return proven
     }
 
     function invalidate() {
@@ -298,11 +385,14 @@
         acquire,
         prompt,
         ownsPrompt,
+        dismissCosmeticPrompt,
         invalidate,
         pause,
         resume,
         isolate,
         isCancellation,
-        revision
+        revision,
+        cosmeticCheck,
+        cosmeticIdentity
     }
 })()
