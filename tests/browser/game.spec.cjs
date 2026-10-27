@@ -637,7 +637,8 @@ for (const kind of ['name', 'clones']) {
             await window.pendingCosmetic
             window.restoreCosmeticFlush()
         })
-        await expect(game.locator(prompt)).toHaveCount(0)
+        await expect(game.locator(prompt)).toBeHidden()
+        expect(await game.evaluate(() => Alakazam.safety.prompt())).toBe(null)
         expect(
             await game.evaluate(
                 kind => (kind === 'name' ? Game.bakeryName : Game.YouCustomizer.currentGenes),
@@ -646,7 +647,7 @@ for (const kind of ['name', 'clones']) {
         ).toEqual(kind === 'name' ? 'Orteil' : fixture.temporary)
         expect(await game.evaluate(key => Alakazam.store.get(key), fixture.key)).toEqual(journal)
         await game.evaluate(() => window.recoverImportedCosmetic())
-        await expect(game.locator('#promptContentExportSave')).toHaveCount(0)
+        await expect(game.locator('#promptContentExportSave')).toBeHidden()
         expect(await game.evaluate(key => Alakazam.store.get(key), fixture.key)).toEqual(journal)
     })
 }
