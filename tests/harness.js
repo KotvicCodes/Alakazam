@@ -95,7 +95,7 @@ function boot(opts = {}) {
         )
         const sections = decoded.split('|')
         const run = sections[2].split(';')
-        run[2] = String(Date.now())
+        run[2] = String(vm.runInContext('Date.now()', ctx))
         run[5] = g.state.genes.join(',')
         sections[2] = run.join(';')
         const scalars = sections[4].split(';')

@@ -101,18 +101,22 @@ Use storage's `setItem`/`removeItem` to simulate imports, alternate keys, late s
 creation, or reset transitions.
 
 ```js
+const { test } = require('node:test')
 const { clock } = require('./clock')
 const { autosaves } = require('./fixtures')
 const { boot } = require('./harness')
-const time = clock()
-const scene = autosaves({ cookieClicks: 1000, handmadeCookies: 1e6 }, { now: time.now })
-const h = boot({ clock: time, localStorage: scene.localStorage })
-scene.change({ cookieClicks: 1600, handmadeCookies: 1.6e6 })
-time.advance(60000)
-scene.publish()
-await h.A.registry.get('saveWatch').tick()
-await h.A.registry.get('clicks').tick()
-// Assert the owning feature's correct outcome here.
+
+test('observe a published save', async () => {
+    const time = clock()
+    const scene = autosaves({ cookieClicks: 1000, handmadeCookies: 1e6 }, { now: time.now })
+    const h = boot({ clock: time, localStorage: scene.localStorage })
+    scene.change({ cookieClicks: 1600, handmadeCookies: 1.6e6 })
+    time.advance(60000)
+    scene.publish()
+    await h.A.registry.get('saveWatch').tick()
+    await h.A.registry.get('clicks').tick()
+    // Assert the owning feature's correct outcome here.
+})
 ```
 
 `tests/browser/fixtures.cjs` exports:
