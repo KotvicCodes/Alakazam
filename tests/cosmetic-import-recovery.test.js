@@ -1,6 +1,7 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const { boot } = require('./harness')
+const { El } = require('./dom')
 const fx = require('./fixtures')
 
 const ORIGINAL = [4, 5, 6, 1, 2, 3, 4]
@@ -101,6 +102,30 @@ function importSave(h, raw, method) {
     h.A.input.simulateClick(target)
 }
 
+// The native FileLoad route reads asynchronously, then imports without opening
+// a prompt. Hold that completion explicitly so recovery can run while reading.
+function importFile(h, raw) {
+    const input = new El('input', { id: 'FileLoadInput' })
+    h.game.doc.body.append(input)
+    input.files = [{ text: raw }]
+    let complete
+    input.addEventListener('change', event => {
+        const file = event.target.files[0]
+        complete = () => {
+            const parsed = h.A.savefile.parse(h.A.savefile.decode(file.text))
+            h.game.state.genes = Array.from(parsed.run.appearance)
+            h.game.state.bakeryName = parsed.run.bakeryName
+            // LoadSave calls bakeryNameRefresh even for an unchanged name.
+            h.game.doc.getElementById('bakeryName').textContent = parsed.run.bakeryName + "'s bakery"
+        }
+    })
+    for (const type of ['pointerdown', 'input', 'change']) {
+        h.game.doc.fire(type, { isTrusted: true, target: input })
+    }
+    input.dispatchEvent(new h.ctx.Event('change', { target: input }))
+    return () => complete()
+}
+
 async function recover(h, kind, consumer = 'recovery') {
     if (consumer === 'tick')
         return h.A.registry.get(kind === 'clones' ? 'clones' : 'achievements').tick()
@@ -109,6 +134,45 @@ async function recover(h, kind, consumer = 'recovery') {
 }
 
 for (const kind of ['clones', 'name']) {
+    for (const consumer of ['tick', 'recovery']) {
+        for (const delayed of [false, true]) {
+            test(`${kind} ${consumer} recovers a no-prompt file import${delayed ? ' after recovery during the read' : ''}`, async () => {
+                const { h, raw } = await restored(kind)
+                const who = h.A.identity.current()
+                const revision = h.A.safety.revision('prompt')
+                const complete = importFile(h, raw)
+                if (delayed) {
+                    // Invalidation only at selection would be consumed here.
+                    await recover(h, kind, consumer)
+                    await recover(h, kind)
+                    assertOriginal(h, kind)
+                }
+                const mark = plain(h.A.store.get(KEY[kind]))
+                const before = h.A.safety.revision('prompt')
+                const label = h.game.doc.getElementById('bakeryName').firstChild
+                complete()
+                assert.notEqual(h.game.doc.getElementById('bakeryName').firstChild, label)
+                assert.equal(h.A.safety.prompt(), null)
+                assert.equal(h.A.safety.revision('prompt'), before)
+                if (!delayed) assert.equal(before, revision)
+                assert.equal(h.A.identity.current().runId, who.runId)
+                assert.deepEqual(plain(h.A.store.get(KEY[kind])), mark)
+                assert.equal(h.ctx.localStorage.getItem('CookieClickerGame'), raw)
+
+                await recover(h, kind, consumer)
+                assertOriginal(h, kind)
+                assert.ok(h.A.store.get(KEY[kind]), 'retain the undo until restoration is saved')
+                const prompts = h.game.state.log.filter(line => line.startsWith('prompt ')).length
+                await recover(h, kind, 'tick')
+                await recover(h, kind)
+                assert.equal(h.game.state.log.filter(line => line.startsWith('prompt ')).length, prompts)
+                autosave(h)
+                await recover(h, kind)
+                assert.equal(h.A.store.get(KEY[kind], null), null)
+            })
+        }
+    }
+
     for (const consumer of ['tick', 'recovery']) {
         for (const method of ['pointerdown', 'keydown']) {
             test(`${kind} ${consumer} recovers a same-document ${method} import after restoration`, async () => {

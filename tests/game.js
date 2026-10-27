@@ -517,9 +517,23 @@ function build(opts = {}) {
     })
 
     // ---- bakery naming ----
-    if (opts.bakeryName !== undefined) {
-        state.bakeryName = opts.bakeryName
+    {
+        state.bakeryName = opts.bakeryName ?? 'Test Bakery'
         const bakery = new El('div', { id: 'bakeryName', text: state.bakeryName + "'s bakery" })
+        // The real label always exists. bakeryNameRefresh assigns textContent,
+        // replacing its text node even when the displayed name is unchanged.
+        const refresh = text => {
+            bakery.text = text
+            bakery.children = []
+            bakery.append(new El('#text', { text }))
+        }
+        for (const property of ['textContent', 'innerText']) {
+            Object.defineProperty(bakery, property, {
+                get: () => bakery.text,
+                set: refresh
+            })
+        }
+        refresh(bakery.text)
         bakery.addEventListener('click', () => {
             prompt(
                 'NameBakery',

@@ -139,7 +139,8 @@
             restoredName = {
                 mark: { ...mark },
                 runId: identity.current().runId,
-                revision: safety.revision('prompt')
+                revision: safety.revision('prompt'),
+                unchanged: safety.cosmeticCheck()
             }
         }
     }
@@ -155,13 +156,14 @@
             store.forget(NAME_KEY)
             return false
         }
-        // Import Save can leave the journal and run unchanged while replacing
-        // the live name. Recheck the naming input after any trusted prompt use;
-        // an already open prompt also needs its actual input checked below.
+        // Imports can leave the journal and run unchanged while replacing the
+        // live name. Check the label too: file loads do not use a prompt. An
+        // already open prompt needs its actual input checked below.
         if (
             restoredName &&
             restoredName.runId === who.runId &&
             restoredName.revision === safety.revision('prompt') &&
+            restoredName.unchanged() &&
             JSON.stringify(mark) === JSON.stringify(restoredName.mark) &&
             !safety.prompt()
         ) {

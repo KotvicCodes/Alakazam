@@ -236,6 +236,22 @@
         return resource ? revisions.get(resource) || 0 : userRevision
     }
 
+    // LoadSave refreshes this label with textContent, replacing its text node
+    // even when the imported name is unchanged. Check the node synchronously:
+    // FileReader.onload can finish long after selection and any intervening
+    // recovery. Prompt revisions alone cannot prove cosmetics are still live.
+    function cosmeticCheck() {
+        const label = document.getElementById('bakeryName')
+        const content = label?.firstChild
+        const text = label?.textContent
+        return () =>
+            !!label &&
+            !!text &&
+            document.getElementById('bakeryName') === label &&
+            label.firstChild === content &&
+            label.textContent === text
+    }
+
     function invalidate() {
         generation++
     }
@@ -320,6 +336,7 @@
         resume,
         isolate,
         isCancellation,
-        revision
+        revision,
+        cosmeticCheck
     }
 })()
