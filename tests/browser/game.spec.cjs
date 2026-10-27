@@ -391,3 +391,82 @@ for (const cancellation of ['pause', 'foreign prompt']) {
         expect(await game.evaluate(() => Game.Objects['Wizard tower'].level)).toBe(3)
     })
 }
+
+test('cancelled bulk switch restores one while a player import prompt stays open', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookies = 1e9
+        Game.cookiesEarned = 1e9
+        Game.RefreshStore()
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await expect.poll(() => game.evaluate(() => Alakazam.live.readGlobals().cookies)).toBe(1e9)
+    await game.evaluate(() => {
+        const until = Alakazam.transactions.until
+        window.restoreStoreWait = () => (Alakazam.transactions.until = until)
+        Alakazam.transactions.until = async (...args) => {
+            const result = await until(...args)
+            if (Game.buyBulk === 100 && !window.releaseStoreWait) {
+                await new Promise(resolve => (window.releaseStoreWait = resolve))
+            }
+            return result
+        }
+        const product = Alakazam.live.readProducts().find(item => item.index === 0)
+        window.pendingStoreBuy = Alakazam.act.store.buy(product, 100, 1e9).catch(error => ({
+            error: error.name
+        }))
+    })
+    await game.waitForFunction(() => typeof window.releaseStoreWait === 'function')
+    expect(await game.evaluate(() => Game.buyBulk)).toBe(100)
+    await game.keyboard.press('Control+o')
+    await expect(game.locator('#promptContentImportSave')).toHaveCount(1)
+    await game.evaluate(async () => {
+        window.releaseStoreWait()
+        await window.pendingStoreBuy
+        window.restoreStoreWait()
+    })
+    await expect(game.locator('#promptContentImportSave')).toHaveCount(1)
+    expect(await game.evaluate(() => Game.Objects.Cursor.amount)).toBe(0)
+    expect(await game.evaluate(() => [Game.buyMode, Game.buyBulk])).toEqual([1, 1])
+})
+
+test('pausing after gift wrapping retains the actual generated code', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookies = 1e10
+        Game.cookiesEarned = 1e10
+        Game.prestige = 1e6
+        Game.heavenlyChips = 1
+        Game.heavenlyChipsSpent = 999999
+        Game.Upgrades['Wrapping paper'].bought = 1
+    })
+    await publish(game)
+    await game.evaluate(async () => {
+        await Alakazam.save.connect()
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await expect.poll(() => game.evaluate(() => Alakazam.live.readGlobals().cookies)).toBe(1e10)
+    await game.evaluate(() => {
+        const schedule = window.setTimeout.bind(window)
+        window.restoreGiftWait = () => (window.setTimeout = schedule)
+        window.setTimeout = (callback, delay, ...args) => {
+            if (delay === 350 && Alakazam.safety.ownsPrompt('gifts', 'GiftSendReady')) {
+                window.generatedGiftCode = document.getElementById('giftCode').value
+                window.releaseGiftWait = () => callback(...args)
+                return schedule(() => {}, 0)
+            }
+            return schedule(callback, delay, ...args)
+        }
+        window.pendingGiftTick = Alakazam.registry.get('gifts').tick()
+    })
+    await game.waitForFunction(() => typeof window.releaseGiftWait === 'function')
+    expect(await game.evaluate(() => window.generatedGiftCode.length)).toBeGreaterThan(0)
+    expect(await game.evaluate(() => !!Game.hasBuff('Gifted out'))).toBe(true)
+    await game.evaluate(async () => {
+        Alakazam.store.setSetting('enabled', false)
+        window.releaseGiftWait()
+        await window.pendingGiftTick
+        window.restoreGiftWait()
+    })
+    expect(await game.evaluate(() => Alakazam.gifts.heldCode()?.code === window.generatedGiftCode)).toBe(
+        true
+    )
+})
