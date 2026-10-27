@@ -238,6 +238,24 @@
 
     //! Buying and selling
 
+    const refusals = new Map()
+
+    function purchaseState(product, count, budget, cookies) {
+        const { safety, identity, save } = window.Alakazam
+        return {
+            element: product.element,
+            priceElement: product.priceElement,
+            price: product.priceElement.innerText,
+            classes: product.element.className,
+            owned: product.owned,
+            count,
+            budget,
+            cookies,
+            controls: safety.revision('store'),
+            run: identity.fromSave(save.get()).runId
+        }
+    }
+
     //* buy
     // Buy `count` of a product, spending no more than `maxSpend`.
     //
@@ -259,12 +277,20 @@
                 const current = live.readProducts().find(p => p.index === product.index)
                 if (!current || !Number.isInteger(current.owned) || current.owned < 0) return
                 const cost = readBulkPrice(current)
-                const budget = Math.min(maxSpend ?? Infinity, live.readGlobals().cookies)
+                const cookies = live.readGlobals().cookies
+                const budget = Math.min(maxSpend ?? Infinity, cookies)
                 if (!Number.isFinite(cost) || cost <= 0 || cost > budget) {
                     result.reason = 'verified price exceeded budget or unavailable'
                     return
                 }
                 if (!token.valid()) return
+                const state = purchaseState(current, count, budget, cookies)
+                const refused = refusals.get(current.index)
+                if (refused && Object.keys(state).every(key => Object.is(state[key], refused[key]))) {
+                    result.reason = 'unchanged refused purchase'
+                    return
+                }
+                refusals.delete(current.index)
                 // observe before clicking: a real redraw may retain the same price
                 observeRedraw('buy', count)
                 simulateClick(current.element)
@@ -276,6 +302,11 @@
                     // a refused click may never draw; request a fresh quantity
                     // draw under the next valid lease before allowing another buy
                     if (redraw) redraw.refresh = true
+                    // identical redraws do not prove affordability: rounded prices
+                    // can keep looking affordable across ordinary scheduler ticks.
+                    // cancelled observation is inconclusive, so only remember a
+                    // refusal while we still own the transaction.
+                    if (token.valid()) refusals.set(current.index, state)
                     result.reason = 'purchase not observed'
                     return
                 }
