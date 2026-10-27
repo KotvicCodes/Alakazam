@@ -190,9 +190,21 @@
         const version = ++loadVersion
         loaded = false
         const who = typeof identity === 'object' && identity ? identity : null
-        if (who && !who.known) {
+        const target = who
+            ? who.known
+                ? 'legacy:' + who.familyId
+                : quarantine
+            : 'legacy:' + (identity || 'unknown')
+        // The scheduler has drained old actions before this lifecycle boundary.
+        // Invalidate an earlier unrelated scope immediately, even if this read
+        // queues behind another load. Unknown/quarantined saves never release it.
+        const announcement = mediatedRecovery()
+            ? journalMessage({ operation: 'namespace', scope: null, version, settled: false })
+            : null
+        if (announcement) void announcement.catch(() => {}) // request below reports/rethrows
+        if (who && (!who.known || target !== namespace)) {
             // This must happen before the read: a failed/delayed load must never
-            // leave unknown writes pointed at the previously connected family.
+            // leave new UI writes pointed at the previously connected family.
             namespace = quarantine
             runNamespace = quarantine
         }
@@ -202,16 +214,12 @@
             loadChanges = new Map()
             listen()
             try {
+                if (announcement) await announcement
                 const all = await call('get', null)
                 for (const [key, value] of loadChanges) {
                     if (value === undefined) delete all[key]
                     else all[key] = value
                 }
-                const target = who
-                    ? who.known
-                        ? 'legacy:' + who.familyId
-                        : quarantine
-                    : 'legacy:' + (identity || 'unknown')
                 const runTarget = who && who.known ? 'run:' + who.familyId + ':' + who.runId : target
                 const source = Object.assign(
                     {},
@@ -247,6 +255,14 @@
                 if (version === loadVersion) {
                     namespace = target
                     runNamespace = runTarget
+                    if (mediatedRecovery())
+                        await journalMessage({
+                            operation: 'namespace',
+                            scope: who?.known ? target : null,
+                            version,
+                            settled: true
+                        })
+                    if (version !== loadVersion) return
                     loaded = true
                     // Startup recovery remains synchronous after ready(). A
                     // live foreign document simply makes this claim return false.

@@ -2,6 +2,7 @@
 // sender.tab is the browser's identity, so two tabs (even the same save) never
 // overwrite one another. Only derived IDs and summaries cross this bridge.
 const STATUS_PREFIX = 'status:tab:'
+const NAMESPACE_PREFIX = 'journal:namespace:tab:'
 const gameURL = url => /^https:\/\/orteil\.dashnet\.org\/cookieclicker\//.test(url || '')
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (message?.type !== 'alakazam:publish' || !sender.tab || !gameURL(sender.url)) return
@@ -19,7 +20,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     })
     return true
 })
-chrome.tabs.onRemoved.addListener(tabId => chrome.storage.local.remove(STATUS_PREFIX + tabId))
+chrome.tabs.onRemoved.addListener(tabId =>
+    chrome.storage.local.remove([STATUS_PREFIX + tabId, NAMESPACE_PREFIX + tabId])
+)
 chrome.tabs.onUpdated.addListener((tabId, change) => {
     if (change.status === 'loading') chrome.storage.local.remove(STATUS_PREFIX + tabId)
 })
@@ -56,15 +59,36 @@ async function documentExists(owner) {
         throw error
     }
 }
-async function ownerBlocks(owner, claimant) {
-    if (await documentExists(owner)) return true
+async function unrelatedNamespace(tabId, documentId, scope) {
+    const field = NAMESPACE_PREFIX + tabId
+    // An earlier transition announcement must land before a competing claim
+    // can use the previous confirmed scope.
+    if (journalQueues.has(field)) await journalQueues.get(field)
+    const all = await journalCall(chrome.storage.local, 'get', [field])
+    const held = all[field]
+    return (
+        held?.documentId === documentId &&
+        held.settled === true &&
+        typeof held.scope === 'string' &&
+        held.scope.startsWith('legacy:') &&
+        held.scope !== scope
+    )
+}
+async function ownerBlocks(owner, claimant, scope) {
+    if (await documentExists(owner))
+        return !(await unrelatedNamespace(owner.tabId, owner.documentId, scope))
     if (owner.tabId === claimant.tabId) return false
     // Keep the handoff to a reloading game tab. Otherwise an unrelated tab can
     // seize/discard the undo between document destruction and replacement boot,
     // or keep the replacement's temporary save blocked behind its own live game.
     try {
         const tab = await journalCall(chrome.tabs, 'get', owner.tabId)
-        return gameURL(tab?.url) || gameURL(tab?.pendingUrl)
+        if (!gameURL(tab?.url) && !gameURL(tab?.pendingUrl)) return false
+        const frame = await journalCall(chrome.webNavigation, 'getFrame', {
+            tabId: owner.tabId,
+            frameId: 0
+        })
+        return !frame?.documentId || !(await unrelatedNamespace(owner.tabId, frame.documentId, scope))
     } catch (error) {
         if (/^No tab (?:with id|found)/i.test(error.message)) return false
         throw error
@@ -81,7 +105,7 @@ async function journalRequest(message, sender) {
     let record = all[field] || all[baseField]
     if (operation === 'claim') {
         if (message.begin && record && !record.deleted) return { owned: false, record, owner: heldOwner }
-        if (heldOwner && !sameDocument(heldOwner, owner) && (await ownerBlocks(heldOwner, owner)))
+        if (heldOwner && !sameDocument(heldOwner, owner) && (await ownerBlocks(heldOwner, owner, scope)))
             return { owned: false, record, owner: heldOwner }
         // A migration may still have its baseline queued locally. Only an absent
         // field can promote it; a durable tombstone must never be resurrected.
@@ -101,19 +125,55 @@ async function journalRequest(message, sender) {
     await journalCall(chrome.storage.local, 'set', values)
     return { owned: true }
 }
+async function namespaceRequest(message, sender) {
+    const frame = await journalCall(chrome.webNavigation, 'getFrame', {
+        tabId: sender.tab.id,
+        frameId: 0
+    })
+    if (frame?.documentId !== sender.documentId)
+        throw new Error('Namespace document is no longer current')
+    const field = NAMESPACE_PREFIX + sender.tab.id
+    const all = await journalCall(chrome.storage.local, 'get', [field])
+    const held = all[field]
+    if (
+        held?.documentId === sender.documentId &&
+        (held.version > message.version ||
+            (held.version === message.version && held.settled && !message.settled))
+    )
+        return { accepted: true }
+    await journalCall(chrome.storage.local, 'set', {
+        [field]: {
+            documentId: sender.documentId,
+            scope: message.scope,
+            version: message.version,
+            settled: message.settled
+        }
+    })
+    return { accepted: true }
+}
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (message?.type !== 'alakazam:journal' || !sender.tab || !gameURL(sender.url)) return
+    const announcing = message.operation === 'namespace'
     if (
         !sender.documentId ||
-        !message.scope?.startsWith('legacy:') ||
-        !['bakeryNameRecovery', 'cloneRecovery'].includes(message.key)
+        (announcing
+            ? !Number.isSafeInteger(message.version) ||
+              message.version < 1 ||
+              typeof message.settled !== 'boolean' ||
+              (message.scope !== null && !message.scope?.startsWith('legacy:'))
+            : !message.scope?.startsWith('legacy:') ||
+              !['bakeryNameRecovery', 'cloneRecovery'].includes(message.key))
     ) {
         respond({ error: 'Recovery requires a known save and browser document identity' })
         return
     }
-    const field = journalField(message.scope, message.key)
+    const field = announcing
+        ? NAMESPACE_PREFIX + sender.tab.id
+        : journalField(message.scope, message.key)
     const prior = journalQueues.get(field) || Promise.resolve()
-    const work = prior.catch(() => {}).then(() => journalRequest(message, sender))
+    const work = prior
+        .catch(() => {})
+        .then(() => (announcing ? namespaceRequest(message, sender) : journalRequest(message, sender)))
     journalQueues.set(field, work)
     work.then(
         result => respond(result),

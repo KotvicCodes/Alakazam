@@ -23,6 +23,7 @@ function extension() {
     const chrome = storage.chrome()
     let nextDocument = 0
     let navigationError = ''
+    let navigationErrorTab = null
     chrome.runtime.onMessage = { addListener: fn => listeners.push(fn) }
     chrome.tabs = {
         onRemoved: { addListener() {} },
@@ -37,15 +38,16 @@ function extension() {
         }
     }
     chrome.webNavigation = {
-        getFrame({ tabId, documentId }, callback) {
-            if (navigationError) {
+        getFrame({ tabId, documentId, frameId }, callback) {
+            if (navigationError && (navigationErrorTab === null || navigationErrorTab === tabId)) {
                 chrome.runtime.lastError = { message: navigationError }
                 callback()
                 delete chrome.runtime.lastError
                 return
             }
-            const doc = documents.get(documentId)
-            callback(doc?.alive && doc.tabId === tabId ? { documentId } : null)
+            const current = frameId === 0 ? tabs.get(tabId)?.documentId : documentId
+            const doc = documents.get(current)
+            callback(doc?.alive && doc.tabId === tabId ? { documentId: current } : null)
         }
     }
     const worker = () =>
@@ -57,18 +59,27 @@ function extension() {
         bakeryName: 'Original'
     }).raw
     const localStorage = fx.storage({ CookieClickerGame: raw })
-    function open({ tabId = ++nextDocument, name = 'Original', genes = ORIGINAL } = {}) {
+    function open({
+        tabId = ++nextDocument,
+        name = 'Original',
+        genes = ORIGINAL,
+        path = '/cookieclicker/'
+    } = {}) {
         const documentId = 'document-' + ++nextDocument
         documents.set(documentId, { tabId, alive: true })
-        tabs.set(tabId, { url: 'https://orteil.dashnet.org/cookieclicker/' })
+        const url = 'https://orteil.dashnet.org' + path
+        tabs.set(tabId, { url, documentId })
+        if (path.includes('/beta/') && !localStorage.getItem('CookieClickerGameBeta'))
+            localStorage.setItem('CookieClickerGameBeta', raw)
         const sender = {
             tab: { id: tabId },
             documentId,
-            url: 'https://orteil.dashnet.org/cookieclicker/'
+            url
         }
         const h = boot({
             storage,
             localStorage,
+            location: { pathname: path },
             clock: clock(),
             game: { bakeryName: name, genes },
             connectChrome(contentChrome) {
@@ -105,7 +116,10 @@ function extension() {
             documents.get(h.documentId).alive = false
             tabs.set(h.tabId, { url: 'https://example.com/' })
         },
-        navigationError: message => (navigationError = message),
+        navigationError(message, tabId = null) {
+            navigationError = message
+            navigationErrorTab = tabId
+        },
         holdReply: (h, operation) =>
             new Promise(resolve => heldReplies.set(h.documentId + ':' + operation, resolve)),
         restartWorker() {
@@ -115,7 +129,7 @@ function extension() {
     }
 }
 function snapshot(h) {
-    const parts = h.A.savefile.decode(h.ctx.localStorage.getItem('CookieClickerGame')).split('|')
+    const parts = h.A.savefile.decode(h.ctx.localStorage.getItem(h.A.savefile.selectedKey())).split('|')
     const run = parts[2].split(';')
     run[2] = String(h.ctx.Date.now())
     run[3] = h.game.state.bakeryName
@@ -125,7 +139,7 @@ function snapshot(h) {
 }
 function autosave(h) {
     const raw = snapshot(h)
-    h.ctx.localStorage.setItem('CookieClickerGame', raw)
+    h.ctx.localStorage.setItem(h.A.savefile.selectedKey(), raw)
     return raw
 }
 async function ready(h) {
@@ -449,7 +463,7 @@ test('a browser missing-tab error releases ownership while retaining the journal
     const boundary = await suspended(a, 'name')
     autosave(a)
     ext.close(a)
-    ext.navigationError(`No tab with id: ${a.tabId}.`)
+    ext.navigationError(`No tab with id: ${a.tabId}.`, a.tabId)
     const b = await ready(ext.open({ name: 'Orteil' }))
     assert.equal(b.A.store.ownsRecovery(KEY.name), true)
     assert.equal(b.A.achievements.recoverName(), true)
@@ -514,3 +528,164 @@ for (const kind of ['name', 'clones']) {
         assert.deepEqual(ext.storage.disk['legacy:' + sourceId][key], mark)
     })
 }
+
+for (const kind of ['name', 'clones']) {
+    test(`${kind}: a confirmed beta replacement releases stable recovery while its tab stays open`, async () => {
+        const ext = extension()
+        const a = await ready(ext.open())
+        const boundary = await suspended(a, kind)
+        autosave(a)
+        const key = KEY[kind]
+        const mark = plain(a.A.store.get(key))
+        ext.kill(a)
+        const beta = ext.open({ tabId: a.tabId, path: '/cookieclicker/beta/' })
+        const b = await ready(ext.open({ name: a.game.state.bakeryName, genes: a.game.state.genes }))
+        // A missing/initializing replacement does not forfeit reload protection.
+        assert.equal(await b.A.store.claimRecovery(key), false)
+        await beta.A.store.ready({ known: false })
+        assert.equal(await b.A.store.claimRecovery(key), false)
+        await ready(beta)
+        assert.notEqual(beta.A.identity.current().familyId, mark.legacyId)
+        ext.restartWorker()
+        assert.equal(
+            await b.A.store.claimRecovery(key),
+            true,
+            'known beta scope releases stable reservation across worker restart'
+        )
+        await recover(b, kind)
+        assert.deepEqual(value(b, kind), kind === 'name' ? 'Original' : ORIGINAL)
+        assert.ok(b.A.store.get(key), 'temporary stable autosave keeps durable undo')
+        // Returning to stable can recover the original journal after the new
+        // recovery owner has closed; the beta namespace never consumes it.
+        ext.close(b)
+        ext.kill(beta)
+        const back = await ready(
+            ext.open({ tabId: a.tabId, name: a.game.state.bakeryName, genes: a.game.state.genes })
+        )
+        await recover(back, kind)
+        assert.deepEqual(value(back, kind), kind === 'name' ? 'Original' : ORIGINAL)
+        boundary.release()
+        await boundary.work
+    })
+
+    test(`${kind}: an unrelated-family import releases the old journal after its task drains`, async () => {
+        const ext = extension()
+        const a = await ready(ext.open())
+        const boundary = await suspended(a, kind)
+        const temporary = autosave(a)
+        const key = KEY[kind]
+        const mark = plain(a.A.store.get(key))
+        const b = await ready(ext.open({ name: a.game.state.bakeryName, genes: a.game.state.genes }))
+        a.game.state.bakeryName = 'Imported family'
+        a.game.state.genes = [1, 1, 1, 1, 1, 1, 1]
+        a.game.doc.getElementById('bakeryName').textContent = "Imported family's bakery"
+        const imported = fx.save({
+            fullDate: 1750000090000,
+            bakeryName: 'Imported family',
+            appearance: '1,1,1,1,1,1,1',
+            amounts: { 19: 1 }
+        }).raw
+        a.ctx.localStorage.setItem('CookieClickerGame', imported)
+        // While the old action is still suspended, its document remains owner.
+        assert.equal(await b.A.store.claimRecovery(key), false)
+        boundary.release()
+        await boundary.work
+        // Old-namespace writes still flush to their captured destination.
+        a.A.store.set('oldFamilyPending', true)
+        await a.A.scheduler.reconcile(a.A.identity.current())
+        await a.A.store.flush()
+        assert.equal(
+            ext.storage.disk[a.A.store.fieldKey('legacy:' + mark.legacyId, 'oldFamilyPending')].value,
+            true
+        )
+        // B is independently still running the original stable game/save.
+        b.ctx.localStorage.setItem('CookieClickerGame', temporary)
+        ext.restartWorker()
+        assert.equal(
+            await b.A.store.claimRecovery(key),
+            true,
+            'known unrelated family releases ownership in a surviving document'
+        )
+        await recover(b, kind)
+        assert.deepEqual(value(b, kind), kind === 'name' ? 'Original' : ORIGINAL)
+        ext.close(b)
+        a.game.state.bakeryName = kind === 'name' ? 'Orteil' : 'Original'
+        a.game.state.genes = kind === 'clones' ? plain(mark.previous) : ORIGINAL
+        a.game.doc.getElementById('bakeryName').textContent = a.game.state.bakeryName + "'s bakery"
+        await a.A.scheduler.reconcile(a.A.identity.current())
+        await recover(a, kind)
+        assert.deepEqual(value(a, kind), kind === 'name' ? 'Original' : ORIGINAL)
+    })
+}
+
+for (const kind of ['name', 'clones']) {
+    test(`${kind}: quarantine and an initializing reload keep the reservation until a known unrelated scope`, async () => {
+        const ext = extension()
+        const a = await ready(ext.open())
+        const boundary = await suspended(a, kind)
+        autosave(a)
+        const key = KEY[kind]
+        ext.kill(a)
+        const beta = ext.open({ tabId: a.tabId, path: '/cookieclicker/beta/' })
+        const b = await ready(ext.open({ name: a.game.state.bakeryName, genes: a.game.state.genes }))
+        await ready(beta)
+        await beta.A.store.ready({ known: false })
+        ext.restartWorker()
+        assert.equal(
+            await b.A.store.claimRecovery(key),
+            false,
+            'quarantine invalidates the earlier unrelated scope'
+        )
+        // Hold the pending announcement's response after it has landed. A known
+        // identity argument alone does not confirm a completed namespace load.
+        const held = ext.holdReply(beta, 'namespace')
+        const loading = ready(beta)
+        const deliver = await held
+        assert.equal(beta.A.store.isReady(), false)
+        ext.restartWorker()
+        assert.equal(
+            await b.A.store.claimRecovery(key),
+            false,
+            'initializing state survives worker restart'
+        )
+        deliver()
+        await loading
+        assert.equal(await b.A.store.claimRecovery(key), true)
+        boundary.release()
+        await boundary.work
+    })
+}
+
+test('stale document and namespace announcements cannot replace current quarantine confirmation', async () => {
+    const ext = extension()
+    const a = await ready(ext.open())
+    ext.kill(a)
+    const beta = await ready(ext.open({ tabId: a.tabId, path: '/cookieclicker/beta/' }))
+    const field = 'journal:namespace:tab:' + beta.tabId
+    const stale = plain(ext.storage.disk[field])
+    await beta.A.store.ready({ known: false })
+    const quarantined = plain(ext.storage.disk[field])
+    const announce = (h, version, scope) =>
+        new Promise(resolve =>
+            h.ctx.chrome.runtime.sendMessage(
+                {
+                    type: 'alakazam:journal',
+                    operation: 'namespace',
+                    version,
+                    scope,
+                    settled: true
+                },
+                resolve
+            )
+        )
+    assert.equal((await announce(beta, stale.version, stale.scope)).accepted, true)
+    assert.deepEqual(ext.storage.disk[field], quarantined, 'lower namespace generation stays superseded')
+    assert.match((await announce(a, 100, 'legacy:unrelated')).error, /no longer current/)
+    assert.deepEqual(
+        ext.storage.disk[field],
+        quarantined,
+        'old document cannot overwrite replacement confirmation'
+    )
+    ext.restartWorker()
+    assert.deepEqual(ext.storage.disk[field], quarantined)
+})

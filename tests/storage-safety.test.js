@@ -326,3 +326,83 @@ for (const old of ['previousLegacyId', 'previousRecoveryId']) {
         })
     }
 }
+
+for (const failed of [false, true]) {
+    test(`known family transition quarantines new UI writes during a ${failed ? 'failed' : 'delayed'} read`, async () => {
+        const storage = storageFixture()
+        const h = page({ storage })
+        const original = h.A.identity.current()
+        await h.A.store.ready(original)
+        h.A.store.set('oldCleanup', 'retained')
+        h.A.store.set('spellsCast', 17)
+        h.entries.CookieClickerGame = fx.save({ fullDate: 1750000090000 }).raw
+        const next = h.A.identity.current()
+        assert.notEqual(next.familyId, original.familyId)
+        const held = storage.deferNextGetCallback()
+        const loading = h.A.store.ready(next)
+        const result = loading.catch(error => error)
+        h.A.store.set('uiDuringLoad', 'quarantined')
+        h.A.store.set('gardenHarvests', 23)
+        const deliver = await held
+        if (failed) storage.failNext('get', 'known family read failed')
+        deliver()
+        if (failed) {
+            assert.match((await result).message, /known family read failed/)
+            h.A.store.set('uiAfterFailure', 'quarantined')
+        } else await result
+        await h.A.store.flush()
+        const oldFamily = 'legacy:' + original.familyId
+        const newFamily = 'legacy:' + next.familyId
+        assert.equal(storage.disk[h.A.store.fieldKey(oldFamily, 'oldCleanup')].value, 'retained')
+        assert.equal(
+            storage.disk[
+                h.A.store.fieldKey('run:' + original.familyId + ':' + original.runId, 'spellsCast')
+            ].value,
+            17
+        )
+        for (const key of ['uiDuringLoad', 'uiAfterFailure']) {
+            assert.equal(storage.disk[h.A.store.fieldKey(oldFamily, key)], undefined)
+            assert.equal(storage.disk[h.A.store.fieldKey(newFamily, key)], undefined)
+        }
+        for (const who of [original, next]) {
+            assert.equal(
+                storage.disk[
+                    h.A.store.fieldKey('run:' + who.familyId + ':' + who.runId, 'gardenHarvests')
+                ],
+                undefined
+            )
+        }
+        assert.ok(
+            Object.entries(storage.disk).some(
+                ([key, record]) =>
+                    key.includes('quarantine%3A') &&
+                    key.endsWith(':uiDuringLoad') &&
+                    record.value === 'quarantined'
+            )
+        )
+        if (failed) await h.A.store.ready(next)
+        assert.equal(h.A.store.get('uiDuringLoad', null), null)
+        assert.equal(h.A.store.get('gardenHarvests', 0), 0)
+        h.A.store.set('uiAfterLoad', 'new family')
+        await h.A.store.flush()
+        assert.equal(storage.disk[h.A.store.fieldKey(newFamily, 'uiAfterLoad')].value, 'new family')
+    })
+}
+
+test('a same-family read retains the intended scope for UI writes', async () => {
+    const storage = storageFixture()
+    const h = page({ storage })
+    const who = h.A.identity.current()
+    await h.A.store.ready(who)
+    const held = storage.deferNextGetCallback()
+    const loading = h.A.store.ready(who)
+    h.A.store.set('uiDuringSameFamilyLoad', true)
+    const deliver = await held
+    deliver()
+    await loading
+    await h.A.store.flush()
+    assert.equal(
+        storage.disk[h.A.store.fieldKey('legacy:' + who.familyId, 'uiDuringSameFamilyLoad')].value,
+        true
+    )
+})
