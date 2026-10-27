@@ -471,80 +471,84 @@ test('pausing after gift wrapping retains the actual generated code', async ({ g
     )
 })
 
+async function cosmeticRecoveryFixture(game, kind, replacement) {
+    return game.evaluate(
+        async ({ kind, replacement }) => {
+            // Page-world DOM coverage uses a test storage adapter; the extension
+            // project separately exercises the real Chrome storage bridge.
+            const disk = {}
+            window.chrome = {
+                storage: {
+                    local: {
+                        get(_keys, callback) {
+                            queueMicrotask(() => callback({ ...disk }))
+                        },
+                        set(values, callback) {
+                            Object.assign(disk, structuredClone(values))
+                            queueMicrotask(() => callback())
+                        }
+                    }
+                }
+            }
+            const original = [4, 5, 6, 1, 2, 3, 4]
+            const temporary = [6, 5, 6, 1, 2, 3, 4]
+            Game.Objects.You.amount = 1
+            Game.Objects.You.refresh()
+            Game.YouCustomizer.load((kind === 'clones' ? temporary : original).join(','))
+            Game.bakeryName = kind === 'name' ? 'Orteil' : 'Acceptance Original'
+            Game.bakeryNameRefresh()
+            Game.WriteSave()
+            await Alakazam.registry.get('saveWatch').tick()
+            await Alakazam.save.connect()
+            Alakazam.store.setSetting('enabled', true)
+            const who = Alakazam.identity.current()
+            const key = kind === 'name' ? 'bakeryNameRecovery' : 'cloneRecovery'
+            const mark =
+                kind === 'name'
+                    ? {
+                          legacyId: who.legacyId,
+                          original: 'Acceptance Original',
+                          expected: 'Orteil'
+                      }
+                    : {
+                          legacyId: who.legacyId,
+                          original,
+                          expected: temporary,
+                          previous: original,
+                          history: [original, temporary]
+                      }
+            Alakazam.store.set(key, mark)
+            await Alakazam.store.flush()
+            window.recoverImportedCosmetic = () =>
+                kind === 'name' ? Alakazam.achievements.recoverName() : Alakazam.clones.recover()
+            const sections = Alakazam.savefile.decode(Game.WriteSave(1)).split('|')
+            const run = sections[2].split(';')
+            if (replacement.startsWith('family-')) run[1] = String(Number(run[1]) - 86400000)
+            if (replacement.startsWith('run-')) run[4] = 'other-run-seed'
+            if (replacement.endsWith('-other')) {
+                if (kind === 'name') run[3] = 'Imported choice'
+                else run[5] = '2,4,1,0,3,5,7'
+            }
+            sections[2] = run.join(';')
+            const raw = escape(btoa(unescape(encodeURIComponent(sections.join('|')))) + '!END!')
+            await window.recoverImportedCosmetic()
+            return {
+                raw,
+                original,
+                temporary,
+                key,
+                stored: localStorage.getItem(Game.SaveTo),
+                journal: Alakazam.store.get(key)
+            }
+        },
+        { kind, replacement }
+    )
+}
+
 for (const kind of ['name', 'clones']) {
     for (const replacement of ['same-run', 'family-owned', 'family-other', 'run-owned', 'run-other']) {
         test(`file import ${replacement} preserves ${kind} recovery ownership`, async ({ game }) => {
-            const fixture = await game.evaluate(
-                async ({ kind, replacement }) => {
-                    // Page-world DOM coverage uses a test storage adapter; the extension
-                    // project separately exercises the real Chrome storage bridge.
-                    const disk = {}
-                    window.chrome = {
-                        storage: {
-                            local: {
-                                get(_keys, callback) {
-                                    queueMicrotask(() => callback({ ...disk }))
-                                },
-                                set(values, callback) {
-                                    Object.assign(disk, structuredClone(values))
-                                    queueMicrotask(() => callback())
-                                }
-                            }
-                        }
-                    }
-                    const original = [4, 5, 6, 1, 2, 3, 4]
-                    const temporary = [6, 5, 6, 1, 2, 3, 4]
-                    Game.Objects.You.amount = 1
-                    Game.Objects.You.refresh()
-                    Game.YouCustomizer.load((kind === 'clones' ? temporary : original).join(','))
-                    Game.bakeryName = kind === 'name' ? 'Orteil' : 'Acceptance Original'
-                    Game.bakeryNameRefresh()
-                    Game.WriteSave()
-                    await Alakazam.registry.get('saveWatch').tick()
-                    await Alakazam.save.connect()
-                    Alakazam.store.setSetting('enabled', true)
-                    const who = Alakazam.identity.current()
-                    const key = kind === 'name' ? 'bakeryNameRecovery' : 'cloneRecovery'
-                    const mark =
-                        kind === 'name'
-                            ? {
-                                  legacyId: who.legacyId,
-                                  original: 'Acceptance Original',
-                                  expected: 'Orteil'
-                              }
-                            : {
-                                  legacyId: who.legacyId,
-                                  original,
-                                  expected: temporary,
-                                  previous: original,
-                                  history: [original, temporary]
-                              }
-                    Alakazam.store.set(key, mark)
-                    await Alakazam.store.flush()
-                    window.recoverImportedCosmetic = () =>
-                        kind === 'name' ? Alakazam.achievements.recoverName() : Alakazam.clones.recover()
-                    const sections = Alakazam.savefile.decode(Game.WriteSave(1)).split('|')
-                    const run = sections[2].split(';')
-                    if (replacement.startsWith('family-')) run[1] = String(Number(run[1]) - 86400000)
-                    if (replacement.startsWith('run-')) run[4] = 'other-run-seed'
-                    if (replacement.endsWith('-other')) {
-                        if (kind === 'name') run[3] = 'Imported choice'
-                        else run[5] = '2,4,1,0,3,5,7'
-                    }
-                    sections[2] = run.join(';')
-                    const raw = escape(btoa(unescape(encodeURIComponent(sections.join('|')))) + '!END!')
-                    await window.recoverImportedCosmetic()
-                    return {
-                        raw,
-                        original,
-                        temporary,
-                        key,
-                        stored: localStorage.getItem(Game.SaveTo),
-                        journal: Alakazam.store.get(key)
-                    }
-                },
-                { kind, replacement }
-            )
+            const fixture = await cosmeticRecoveryFixture(game, kind, replacement)
             const current = () =>
                 game.evaluate(
                     kind => (kind === 'name' ? Game.bakeryName : Game.YouCustomizer.currentGenes),
@@ -579,3 +583,100 @@ for (const kind of ['name', 'clones']) {
         })
     }
 }
+
+for (const kind of ['name', 'clones']) {
+    test(`file completion during the ${kind} journal wait releases its owned prompt`, async ({
+        game
+    }) => {
+        const fixture = await cosmeticRecoveryFixture(game, kind, 'family-owned')
+        await game.evaluate(
+            async ({ kind, temporary, key }) => {
+                if (kind === 'name') {
+                    Alakazam.store.forget(key)
+                    await Alakazam.store.flush()
+                } else {
+                    // Prepare an interrupted same-run appearance for recovery.
+                    Game.YouCustomizer.load(temporary.join(','))
+                    Game.bakeryNameRefresh()
+                }
+            },
+            { kind, temporary: fixture.temporary, key: fixture.key }
+        )
+        await game.locator('#prefsButton').click()
+        await game.evaluate(kind => {
+            const flush = Alakazam.store.flush
+            window.restoreCosmeticFlush = () => (Alakazam.store.flush = flush)
+            Alakazam.store.flush = async () => {
+                const result = await flush()
+                if (!window.releaseCosmeticFlush) {
+                    await new Promise(resolve => (window.releaseCosmeticFlush = resolve))
+                }
+                return result
+            }
+            window.pendingCosmetic =
+                kind === 'name'
+                    ? Alakazam.safety.run({ name: 'achievements' }, () =>
+                          Alakazam.achievements.godComplex()
+                      )
+                    : Alakazam.clones.recover()
+        }, kind)
+        await game.waitForFunction(() => typeof window.releaseCosmeticFlush === 'function')
+        const journal = await game.evaluate(key => Alakazam.store.get(key), fixture.key)
+        const prompt = kind === 'name' ? '#promptContentNameBakery' : '#promptContentCustomizeYou'
+        await expect(game.locator(prompt)).toHaveCount(1)
+        await game.locator('#FileLoadInput').setInputFiles({
+            name: 'replacement-family.txt',
+            mimeType: 'text/plain',
+            buffer: Buffer.from(fixture.raw)
+        })
+        await expect
+            .poll(() => game.evaluate(() => Game.fullDate))
+            .not.toBe(await game.evaluate(() => Alakazam.savefile.read().run.fullDate))
+        await game.evaluate(async () => {
+            window.releaseCosmeticFlush()
+            await window.pendingCosmetic
+            window.restoreCosmeticFlush()
+        })
+        await expect(game.locator(prompt)).toHaveCount(0)
+        expect(
+            await game.evaluate(
+                kind => (kind === 'name' ? Game.bakeryName : Game.YouCustomizer.currentGenes),
+                kind
+            )
+        ).toEqual(kind === 'name' ? 'Orteil' : fixture.temporary)
+        expect(await game.evaluate(key => Alakazam.store.get(key), fixture.key)).toEqual(journal)
+        await game.evaluate(() => window.recoverImportedCosmetic())
+        await expect(game.locator('#promptContentExportSave')).toHaveCount(0)
+        expect(await game.evaluate(key => Alakazam.store.get(key), fixture.key)).toEqual(journal)
+    })
+}
+
+test('cosmetic recovery retries a temporarily stale actual export', async ({ game }) => {
+    const fixture = await cosmeticRecoveryFixture(game, 'name', 'same-run')
+    await game.locator('#prefsButton').click()
+    await game.locator('#FileLoadInput').setInputFiles({
+        name: 'same-run-temporary-name.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from(fixture.raw)
+    })
+    await expect.poll(() => game.evaluate(() => Game.bakeryName)).toBe('Orteil')
+    await game.evaluate(() => {
+        // Prepare the stale game clock seen during timer throttling. The action
+        // still reads the game's actual Export Save textarea through its UI.
+        Game.time = Date.now() - 10000
+        Alakazam.achievements.recoverName()
+    })
+    expect(await game.evaluate(() => Game.bakeryName)).toBe('Orteil')
+    expect(await game.evaluate(key => !!Alakazam.store.get(key, null), fixture.key)).toBe(true)
+    await expect
+        .poll(
+            () =>
+                game.evaluate(() => {
+                    Game.time = Date.now()
+                    Alakazam.achievements.recoverName()
+                    return Game.bakeryName
+                }),
+            { timeout: 15000, intervals: [500] }
+        )
+        .toBe('Acceptance Original')
+})
