@@ -159,7 +159,7 @@
                 runId: who.runId,
                 resets: s.resets,
                 hoard: s.wrinklersAmount + s.wrinklersShinyAmount,
-                active: s.wrinklersNumber + s.wrinklersShiny
+                active: s.wrinklersNumber
             }
         } finally {
             ctx.cleanup(() => {

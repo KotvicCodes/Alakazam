@@ -220,6 +220,69 @@ test('beta-keyed exports verify empty and live wrinkler hoards', async ({ game }
     expect(await game.evaluate(() => Alakazam.save.get().scalars.wrinklersAmount)).toBe(0)
 })
 
+test('heavenly-screen reload replans the unchanged run instead of waiting forever', async ({
+    page,
+    context
+}) => {
+    await localOnly(context)
+    await page.addInitScript(() => {
+        // Persist the store across a real document reload without claiming this
+        // page-world test exercises Chrome's extension storage bridge.
+        const key = '__alakazam_reload_test_storage'
+        const read = () => JSON.parse(localStorage.getItem(key) || '{}')
+        window.chrome = {
+            storage: {
+                local: {
+                    get(_keys, callback) {
+                        queueMicrotask(() => callback(read()))
+                    },
+                    set(values, callback) {
+                        localStorage.setItem(key, JSON.stringify({ ...read(), ...values }))
+                        queueMicrotask(() => callback())
+                    }
+                }
+            }
+        }
+    })
+    await openGame(page)
+    await loadAlakazam(page)
+    await page.evaluate(() => {
+        Game.cookies = 1e24
+        Game.cookiesEarned = 1e24
+        Game.cookiesReset = 0
+        Game.resets = 0
+    })
+    await publish(page)
+    await page.evaluate(async () => {
+        await Alakazam.save.connect()
+        Alakazam.store.setSetting('enabled', true)
+        for (let i = 0; i < 3; i++) await Alakazam.registry.get('ascend').tick()
+    })
+    await expect.poll(() => page.evaluate(() => Game.AscendTimer)).toBeGreaterThan(0)
+    await transition(page, 'ascending')
+    await page.evaluate(async () => {
+        await Alakazam.registry.get('ascend').tick()
+        await Alakazam.store.flush()
+    })
+    expect(await page.evaluate(() => Alakazam.store.get('ascendPhase'))).toBe('shopping')
+    expect(await page.evaluate(() => Alakazam.store.get('ascendAwaitReset'))).toBe(0)
+    const run = await page.evaluate(() => Alakazam.identity.current().runId)
+    await page.reload()
+    await page.waitForFunction(() => window.Game?.ready)
+    await page.evaluate(() => Game.ClosePrompt())
+    await loadAlakazam(page)
+    await page.evaluate(async () => {
+        await Alakazam.save.connect()
+        Alakazam.store.setSetting('enabled', true)
+        await Alakazam.registry.get('ascend').tick()
+    })
+    expect(await page.evaluate(() => Game.OnAscend)).toBe(0)
+    expect(await page.evaluate(() => Alakazam.identity.current().runId)).toBe(run)
+    expect(await page.evaluate(() => window.__alakazam.ascend.waitingForSave)).not.toBe(true)
+    expect(await page.evaluate(() => Alakazam.store.get('ascendAwaitReset', null))).toBeNull()
+    expect(await page.evaluate(() => Alakazam.ascend.state().phase)).toBe('loans')
+})
+
 test('rounded-price refusal stops unchanged retries and recovers after funding', async ({ game }) => {
     await game.evaluate(() => {
         Game.cookies = 1e6
