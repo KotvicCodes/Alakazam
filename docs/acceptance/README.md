@@ -32,5 +32,5 @@ See [testing instructions](../TESTING.md) for reproducible automated checks.
 
 The subsequent integrated review also corrected store-control restoration behind
 a foreign prompt, durable gift-code capture on cancellation, and cosmetic
-recovery verification after a same-document import. These are follow-up fixes,
+recovery verification after same-document text and file imports. These are follow-up fixes,
 not changes to the historical native results.
