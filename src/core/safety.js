@@ -194,7 +194,10 @@
             try {
                 if (!task.active && ownsPrompt(mod.name)) {
                     const name = prompt().id.slice(13)
-                    const option = ['CustomizeYou', 'ExportSave', 'GiftSendReady'].includes(name)
+                    // Gifts dismiss completed Wrap results only after persisting
+                    // their code. Failed storage must leave that result visible.
+                    if (name === 'GiftSendReady') return
+                    const option = ['CustomizeYou', 'ExportSave'].includes(name)
                         ? 0
                         : name === 'NameBakery'
                           ? 2
