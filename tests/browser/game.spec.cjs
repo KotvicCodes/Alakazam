@@ -470,3 +470,77 @@ test('pausing after gift wrapping retains the actual generated code', async ({ g
         true
     )
 })
+
+for (const kind of ['name', 'clones']) {
+    test(`file import rechecks a previously restored ${kind} journal without a prompt`, async ({
+        game
+    }) => {
+        const fixture = await game.evaluate(async kind => {
+            // Page-world DOM coverage uses a test storage adapter; the extension
+            // project separately exercises the real Chrome storage bridge.
+            const disk = {}
+            window.chrome = {
+                storage: {
+                    local: {
+                        get(_keys, callback) {
+                            queueMicrotask(() => callback({ ...disk }))
+                        },
+                        set(values, callback) {
+                            Object.assign(disk, structuredClone(values))
+                            queueMicrotask(() => callback())
+                        }
+                    }
+                }
+            }
+            const original = [4, 5, 6, 1, 2, 3, 4]
+            const temporary = [6, 5, 6, 1, 2, 3, 4]
+            Game.Objects.You.amount = 1
+            Game.Objects.You.refresh()
+            Game.YouCustomizer.load((kind === 'clones' ? temporary : original).join(','))
+            Game.bakeryName = kind === 'name' ? 'Orteil' : 'Acceptance Original'
+            Game.bakeryNameRefresh()
+            Game.WriteSave()
+            await Alakazam.registry.get('saveWatch').tick()
+            await Alakazam.save.connect()
+            Alakazam.store.setSetting('enabled', true)
+            const who = Alakazam.identity.current()
+            const key = kind === 'name' ? 'bakeryNameRecovery' : 'cloneRecovery'
+            const mark =
+                kind === 'name'
+                    ? { legacyId: who.legacyId, original: 'Acceptance Original', expected: 'Orteil' }
+                    : {
+                          legacyId: who.legacyId,
+                          original,
+                          expected: temporary,
+                          previous: original,
+                          history: [original, temporary]
+                      }
+            Alakazam.store.set(key, mark)
+            await Alakazam.store.flush()
+            window.recoverImportedCosmetic = () =>
+                kind === 'name' ? Alakazam.achievements.recoverName() : Alakazam.clones.recover()
+            const raw = Game.WriteSave(1)
+            await window.recoverImportedCosmetic()
+            return { raw, original, temporary, key }
+        }, kind)
+        const current = () =>
+            game.evaluate(
+                kind => (kind === 'name' ? Game.bakeryName : Game.YouCustomizer.currentGenes),
+                kind
+            )
+        const original = kind === 'name' ? 'Acceptance Original' : fixture.original
+        const temporary = kind === 'name' ? 'Orteil' : fixture.temporary
+        expect(await current()).toEqual(original)
+        expect(await game.evaluate(key => !!Alakazam.store.get(key, null), fixture.key)).toBe(true)
+        await game.locator('#prefsButton').click()
+        await game.locator('#FileLoadInput').setInputFiles({
+            name: 'temporary-cosmetic.txt',
+            mimeType: 'text/plain',
+            buffer: Buffer.from(fixture.raw)
+        })
+        await expect.poll(current).toEqual(temporary)
+        expect(await game.evaluate(() => Alakazam.safety.prompt())).toBe(null)
+        await game.evaluate(() => window.recoverImportedCosmetic())
+        expect(await current()).toEqual(original)
+    })
+}
