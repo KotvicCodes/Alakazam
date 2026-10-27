@@ -1,6 +1,6 @@
 # Native acceptance follow-up
 
-[The supplied Chrome report](native-chrome-1.3.3.md) is preserved verbatim. It
+[The supplied Chrome report](native-chrome-1.3.3.md) preserves the supplied results, with only the local checkout path omitted. It
 tested Alakazam `a641d1f1b7d5d3923519405344317d9fb0cdf819` on Chrome 155 / macOS.
 Its numbered evidence files, screenshots, evidence index, and observations were
 not included in the attachment. Relative links inside that historical report
@@ -29,3 +29,8 @@ establish those native variants. Background measurements also do not promise
 continuous freshness or a minimum hidden-tab click rate.
 
 See [testing instructions](../TESTING.md) for reproducible automated checks.
+
+The subsequent integrated review also corrected store-control restoration behind
+a foreign prompt, durable gift-code capture on cancellation, and cosmetic
+recovery verification after a same-document import. These are follow-up fixes,
+not changes to the historical native results.

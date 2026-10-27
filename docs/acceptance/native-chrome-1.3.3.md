@@ -18,7 +18,7 @@ This report distinguishes a verified result from an unavailable fixture. A group
 | Exact checked-out commit | `a641d1f1b7d5d3923519405344317d9fb0cdf819` |
 | Extension | Alakazam 1.3.3, unpacked, enabled and pinned |
 | Extension ID | `hfmddennfdgidlciajfafdfdknbiadoh` |
-| Isolated checkout | `/Users/kotvic/Desktop/GitHub/.worktrees/Alakazam/native-acceptance-a641d1f` |
+| Isolated checkout | Local git worktree at the commit above (path omitted) |
 | Existing test profile | Alakazam disposable test |
 | Chrome | 155.0.8059.85, Official Build, arm64 |
 | Chrome revision | `0e66b94549a8bd85f03fbdf189b752d6e7b63c32` |
