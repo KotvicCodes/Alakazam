@@ -220,6 +220,71 @@ test('beta-keyed exports verify empty and live wrinkler hoards', async ({ game }
     expect(await game.evaluate(() => Alakazam.save.get().scalars.wrinklersAmount)).toBe(0)
 })
 
+for (const beta of [false, true]) {
+    test(`${beta ? 'beta' : 'live'} blocked hoard waits before reopening Export Save`, async ({
+        game
+    }) => {
+        await game.evaluate(beta => {
+            if (beta) {
+                history.replaceState({}, '', '/cookieclicker/beta/')
+                Game.SaveTo = 'CookieClickerGameBeta'
+            }
+            Game.cookiesEarned = 5e19
+            Game.cookiesReset = 0
+            Game.resets = 0
+            Alakazam.store.setSetting('enabled', true)
+        }, beta)
+        await publish(game)
+        const result = await game.evaluate(async () => {
+            const mod = Alakazam.registry.get('ascend')
+            await mod.setup()
+            const exportSave = Game.ExportSave
+            const now = Date.now
+            let exports = 0
+            Game.ExportSave = function (...args) {
+                exports++
+                return exportSave.apply(this, args)
+            }
+            try {
+                Game.wrinklers[0].phase = 2
+                Game.wrinklers[0].sucked = 5e15
+                await mod.tick()
+                const blocked = { ...__alakazam.ascend }
+                for (let i = 0; i < 10; i++) await mod.tick()
+                const repeated = exports
+                const retained = { ...__alakazam.ascend }
+                Game.wrinklers[0].phase = 0
+                Game.wrinklers[0].sucked = 0
+                // Advance only the retry clock and native export timestamp;
+                // don't wait 30 real seconds or replace the export implementation.
+                Date.now = () => now() + 30001
+                Game.time = Date.now()
+                await mod.tick()
+                return {
+                    blocked,
+                    retained,
+                    repeated,
+                    exports,
+                    phase: Alakazam.ascend.state().phase,
+                    prompt: Alakazam.safety.prompt()?.id || null
+                }
+            } finally {
+                Game.ExportSave = exportSave
+                Date.now = now
+                Game.time = now()
+                Alakazam.store.setSetting('enabled', false)
+            }
+        })
+        expect(result.blocked.hoardBlocked).toBe(true)
+        expect(result.retained.decisionId).toBe(result.blocked.decisionId)
+        expect(result.retained.wrinklerHoard).toBe(5e15)
+        expect(result.repeated).toBe(1)
+        expect(result.exports).toBe(2)
+        expect(result.phase).toBe('loans')
+        expect(result.prompt).toBeNull()
+    })
+}
+
 test('heavenly-screen reload replans the unchanged run instead of waiting forever', async ({
     page,
     context

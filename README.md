@@ -119,7 +119,9 @@ used only for slow, structural state. Anything Alakazam spends cookies on is rea
 live from the DOM. Before loans or ascent, the planner reads a newly generated
 Export Save through the game UI to verify the live wrinkler hoard. A valuable
 hoard visibly defers automation until collected or explicitly discarded for the
-current decision; discard consent is never saved across reloads.
+current decision; discard consent is never saved across reloads. Blocked checks
+retry after 30 seconds, so collecting a hoard can take up to that long to be
+noticed. Confirmation still requires a fresh export unless explicitly discarded.
 
 **Your data stays yours.** The raw save string is never logged, never stored
 verbatim, and never leaves your machine. Your bakery name is treated as user data.

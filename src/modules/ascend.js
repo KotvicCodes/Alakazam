@@ -557,6 +557,8 @@
     // changing saves, or withdrawing the decision requires fresh consent.
     let decision = null
     let decisionNumber = 0
+    const HOARD_RETRY_MS = 30000
+    let hoardCheck = null
     store.subscribe(settings => {
         if (settings.enabled === false || settings.ascend === false) decision = null
     })
@@ -581,20 +583,30 @@
         const current = decisionForRun()
         if (!current) return false
         if (current.discarded) return true
+        // A blocked gate stays blocked between retries without repeatedly
+        // interrupting the player with Export Save. Never reuse evidence to
+        // authorize a confirmation: that path still requires a fresh export.
+        if (!confirming && hoardCheck?.decisionId === current.id && Date.now() < hoardCheck.retryAt) {
+            Object.assign(window.__alakazam.ascend, hoardCheck.status)
+            return false
+        }
         // Replace our confirmation prompt only after checking its ownership, then
         // read a fresh export immediately before the irreversible confirmation.
         if (confirming && act.promptIs('ascend')) act.cancelPrompt('ascend')
         const evidence = act.liveHoard()
         const safe = evidence && evidence.hoard === 0
+        if (safe) hoardCheck = null
         if (!safe) {
-            Object.assign(window.__alakazam.ascend, {
+            const status = {
                 hoardBlocked: true,
                 decisionId: current.id,
                 blocked: evidence
                     ? 'Collect the wrinkler hoard or explicitly discard it for this ascent.'
                     : 'Waiting to verify the live wrinkler hoard. Clear other prompts and retry.',
                 wrinklerHoard: evidence ? evidence.hoard : hoardAtRisk()
-            })
+            }
+            hoardCheck = { decisionId: current.id, retryAt: Date.now() + HOARD_RETRY_MS, status }
+            Object.assign(window.__alakazam.ascend, status)
         }
         return !!safe
     }
@@ -819,6 +831,7 @@
     }
 
     function reset({ previousIdentity, identity } = {}) {
+        hoardCheck = null
         // the committed sequence spans runs. Preserve it on the heavenly screen
         // for this family, while imports into another family start independently.
         if (

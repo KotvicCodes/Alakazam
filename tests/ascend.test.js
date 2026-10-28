@@ -2,6 +2,7 @@ const { test } = require('node:test')
 const assert = require('node:assert')
 const { boot, sleep } = require('./harness')
 const fx = require('./fixtures')
+const { clock } = require('./clock')
 
 const { A } = boot({})
 const S = A.strategy.ascend
@@ -504,7 +505,8 @@ function variantAscent(key, opts = {}) {
             pathname: '/cookieclicker/' + (key.endsWith('Beta') ? 'beta/' : '')
         },
         game: opts.game,
-        disk: opts.disk
+        disk: opts.disk,
+        clock: opts.clock
     })
 }
 
@@ -518,7 +520,14 @@ for (const key of ['CookieClickerGame', 'CookieClickerGameBeta']) {
     })
 
     test(`${key} valuable live hoard blocks loans and ascent until collected`, async () => {
-        const h = variantAscent(key, { game: { officeLevel: 5 } })
+        const time = clock(Date.now())
+        const h = variantAscent(key, { game: { officeLevel: 5 }, clock: time })
+        let exports = 0
+        const exportSave = h.game.state.exportSave
+        h.game.state.exportSave = () => {
+            exports++
+            return exportSave()
+        }
         h.game.state.wrinklerHoard = 5e15
         h.game.state.wrinklers = 8
         await pump(h, 3)
@@ -526,11 +535,115 @@ for (const key of ['CookieClickerGame', 'CookieClickerGameBeta']) {
         assert.equal(h.debug().ascend.wrinklerHoard, 5e15)
         assert.equal(h.game.state.loansTaken.length, 0)
         assert.equal(h.A.act.ascend.onAscendScreen(), false)
+        const blocked = { ...h.debug().ascend }
+        for (let i = 0; i < 29; i++) {
+            time.advance(1000)
+            await h.A.registry.get('ascend').tick()
+            assert.equal(h.debug().ascend.blocked, blocked.blocked)
+            assert.equal(h.debug().ascend.decisionId, blocked.decisionId)
+            assert.equal(h.debug().ascend.wrinklerHoard, 5e15)
+        }
+        assert.equal(exports, 1, 'blocked ticks must not reopen Export Save')
         h.game.state.wrinklerHoard = 0
         h.game.state.wrinklers = 0
+        time.advance(1000)
+        await h.A.registry.get('ascend').tick()
+        assert.equal(exports, 2, 'retry with a fresh export after 30 seconds')
+        assert.notEqual(h.debug().ascend.hoardBlocked, true)
+        await h.A.registry.get('ascend').tick()
+        assert.equal(h.game.state.loansTaken.length, 1)
+    })
+
+    test(`${key} inconclusive hoard exports retry after the cooldown`, async () => {
+        const time = clock(Date.now())
+        const h = variantAscent(key, { clock: time })
+        const exportSave = h.game.state.exportSave
+        h.game.state.exportSave = () => 'unreadable'
+        await pump(h, 1)
+        assert.match(h.debug().ascend.blocked, /verify/)
+        h.game.state.exportSave = exportSave
+        time.advance(29999)
+        await h.A.registry.get('ascend').tick()
+        assert.match(h.debug().ascend.blocked, /verify/)
+        assert.equal(h.A.ascend.state().phase, 'ready')
+        time.advance(1)
+        await h.A.registry.get('ascend').tick()
+        assert.equal(h.A.ascend.state().phase, 'loans')
+    })
+
+    test(`${key} explicit discard bypasses the blocked hoard cooldown`, async () => {
+        const h = variantAscent(key, { game: { officeLevel: 5 } })
+        h.game.state.wrinklerHoard = 5e15
+        h.game.state.wrinklers = 1
+        await pump(h, 1)
+        assert.equal(h.A.ascend.discardHoard(h.debug().ascend.decisionId), true)
         await h.A.registry.get('ascend').tick()
         await h.A.registry.get('ascend').tick()
         assert.equal(h.game.state.loansTaken.length, 1)
+    })
+
+    for (const setting of ['enabled', 'ascend']) {
+        test(`${key} ${setting} withdrawal invalidates the blocked hoard decision`, async () => {
+            const h = variantAscent(key)
+            h.game.state.wrinklerHoard = 5e15
+            h.game.state.wrinklers = 1
+            await pump(h, 1)
+            const decisionId = h.debug().ascend.decisionId
+            h.A.store.setSetting(setting, false)
+            h.A.store.setSetting(setting, true)
+            h.game.state.wrinklerHoard = 0
+            h.game.state.wrinklers = 0
+            await h.A.registry.get('ascend').tick()
+            assert.equal(h.A.ascend.state().phase, 'loans')
+            assert.equal(h.A.ascend.discardHoard(decisionId), false)
+        })
+    }
+
+    test(`${key} confirmation bypasses even a cached blocked hoard verdict`, async () => {
+        const h = variantAscent(key)
+        await pump(h, 2)
+        h.game.state.wrinklerHoard = 5e15
+        h.game.state.wrinklers = 1
+        await h.A.registry.get('ascend').tick()
+        assert.equal(h.debug().ascend.hoardBlocked, true)
+        assert.equal(h.A.safety.prompt(), null)
+        h.game.state.wrinklerHoard = 0
+        h.game.state.wrinklers = 0
+        h.A.act.ascend.openLegacy()
+        await h.A.registry.get('ascend').tick()
+        assert.equal(h.A.act.ascend.onAscendScreen(), true)
+        assert.notEqual(h.debug().ascend.hoardBlocked, true)
+    })
+
+    test(`${key} lifecycle reset invalidates blocked hoard evidence`, async () => {
+        const h = variantAscent(key)
+        h.game.state.wrinklerHoard = 5e15
+        h.game.state.wrinklers = 1
+        await pump(h, 1)
+        h.game.state.wrinklerHoard = 0
+        h.game.state.wrinklers = 0
+        const mod = h.A.registry.get('ascend')
+        await mod.reset()
+        await mod.tick()
+        assert.equal(h.A.ascend.state().phase, 'loans')
+    })
+
+    test(`${key} a replacement run does not reuse blocked hoard evidence`, async () => {
+        const h = variantAscent(key)
+        h.game.state.wrinklerHoard = 5e15
+        h.game.state.wrinklers = 1
+        await pump(h, 1)
+        const decisionId = h.debug().ascend.decisionId
+        h.ctx.localStorage.setItem(
+            key,
+            fx.save({ cookiesEarned: S.cookiesFor(365), seed: 'replacement-run' }).raw
+        )
+        await h.A.registry.get('saveWatch').tick()
+        h.game.state.wrinklerHoard = 0
+        h.game.state.wrinklers = 0
+        await h.A.registry.get('ascend').tick()
+        assert.equal(h.A.ascend.state().phase, 'loans')
+        assert.equal(h.A.ascend.discardHoard(decisionId), false)
     })
 
     test(`${key} rejects the other variant's unrelated export`, async () => {
