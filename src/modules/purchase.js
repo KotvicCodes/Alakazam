@@ -20,7 +20,7 @@
     //   - measure/catalog  whatever the tooltip rotation has read so far
     //   - measure/save     fallback counts when the live count cannot be read
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('purchase')
     const { decide } = window.Alakazam.strategy
     const { live, catalog, save, store, registry, act, clicks } = window.Alakazam
     const { BASE_PRODUCTION } = window.Alakazam.data.buildings
@@ -133,7 +133,7 @@
     }
 
     function wait(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+        return window.Alakazam.safety.wait('purchase', ms)
     }
 
     //! Buy all

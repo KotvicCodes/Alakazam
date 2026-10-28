@@ -410,7 +410,10 @@ test('no other prompt is answered on the way past', async () => {
     h.game.openCustomizer()
     await lumpTick(h)
     await sleep(200)
-    assert.ok(h.game.state.log.includes('levelled Wizard tower'))
+    assert.ok(
+        !h.game.state.log.includes('levelled Wizard tower'),
+        'deferred while a foreign prompt is open'
+    )
     assert.ok(h.game.doc.getElementById('promptContentCustomizeYou'))
 })
 
@@ -655,26 +658,28 @@ test('the panel does not repeat what the game already shows', async () => {
     await h.A.registry.get('dragon').tick()
     await h.A.registry.get('hud').setup()
     h.A.hud.render()
-    const html = h.game.doc.getElementById('alakazam-hud-body').innerHTML
+    const body = h.game.doc.getElementById('alakazam-hud-body')
+    const viewText = body.innerText
+    const labels = body.querySelectorAll('.az-row').map(row => row.firstChild.textContent)
 
     // the bank and CpS are rendered by the game a few inches above the panel, and
     // the rest of these are either visible in game or console material
     for (const gone of [
-        '>cookies<',
-        '>per second<',
-        '>catalog<',
-        '>version<',
-        '>save id<',
-        '>ascending pays<',
-        '>plan<'
+        'cookies',
+        'per second',
+        'catalog',
+        'version',
+        'save id',
+        'ascending pays',
+        'plan'
     ]) {
-        assert.equal(html.indexOf(gone), -1, `${gone} should be gone from the panel`)
+        assert.equal(labels.includes(gone), false, `${gone} should be gone from the panel`)
     }
 
     // what is left is what the game does not show anywhere
-    assert.ok(html.indexOf('>dragon<') !== -1, 'the dragon gets one row')
-    assert.ok(html.indexOf('Radiant Appetite') !== -1, 'and it says what is worn')
-    assert.ok(html.indexOf('>read<') !== -1, 'the save read age stays')
+    assert.ok(labels.includes('dragon'), 'the dragon gets one row')
+    assert.ok(viewText.indexOf('Radiant Appetite') !== -1, 'and it says what is worn')
+    assert.ok(labels.includes('read'), 'the save read age stays')
 })
 
 test('the ascension section says what is planned, once', async () => {
@@ -692,10 +697,12 @@ test('the ascension section says what is planned, once', async () => {
     }
     await h.A.registry.get('hud').setup()
     h.A.hud.render()
-    const html = h.game.doc.getElementById('alakazam-hud-body').innerHTML
-    assert.ok(html.indexOf('>planned<') !== -1)
-    assert.equal(html.indexOf('>plan wants<'), -1, 'renamed, not duplicated')
-    assert.equal(html.indexOf('the plan wants five hundred chips'), -1, 'the sentence is a log line')
+    const body = h.game.doc.getElementById('alakazam-hud-body')
+    const viewText = body.innerText
+    const labels = body.querySelectorAll('.az-row').map(row => row.firstChild.textContent)
+    assert.ok(labels.includes('planned'))
+    assert.equal(labels.includes('plan wants'), false, 'renamed, not duplicated')
+    assert.equal(viewText.indexOf('the plan wants five hundred chips'), -1, 'the sentence is a log line')
 })
 
 test('the pantheon has no panel section of its own any more', async () => {
@@ -712,9 +719,10 @@ test('the pantheon has no panel section of its own any more', async () => {
     assert.ok(h.debug().pantheon, 'the state is still published for the console')
     await h.A.registry.get('hud').setup()
     h.A.hud.render()
-    const html = h.game.doc.getElementById('alakazam-hud-body').innerHTML
-    assert.equal(html.indexOf('>swaps<'), -1)
-    assert.equal(html.indexOf('>slots wrong<'), -1)
+    const body = h.game.doc.getElementById('alakazam-hud-body')
+    const labels = body.querySelectorAll('.az-row').map(row => row.firstChild.textContent)
+    assert.equal(labels.includes('swaps'), false)
+    assert.equal(labels.includes('slots wrong'), false)
 })
 
 test('dragging the panel ignores the autoclicker synthetic events', async () => {
@@ -758,7 +766,7 @@ test('dragging the panel ignores the autoclicker synthetic events', async () => 
 
     trusted('pointerup', 720, 420)
     await h.A.store.flush()
-    assert.ok(h.disk['legacy:t'].hudPosition, 'the position should stick')
+    assert.ok(h.disk[h.A.store.fieldKey('legacy:t', 'hudPosition')].value, 'the position should stick')
     h.A.scheduler.stop()
 })
 
@@ -778,7 +786,7 @@ test('the minimize button folds the panel instead of dragging it', async () => {
 
     try {
         const before = panel.style.left
-        assert.equal(panel.classList.contains('az-folded'), false, 'starts unfolded')
+        assert.equal(h.game.doc.getElementById('alakazam-hud-body').hidden, true, 'starts compact')
 
         // pressing the fold button bubbles to the header, exactly as in a browser
         fold.dispatchEvent({
@@ -794,11 +802,11 @@ test('the minimize button folds the panel instead of dragging it', async () => {
         assert.equal(head.captured, undefined, 'and must not start a drag')
 
         fold.dispatchEvent({ type: 'click', isTrusted: true, stopPropagation() {} })
-        assert.equal(panel.classList.contains('az-folded'), true, 'the panel should be folded')
-        assert.equal(fold.textContent, '+')
+        assert.equal(h.game.doc.getElementById('alakazam-hud-body').hidden, false, 'opens configuration')
+        assert.equal(fold.getAttribute('aria-expanded'), 'true')
 
         fold.dispatchEvent({ type: 'click', isTrusted: true, stopPropagation() {} })
-        assert.equal(panel.classList.contains('az-folded'), false, 'and unfolded again')
+        assert.equal(h.game.doc.getElementById('alakazam-hud-body').hidden, true, 'closes configuration')
     } finally {
         h.A.scheduler.stop()
     }
@@ -817,19 +825,6 @@ test('numbers are rendered with the suffixes the game itself uses', () => {
     // past the biggest suffix the game has there is nothing to do but exponent
     assert.equal(formatNumber(1e300), '1.00e+300')
     assert.equal(formatNumber(Infinity), '-')
-})
-
-test('the popup renders numbers identically to the panel', () => {
-    // the popup is a separate document with no access to the content scripts, so
-    // it carries its own copy of the table. this is what keeps the two in step.
-    const fs = require('fs')
-    const path = require('path')
-    const source = fs.readFileSync(path.join(__dirname, '..', 'popup.js'), 'utf8')
-    const table = source.match(/const MAGNITUDES = \(\(\) => \{[\s\S]*?\}\)\(\)/)
-    assert.ok(table, 'the popup should build a magnitude table')
-
-    const popupMagnitudes = eval(table[0].replace('const MAGNITUDES =', ''))
-    assert.deepEqual(popupMagnitudes, boot({}).A.parse.MAGNITUDES)
 })
 
 test('durations are rendered in units a person can act on', () => {

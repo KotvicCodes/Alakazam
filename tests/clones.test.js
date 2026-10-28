@@ -71,11 +71,11 @@ async function styleClones(h, ticks = 12) {
     return h.game.state
 }
 
-test('owning a You earns the likeness achievement and leaves the preset', async () => {
+test('owning a You earns the likeness achievement and restores the live default', async () => {
     const h = boot({ save: cloneSave() })
     const state = await styleClones(h)
     assert.equal(state.likenessWon, true, 'never matched the grandma look')
-    assert.deepEqual(state.genes, C.PRESET)
+    assert.deepEqual(state.genes, [0, 1, 0, 0, 0, 0, 0])
 })
 
 test('the achievement fires on a real arrow click, not on arriving at the look', async () => {
@@ -151,7 +151,7 @@ test('the whole sequence happens in one tick', async () => {
     await h.A.store.ready('t')
     await h.A.registry.get('clones').tick()
     assert.equal(h.game.state.likenessWon, true)
-    assert.deepEqual(h.game.state.genes, C.PRESET)
+    assert.deepEqual(h.game.state.genes, [0, 1, 0, 0, 0, 0, 0])
     assert.equal(h.game.doc.getElementById('promptContentCustomizeYou'), null, 'left it open')
 })
 

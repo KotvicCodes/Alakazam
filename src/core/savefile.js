@@ -229,14 +229,13 @@
 
     //* parseRun
     // section 2: startDate;fullDate;lastDate;bakeryName;seed
-    // seed is the five-letter per-save RNG seed. it is what makes the game's
-    // random events reproducible, and it doubles as a stable save identifier.
+    // seed is the per-run RNG seed; it changes on ascension.
     function parseRun(section) {
         const bits = (section || '').split(';')
         return {
-            startDate: toNumber(bits[0]), // this ascension began
-            fullDate: toNumber(bits[1]), // this save was first created
-            lastDate: toNumber(bits[2]),
+            startDate: Number(bits[0]), // this ascension began
+            fullDate: Number(bits[1]), // this save was first created
+            lastDate: Number(bits[2]),
             bakeryName: bits[3] || '',
             seed: bits[4] || '',
             // the You building's clone appearance, seven comma-separated gene
@@ -260,17 +259,25 @@
     }
 
     //* parseScalars
-    // section 4, positional. every value is read as a number except vault, which
-    // is a comma-joined list of upgrade ids. `trusted` reports whether the layout
+    // section 4, positional. season is text; vault is a comma-joined upgrade list.
+    // all other scalar values must be complete finite numbers. `trusted` reports whether the layout
     // still looks like the one SCALAR_FIELDS describes.
     function parseScalars(section) {
         const bits = (section || '').split(';')
         const out = {}
         for (let i = 0; i < SCALAR_FIELDS.length; i++) {
             const name = SCALAR_FIELDS[i]
-            out[name] = name === 'vault' ? parseIdList(bits[i]) : toNumber(bits[i])
+            out[name] =
+                name === 'vault'
+                    ? parseIdList(bits[i])
+                    : name === 'season'
+                      ? bits[i]
+                      : bits[i] == null || bits[i].trim() === ''
+                        ? NaN
+                        : Number(bits[i])
         }
         out.trusted = scalarsLookSane(out, bits.length)
+        out.lumpsState = !out.trusted ? 'unreadable' : out.lumps === -1 ? 'locked' : 'unlocked'
         return out
     }
 
@@ -280,14 +287,17 @@
     // exact values (the sugar lump planner above all) fall back to the DOM.
     function scalarsLookSane(s, fieldCount) {
         if (fieldCount < SCALAR_FIELDS.length) return false
+        if (SCALAR_FIELDS.some(name => !['vault', 'season'].includes(name) && !Number.isFinite(s[name])))
+            return false
         if (!Number.isFinite(s.cookies) || s.cookies < 0) return false
         if (!Number.isFinite(s.cookiesEarned) || s.cookiesEarned < s.cookies) return false
-        if (!Number.isFinite(s.lumps) || s.lumps < 0) return false
-        if (s.lumpsTotal < s.lumps) return false
+        const locked = s.lumps === -1 && s.lumpsTotal === -1
+        if (!locked && !(s.lumps >= 0 && s.lumpsTotal >= s.lumps)) return false
         if (!(s.lumpCurrentType >= 0 && s.lumpCurrentType <= 4)) return false
         // lumpT is a millisecond timestamp: sanity check it lands this century
         if (s.lumpT !== 0 && !(s.lumpT > 1e12 && s.lumpT < 4e12)) return false
-        if (!(s.season >= 0)) return false
+        if (!['', 'christmas', 'halloween', 'valentines', 'easter', 'fools'].includes(s.season))
+            return false
         // the prestige fields are what ascension is decided on, so they get their
         // own check rather than riding on the lump ones
         if (!(s.resets >= 0) || !(s.prestige >= 0) || !(s.heavenlyChips >= 0)) return false
@@ -512,13 +522,22 @@
 
         const version = sections[S_VERSION] || ''
         const scalars = parseScalars(sections[S_SCALARS])
+        const run = parseRun(sections[S_RUN])
+        const runTrusted =
+            [run.startDate, run.fullDate, run.lastDate].every(
+                date => Number.isFinite(date) && date > 0
+            ) && run.seed !== ''
 
         return {
             ok: true,
-            stale: !scalars.trusted,
-            reason: !scalars.trusted ? 'scalar layout drifted' : '',
+            stale: !scalars.trusted || !runTrusted,
+            reason: !scalars.trusted
+                ? 'scalar layout drifted'
+                : !runTrusted
+                  ? 'run metadata unreadable'
+                  : '',
             version,
-            run: parseRun(sections[S_RUN]),
+            run,
             prefs: parseBits(sections[S_PREFS]),
             scalars,
             buildings: parseBuildings(sections[S_BUILDINGS]),
@@ -528,69 +547,41 @@
         }
     }
 
-    //! saveKeys
-    // CookieClickerGame is where the live game keeps its save, and it is tried
-    // first. It is not the only possibility though: the beta writes elsewhere, and
-    // the game has used a suffixed key before now. Rather than hard-code a list of
-    // names that has already changed once, anything on this origin whose key
-    // starts with CookieClickerGame is a candidate, best-known first.
-    //
-    // Only key names are read here. No value is inspected until it is decoded, and
-    // no value is ever logged.
-    function saveKeys() {
-        const keys = [SAVE_KEY]
+    //* Selected Key
+    // the URL identifies the game variant, even before its first autosave. Never
+    // fall back to the other variant's save on a known game URL.
+    function selectedKey() {
+        const path = window.location && window.location.pathname
+        if (path && /\/cookieclicker(?:\/|$)/i.test(path)) {
+            return /\/beta(?:\/|$)/i.test(path) ? SAVE_KEY + 'Beta' : SAVE_KEY
+        }
+        // non-game hosts and test pages can still discover older suffixed keys
         try {
+            if (window.localStorage.getItem(SAVE_KEY)) return SAVE_KEY
             for (let i = 0; i < window.localStorage.length; i++) {
                 const key = window.localStorage.key(i)
-                if (key && key !== SAVE_KEY && key.indexOf(SAVE_KEY) === 0) keys.push(key)
+                if (key && key.startsWith(SAVE_KEY)) return key
             }
         } catch (err) {
-            // a locked-down localStorage still lets the primary key be attempted
+            // read() reports unavailable storage
         }
-        return keys
+        return SAVE_KEY
     }
 
-    //! read
-    // the one impure entry point. content scripts share the page's origin, so
-    // localStorage here is the game's own localStorage.
-    //
-    // Every candidate key is tried and the first one that parses wins. A key that
-    // exists but does not decode is not fatal: the reason from the most promising
-    // failure is kept, so the panel can say which step actually went wrong instead
-    // of the flat "could not decode save" that covered four different problems.
     function read() {
-        let failure = 'no save found'
-        let found = false
-
-        for (const key of saveKeys()) {
-            let raw = null
-            try {
-                raw = window.localStorage.getItem(key)
-            } catch (err) {
-                return { ok: false, stale: true, reason: 'localStorage unavailable' }
-            }
-            if (!raw) continue
-            found = true
-
-            const decoded = decodeDetailed(raw)
-            if (!decoded.text) {
-                failure = decoded.reason
-                continue
-            }
-
-            const parsed = parse(decoded.text)
-            if (!parsed.ok) {
-                failure = parsed.reason
-                continue
-            }
-            // a mangled bakery name is worth mentioning but is not a parse problem,
-            // so it only surfaces when there is nothing more important to say
-            if (decoded.reason && !parsed.reason) parsed.reason = decoded.reason
-            parsed.key = key
-            return parsed
+        const key = selectedKey()
+        let raw
+        try {
+            raw = window.localStorage.getItem(key)
+        } catch (err) {
+            return { ok: false, stale: true, key, reason: 'localStorage unavailable' }
         }
-
-        return { ok: false, stale: true, reason: found ? failure : 'no save found' }
+        const decoded = decodeDetailed(raw)
+        if (!decoded.text) return { ok: false, stale: true, key, reason: decoded.reason }
+        const parsed = parse(decoded.text)
+        if (decoded.reason && !parsed.reason) parsed.reason = decoded.reason
+        parsed.key = key
+        return parsed
     }
 
     //* rawFingerprint
@@ -608,16 +599,16 @@
     // kilobytes once every two seconds, which is nothing, and unlike a slice it
     // notices a change wherever it happens. The digest is a number, so it still
     // never holds on to any of the save's contents.
-    function rawFingerprint() {
+    function rawFingerprint(key = selectedKey()) {
         try {
-            const raw = window.localStorage.getItem(SAVE_KEY)
-            if (!raw) return ''
+            const raw = window.localStorage.getItem(key)
+            if (!raw) return key + ':missing'
             // djb2: one multiply-add per character, folded to 32 bits by the
             // bitwise or, which is as much collision resistance as a change
             // detector between two consecutive saves ever needs
             let hash = 5381
             for (let i = 0; i < raw.length; i++) hash = (hash * 33 + raw.charCodeAt(i)) | 0
-            return raw.length + ':' + hash
+            return key + ':' + raw.length + ':' + hash
         } catch (err) {
             return ''
         }
@@ -626,6 +617,7 @@
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.savefile = {
         read,
+        selectedKey,
         rawFingerprint,
         decode,
         decodeDetailed,

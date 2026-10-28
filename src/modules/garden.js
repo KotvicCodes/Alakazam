@@ -19,7 +19,7 @@
     // a player sees. Tooltip descriptions also mention maturity on young plants
     // and cannot establish that a plant is ready to harvest.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('garden')
     const { save, store, registry } = window.Alakazam
     const plants = window.Alakazam.data.plants
 
@@ -144,13 +144,52 @@
         return null
     }
 
+    function selectedSeed() {
+        return document.querySelector('#gardenSeeds .gardenSeed.on')
+    }
+
+    function withSeed(seed, body) {
+        const { safety } = window.Alakazam
+        const ctx = safety.scope('garden')
+        ctx.check()
+        const lease = safety.acquire('gardenSeed', 'garden')
+        if (!lease) return false
+        const previous = selectedSeed()
+        let after = previous
+        try {
+            if (previous !== seed) {
+                if (previous) ctx.input('simulateClick', previous)
+                if (seed) ctx.input('simulateClick', seed)
+            }
+            if (selectedSeed() !== seed) return false
+            after = selectedSeed()
+            const result = body()
+            after = selectedSeed() // successful planting normally deselects the seed
+            return result
+        } finally {
+            try {
+                if (lease.valid() && selectedSeed() === after) {
+                    ctx.cleanup(() => {
+                        const current = selectedSeed()
+                        if (current !== previous) {
+                            if (current) ctx.input('simulateClick', current)
+                            if (previous) ctx.input('simulateClick', previous)
+                        }
+                    })
+                }
+            } finally {
+                lease.release()
+            }
+        }
+    }
+
     function harvest(tile, why) {
         const el = tileEl(tile.x, tile.y)
         // the save can lag behind a harvest, death or replant. verify the current
         // visible species and stage immediately before clicking, without a hover
         // or an await during which the tile could change.
         if (!el || stageOf(tile) !== 4) return false
-        simulateClick(el)
+        if (!withSeed(null, () => simulateClick(el))) return false
         store.update('gardenHarvests', 0, n => n + 1)
         console.log(`Alakazam: harvesting ${tile.plant.name} at ${tile.x},${tile.y} (${why})`)
         return true
@@ -171,9 +210,7 @@
         // clicking an occupied tile would unearth it instead of planting.
         const icon = document.getElementById(`gardenTileIcon-${tile.x}-${tile.y}`)
         if (!icon || !el.contains(icon) || icon.style.display !== 'none') return false
-        simulateClick(seed)
-        simulateClick(el)
-        return true
+        return withSeed(seed, () => simulateClick(el))
     }
 
     //* preferWoodChips
@@ -232,5 +269,5 @@
 
     registry.register({ name: 'garden', interval: INTERVAL_MS, tick })
 
-    window.Alakazam.garden = { state, nextGoal, worthHarvesting }
+    window.Alakazam.garden = { state, nextGoal, worthHarvesting, withSeed, plantAt }
 })()

@@ -25,9 +25,20 @@
         if (owner && !store.moduleEnabled(owner.setting)) cancel()
     })
 
-    function acquire(setting) {
-        if (owner || !store.moduleEnabled(setting) || window.Alakazam.scheduler.isPaused()) return null
+    function acquire(setting, context) {
+        const moduleName = setting === 'marketTrading' ? 'market' : setting
+        const ctx = context || window.Alakazam.safety.scope(moduleName)
+        if (
+            owner ||
+            !ctx.active ||
+            !store.moduleEnabled(setting) ||
+            window.Alakazam.scheduler.isPaused()
+        )
+            return null
+        const resource = window.Alakazam.safety.acquire('store', ctx.owner)
+        if (!resource) return null
         const lease = {
+            ctx,
             setting,
             cancelled: false,
             userControls: false,
@@ -35,12 +46,15 @@
                 return (
                     owner === lease &&
                     !lease.cancelled &&
+                    ctx.active &&
+                    resource.valid() &&
                     store.moduleEnabled(setting) &&
                     !window.Alakazam.scheduler.isPaused()
                 )
             },
             release() {
                 if (owner === lease) owner = null
+                resource.release()
             }
         }
         owner = lease

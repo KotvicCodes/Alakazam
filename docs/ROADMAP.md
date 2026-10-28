@@ -30,10 +30,10 @@ everything before ascending, because the hoard is otherwise lost.
 `modules/wrinklers.js` already reads the count and hoard from the save and tells
 you when it is worth doing by hand.
 
-**Now blocking something.** The ascension planner is built, so this is no longer
-only advice. Every ascension with wrinklers on the cookie throws their hoard away,
-and all `modules/ascend.js` can do about it is warn before it pulls the lever. This
-is the largest thing left that is purely a matter of building it.
+**Ascension protection is built.** The planner reads a live export through the
+game UI before taking loans or ascending. A valuable hoard blocks automation
+until it is collected or explicitly discarded for that decision. Automatic
+popping remains separate work.
 
 ---
 

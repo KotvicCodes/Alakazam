@@ -15,7 +15,7 @@
     // it. Running on the frame loop and checking the clock gives an accurate
     // cadence without a timer of its own.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('autoclick')
     const { registry, clicks, store } = window.Alakazam
 
     const CLICKS_PER_SECOND = 15

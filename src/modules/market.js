@@ -14,7 +14,7 @@
     // Trading is on by default. Switch it off and the module keeps watching and
     // reporting its signals to the HUD without touching your money.
 
-    const { simulateClick, hoverOn, hoverOff } = window.Alakazam.input
+    const { simulateClick, hoverOn, hoverOff } = window.Alakazam.safety.input('market')
     const { save, store, registry } = window.Alakazam
 
     const INTERVAL_MS = 15000

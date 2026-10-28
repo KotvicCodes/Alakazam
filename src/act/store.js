@@ -14,7 +14,9 @@
     // price reads wait for a changed store face after either kind of switch.
     // quantities are scored only in Buy/1 and execution must change ownership.
 
-    const { simulateClick } = window.Alakazam.input
+    let activeContext = null
+    const simulateClick = node =>
+        (activeContext || window.Alakazam.safety.scope('purchase')).input('simulateClick', node)
     const { parseGameNumber } = window.Alakazam.parse
     const { PRICE_GROWTH } = window.Alakazam.data.buildings
 
@@ -67,18 +69,18 @@
         return assumedAmount
     }
 
-    function setMode(mode) {
+    function setMode(mode, click = simulateClick) {
         const node = el(MODE_IDS[mode])
         if (!node) return false
-        simulateClick(node)
+        click(node)
         assumedMode = mode
         return true
     }
 
-    function setAmount(amount) {
+    function setAmount(amount, click = simulateClick) {
         const node = el(AMOUNT_IDS[amount])
         if (!node) return false
-        simulateClick(node)
+        click(node)
         assumedAmount = amount
         return true
     }
@@ -122,13 +124,13 @@
         }
     }
 
-    function change(mode, amount, refresh = false) {
+    function change(mode, amount, refresh = false, click = simulateClick) {
         if (refresh || currentMode() !== mode || currentAmount() !== amount) {
             observeRedraw(mode, amount)
         }
         // mode first: the game converts Sell/all to Buy/100 automatically
-        if (currentMode() !== mode) setMode(mode)
-        if (refresh || currentAmount() !== amount) setAmount(amount)
+        if (currentMode() !== mode) setMode(mode, click)
+        if (refresh || currentAmount() !== amount) setAmount(amount, click)
     }
 
     async function ready(lease) {
@@ -157,9 +159,13 @@
     }
 
     async function withBulk(mode, amount, body, lease) {
+        const context = lease && typeof lease.check === 'function' ? lease : null
+        if (context) lease = null
         const own = !lease
-        lease = lease || window.Alakazam.transactions.acquire('purchase')
+        lease = lease || window.Alakazam.transactions.acquire(context?.owner || 'purchase', context)
         if (!lease || !lease.valid()) return null
+        const previousContext = activeContext
+        activeContext = lease.ctx
         const prevMode = currentMode()
         const prevAmount = currentAmount()
         try {
@@ -173,15 +179,24 @@
                 if (!(await ready(lease))) return null
             }
             if (!lease.valid() || currentMode() !== mode || currentAmount() !== amount) return null
+            lease.ctx.check()
             return await body(lease)
         } finally {
             // preserve controls the player chose while this transaction was waiting
-            if (!lease.userControls && currentMode() === mode && currentAmount() === amount) {
-                change(prevMode, prevAmount)
-            } else {
-                clearRedraw()
+            try {
+                if (!lease.userControls && currentMode() === mode && currentAmount() === amount) {
+                    lease.ctx.cleanup(() =>
+                        change(prevMode, prevAmount, false, node =>
+                            lease.ctx.input('restoreStoreControl', node)
+                        )
+                    )
+                } else {
+                    clearRedraw()
+                }
+            } finally {
+                activeContext = previousContext
+                if (own) lease.release()
             }
-            if (own) lease.release()
         }
     }
 
@@ -227,6 +242,24 @@
 
     //! Buying and selling
 
+    const refusals = new Map()
+
+    function purchaseState(product, count, budget, cookies) {
+        const { safety, identity, save } = window.Alakazam
+        return {
+            element: product.element,
+            priceElement: product.priceElement,
+            price: product.priceElement.innerText,
+            classes: product.element.className,
+            owned: product.owned,
+            count,
+            budget,
+            cookies,
+            controls: safety.revision('store'),
+            run: identity.fromSave(save.get()).runId
+        }
+    }
+
     //* buy
     // Buy `count` of a product, spending no more than `maxSpend`.
     //
@@ -248,12 +281,20 @@
                 const current = live.readProducts().find(p => p.index === product.index)
                 if (!current || !Number.isInteger(current.owned) || current.owned < 0) return
                 const cost = readBulkPrice(current)
-                const budget = Math.min(maxSpend ?? Infinity, live.readGlobals().cookies)
+                const cookies = live.readGlobals().cookies
+                const budget = Math.min(maxSpend ?? Infinity, cookies)
                 if (!Number.isFinite(cost) || cost <= 0 || cost > budget) {
                     result.reason = 'verified price exceeded budget or unavailable'
                     return
                 }
                 if (!token.valid()) return
+                const state = purchaseState(current, count, budget, cookies)
+                const refused = refusals.get(current.index)
+                if (refused && Object.keys(state).every(key => Object.is(state[key], refused[key]))) {
+                    result.reason = 'unchanged refused purchase'
+                    return
+                }
+                refusals.delete(current.index)
                 // observe before clicking: a real redraw may retain the same price
                 observeRedraw('buy', count)
                 simulateClick(current.element)
@@ -265,6 +306,11 @@
                     // a refused click may never draw; request a fresh quantity
                     // draw under the next valid lease before allowing another buy
                     if (redraw) redraw.refresh = true
+                    // identical redraws do not prove affordability: rounded prices
+                    // can keep looking affordable across ordinary scheduler ticks.
+                    // cancelled observation is inconclusive, so only remember a
+                    // refusal while we still own the transaction.
+                    if (token.valid()) refusals.set(current.index, state)
                     result.reason = 'purchase not observed'
                     return
                 }

@@ -8,6 +8,7 @@ const {
     lumpReserve,
     stockCapacity,
     cosmeticChange,
+    minigame,
     transition,
     researchTooltip,
     buffTooltip
@@ -120,4 +121,681 @@ test('cosmetic fixture keeps the latest appearance separate from its save', asyn
     expect(await game.evaluate(() => Game.YouCustomizer.currentGenes)).toEqual(live)
     expect(await game.evaluate(() => Alakazam.save.get().run.appearance)).toEqual(saved)
     expect(await game.evaluate(() => localStorage.getItem(Game.SaveTo))).toBe(raw)
+})
+
+test('store transactions restore player controls across successive real redraws', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookies = 1e6
+        Game.cookiesEarned = 1e6
+        Game.RefreshStore()
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await expect
+        .poll(() =>
+            game.evaluate(() => Alakazam.live.readProducts().some(product => product.index === 0))
+        )
+        .toBe(true)
+    await game.evaluate(() => {
+        window.transactionProduct = Alakazam.live.readProducts().find(product => product.index === 0)
+        Alakazam.input.simulateClick(document.getElementById('storeBulkSell'))
+        Alakazam.input.simulateClick(document.getElementById('storeBulk10'))
+    })
+    const before = await game.evaluate(() => Game.Objects.Cursor.amount)
+    for (let i = 0; i < 3; i++) {
+        const result = await game.evaluate(() =>
+            Alakazam.act.store.buy(window.transactionProduct, 1, 1000)
+        )
+        expect(result.bought, JSON.stringify(result)).toBe(true)
+        expect(result.amount).toBe(1)
+        expect(await game.evaluate(() => [Game.buyMode, Game.buyBulk])).toEqual([-1, 10])
+    }
+    expect(await game.evaluate(() => Game.Objects.Cursor.amount)).toBe(before + 3)
+})
+
+test('live maturity harvesting preserves the selected seed without replanting', async ({ game }) => {
+    await minigame(game, 'Farm')
+    await game.evaluate(() => {
+        const farm = Game.Objects.Farm
+        farm.amount = 300
+        farm.level = 9
+        const garden = farm.minigame
+        garden.nextStep = Date.now() + 1e9
+        garden.plants.bakeberry.unlocked = 0
+        garden.plants.bakerWheat.unlocked = 1
+        for (const row of garden.plot)
+            for (const tile of row) {
+                tile[0] = garden.plants.bakeberry.id + 1
+                tile[1] = 49
+            }
+        garden.buildPanel()
+        garden.buildPlot()
+        Game.cookies = 1e9
+        Game.cookiesEarned = 1e9
+        Alakazam.store.setSetting('enabled', true)
+        Alakazam.input.simulateClick(document.getElementById('gardenSeed-0'))
+    })
+    await publish(game)
+    await game.evaluate(() => Alakazam.registry.get('garden').tick())
+    expect(await game.evaluate(() => Game.Objects.Farm.minigame.plot[0][0])).toEqual([9, 49])
+    expect(await game.evaluate(() => Game.Objects.Farm.minigame.seedSelected)).toBe(0)
+    await game.evaluate(() => {
+        const garden = Game.Objects.Farm.minigame
+        garden.plot[0][0][1] = 50
+        garden.buildPlot()
+    })
+    await game.evaluate(() => Alakazam.registry.get('garden').tick())
+    expect(await game.evaluate(() => Game.Objects.Farm.minigame.plot[0][0][0])).toBe(0)
+    expect(await game.evaluate(() => Game.Objects.Farm.minigame.plants.bakeberry.unlocked)).toBe(1)
+    expect(await game.evaluate(() => Game.Objects.Farm.minigame.seedSelected)).toBe(0)
+    expect(await game.evaluate(() => Alakazam.store.get('gardenHarvests', 0))).toBe(1)
+    expect(await game.evaluate(() => Alakazam.save.get().buildings[2].minigame.plot[0][0].age)).toBe(49)
+})
+
+test('beta-keyed exports verify empty and live wrinkler hoards', async ({ game }) => {
+    await game.evaluate(() => {
+        // The pinned mirror serves the live game; select the beta storage variant
+        // explicitly without changing the export or identity implementation.
+        history.replaceState({}, '', '/cookieclicker/beta/')
+        Game.SaveTo = 'CookieClickerGameBeta'
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await publish(game)
+    const empty = await game.evaluate(() => Alakazam.act.ascend.liveHoard())
+    expect(empty).not.toBeNull()
+    expect(empty.hoard).toBe(0)
+    expect(empty.runId).toBe(await game.evaluate(() => Alakazam.identity.current().runId))
+    await game.evaluate(() => {
+        for (const [index, amount] of [1e9, 2e9].entries()) {
+            const wrinkler = Game.wrinklers[index]
+            wrinkler.phase = 2
+            wrinkler.type = index
+            wrinkler.sucked = amount
+        }
+    })
+    const valuable = await game.evaluate(() => Alakazam.act.ascend.liveHoard())
+    expect(valuable).not.toBeNull()
+    expect(valuable.hoard).toBe(3e9)
+    expect(valuable.active).toBe(2)
+    // Exporting must not update the stale zero-hoard autosave.
+    expect(await game.evaluate(() => Alakazam.save.get().scalars.wrinklersAmount)).toBe(0)
+})
+
+for (const beta of [false, true]) {
+    test(`${beta ? 'beta' : 'live'} blocked hoard waits before reopening Export Save`, async ({
+        game
+    }) => {
+        await game.evaluate(beta => {
+            if (beta) {
+                history.replaceState({}, '', '/cookieclicker/beta/')
+                Game.SaveTo = 'CookieClickerGameBeta'
+            }
+            Game.cookiesEarned = 5e19
+            Game.cookiesReset = 0
+            Game.resets = 0
+            Alakazam.store.setSetting('enabled', true)
+        }, beta)
+        await publish(game)
+        const result = await game.evaluate(async () => {
+            const mod = Alakazam.registry.get('ascend')
+            await mod.setup()
+            const exportSave = Game.ExportSave
+            const now = Date.now
+            let exports = 0
+            Game.ExportSave = function (...args) {
+                exports++
+                return exportSave.apply(this, args)
+            }
+            try {
+                Game.wrinklers[0].phase = 2
+                Game.wrinklers[0].sucked = 5e15
+                await mod.tick()
+                const blocked = { ...__alakazam.ascend }
+                for (let i = 0; i < 10; i++) await mod.tick()
+                const repeated = exports
+                const retained = { ...__alakazam.ascend }
+                Game.wrinklers[0].phase = 0
+                Game.wrinklers[0].sucked = 0
+                // Advance only the retry clock and native export timestamp;
+                // don't wait 30 real seconds or replace the export implementation.
+                Date.now = () => now() + 30001
+                Game.time = Date.now()
+                await mod.tick()
+                return {
+                    blocked,
+                    retained,
+                    repeated,
+                    exports,
+                    phase: Alakazam.ascend.state().phase,
+                    prompt: Alakazam.safety.prompt()?.id || null
+                }
+            } finally {
+                Game.ExportSave = exportSave
+                Date.now = now
+                Game.time = now()
+                Alakazam.store.setSetting('enabled', false)
+            }
+        })
+        expect(result.blocked.hoardBlocked).toBe(true)
+        expect(result.retained.decisionId).toBe(result.blocked.decisionId)
+        expect(result.retained.wrinklerHoard).toBe(5e15)
+        expect(result.repeated).toBe(1)
+        expect(result.exports).toBe(2)
+        expect(result.phase).toBe('loans')
+        expect(result.prompt).toBeNull()
+    })
+}
+
+test('heavenly-screen reload replans the unchanged run instead of waiting forever', async ({
+    page,
+    context
+}) => {
+    await localOnly(context)
+    await page.addInitScript(() => {
+        // Persist the store across a real document reload without claiming this
+        // page-world test exercises Chrome's extension storage bridge.
+        const key = '__alakazam_reload_test_storage'
+        const read = () => JSON.parse(localStorage.getItem(key) || '{}')
+        window.chrome = {
+            storage: {
+                local: {
+                    get(_keys, callback) {
+                        queueMicrotask(() => callback(read()))
+                    },
+                    set(values, callback) {
+                        localStorage.setItem(key, JSON.stringify({ ...read(), ...values }))
+                        queueMicrotask(() => callback())
+                    }
+                }
+            }
+        }
+    })
+    await openGame(page)
+    await loadAlakazam(page)
+    await page.evaluate(() => {
+        Game.cookies = 1e24
+        Game.cookiesEarned = 1e24
+        Game.cookiesReset = 0
+        Game.resets = 0
+    })
+    await publish(page)
+    await page.evaluate(async () => {
+        await Alakazam.save.connect()
+        Alakazam.store.setSetting('enabled', true)
+        for (let i = 0; i < 3; i++) await Alakazam.registry.get('ascend').tick()
+    })
+    await expect.poll(() => page.evaluate(() => Game.AscendTimer)).toBeGreaterThan(0)
+    await transition(page, 'ascending')
+    await page.evaluate(async () => {
+        await Alakazam.registry.get('ascend').tick()
+        await Alakazam.store.flush()
+    })
+    expect(await page.evaluate(() => Alakazam.store.get('ascendPhase'))).toBe('shopping')
+    expect(await page.evaluate(() => Alakazam.store.get('ascendAwaitReset'))).toBe(0)
+    const run = await page.evaluate(() => Alakazam.identity.current().runId)
+    await page.reload()
+    await page.waitForFunction(() => window.Game?.ready)
+    await page.evaluate(() => Game.ClosePrompt())
+    await loadAlakazam(page)
+    await page.evaluate(async () => {
+        await Alakazam.save.connect()
+        Alakazam.store.setSetting('enabled', true)
+        await Alakazam.registry.get('ascend').tick()
+    })
+    expect(await page.evaluate(() => Game.OnAscend)).toBe(0)
+    expect(await page.evaluate(() => Alakazam.identity.current().runId)).toBe(run)
+    expect(await page.evaluate(() => window.__alakazam.ascend.waitingForSave)).not.toBe(true)
+    expect(await page.evaluate(() => Alakazam.store.get('ascendAwaitReset', null))).toBeNull()
+    expect(await page.evaluate(() => Alakazam.ascend.state().phase)).toBe('loans')
+})
+
+test('restored reset verification waits quietly until the newer save arrives', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookiesEarned = 0
+        Game.cookiesReset = 0
+        Game.resets = 0
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await publish(game)
+    const result = await game.evaluate(async () => {
+        Alakazam.store.set('ascendPhase', 'watching')
+        Alakazam.store.set('ascendAwaitReset', 0)
+        const mod = Alakazam.registry.get('ascend')
+        await mod.setup()
+        Game.resets = 1
+        const exportSave = Game.ExportSave
+        let exports = 0
+        Game.ExportSave = function (...args) {
+            exports++
+            return exportSave.apply(this, args)
+        }
+        try {
+            for (let i = 0; i < 10; i++) await mod.tick()
+            const waiting = __alakazam.ascend.waitingForSave
+            const pending = Alakazam.store.get('ascendAwaitReset', null)
+            const beforeSave = exports
+            Game.WriteSave()
+            await Alakazam.registry.get('saveWatch').tick()
+            await mod.tick()
+            return {
+                waiting,
+                pending,
+                beforeSave,
+                exports,
+                afterSave: __alakazam.ascend.waitingForSave === true,
+                marker: Alakazam.store.get('ascendAwaitReset', null),
+                phase: Alakazam.ascend.state().phase,
+                prompt: Alakazam.safety.prompt()?.id || null
+            }
+        } finally {
+            Game.ExportSave = exportSave
+            Alakazam.store.setSetting('enabled', false)
+        }
+    })
+    expect(result.waiting).toBe(true)
+    expect(result.pending).toBe(0)
+    expect(result.beforeSave).toBe(1)
+    expect(result.exports).toBe(1)
+    expect(result.afterSave).toBe(false)
+    expect(result.marker).toBeNull()
+    expect(result.phase).toBe('watching')
+    expect(result.prompt).toBeNull()
+})
+
+test('rounded-price refusal stops unchanged retries and recovers after funding', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookies = 1e6
+        Game.cookiesEarned = 2e6
+        Game.Objects.Cursor.basePrice = 1000400
+        Game.Objects.Cursor.refresh()
+        Game.RefreshStore()
+        Alakazam.store.setSetting('enabled', true)
+        window.refusedClicks = 0
+        document.addEventListener('click', event => {
+            if (event.target.closest('#product0')) window.refusedClicks++
+        })
+    })
+    await expect.poll(() => game.evaluate(() => Alakazam.live.readGlobals().cookies)).toBe(1e6)
+    await expect
+        .poll(() => game.evaluate(() => Alakazam.live.readProducts().some(item => item.index === 0)))
+        .toBe(true)
+    const attempt = () =>
+        game.evaluate(() => {
+            const product = Alakazam.live.readProducts().find(item => item.index === 0)
+            return Alakazam.act.store.buy(product, 1, Infinity)
+        })
+    expect((await attempt()).bought).toBe(false)
+    for (let i = 0; i < 3; i++) expect((await attempt()).bought).toBe(false)
+    expect(await game.evaluate(() => window.refusedClicks)).toBe(1)
+    expect(await game.evaluate(() => Game.Objects.Cursor.amount)).toBe(0)
+    await game.evaluate(() => {
+        Game.cookies = 1.1e6
+        Game.Objects.Cursor.refresh()
+    })
+    await expect.poll(() => game.evaluate(() => Alakazam.live.readGlobals().cookies)).toBe(1.1e6)
+    expect((await attempt()).bought).toBe(true)
+    expect(await game.evaluate(() => Game.Objects.Cursor.amount)).toBe(1)
+    expect(await game.evaluate(() => [Game.buyMode, Game.buyBulk])).toEqual([1, 1])
+})
+
+for (const cancellation of ['pause', 'foreign prompt']) {
+    test(`cancelled lump confirmation releases its reservation after ${cancellation}`, async ({
+        game
+    }) => {
+        await lumpReserve(game)
+        await game.evaluate(() => {
+            const wizard = Game.Objects['Wizard tower']
+            wizard.amount = 1
+            wizard.highest = 1
+            wizard.level = 2
+            wizard.refresh()
+            Game.lumps = 103
+            Game.lumpsTotal = 200
+            Game.lumpT = Date.now()
+            Game.prefs.askLumps = 1
+            Game.computeLumpTimes()
+            Game.Draw()
+            Alakazam.store.setSetting('enabled', true)
+        })
+        await publish(game)
+        await expect(game.locator('#lumpsAmount')).toHaveText('103')
+        await expect
+            .poll(() =>
+                game.evaluate(() =>
+                    Alakazam.parse.firstNumberIn(document.getElementById('productLevel7').innerText)
+                )
+            )
+            .toBe(2)
+        expect(await game.evaluate(() => Alakazam.lumps.nextSpend(103)?.cost)).toBe(3)
+        await game.evaluate(() => {
+            const until = Alakazam.transactions.until
+            window.restoreLumpWait = () => (Alakazam.transactions.until = until)
+            Alakazam.transactions.until = async (...args) => {
+                const outcome = await until(...args)
+                if (document.getElementById('promptContentSpendLump') && !window.releaseLumpWait) {
+                    await new Promise(resolve => (window.releaseLumpWait = resolve))
+                }
+                return outcome
+            }
+            window.pendingLumpTick = Alakazam.registry.get('lumps').tick()
+        })
+        await expect(game.locator('#promptContentSpendLump')).toHaveCount(1)
+        if (cancellation === 'pause') {
+            await game.evaluate(() => Alakazam.store.setSetting('enabled', false))
+            await game.locator('#promptOption1').click()
+        } else {
+            await game.locator('#promptOption1').click()
+            await game.keyboard.press('Control+o')
+            await expect(game.locator('#promptContentImportSave')).toHaveCount(1)
+        }
+        await game.evaluate(async () => {
+            window.releaseLumpWait()
+            await window.pendingLumpTick
+            window.restoreLumpWait()
+        })
+        expect(await game.evaluate(() => Game.lumps)).toBe(103)
+        expect(await game.evaluate(() => Game.Objects['Wizard tower'].level)).toBe(2)
+        if (cancellation === 'foreign prompt') {
+            await expect(game.locator('#promptContentImportSave')).toHaveCount(1)
+            await game.locator('#promptOption1').click()
+        }
+        await publish(game)
+        await game.evaluate(() => Alakazam.store.setSetting('enabled', true))
+        expect(await game.evaluate(() => Alakazam.lumps.nextSpend(103)?.cost)).toBe(3)
+        await game.evaluate(async () => {
+            Game.prefs.askLumps = 0
+            await Alakazam.registry.get('lumps').tick()
+        })
+        expect(await game.evaluate(() => Game.lumps)).toBe(100)
+        expect(await game.evaluate(() => Game.Objects['Wizard tower'].level)).toBe(3)
+    })
+}
+
+test('cancelled bulk switch restores one while a player import prompt stays open', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookies = 1e9
+        Game.cookiesEarned = 1e9
+        Game.RefreshStore()
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await expect.poll(() => game.evaluate(() => Alakazam.live.readGlobals().cookies)).toBe(1e9)
+    await game.evaluate(() => {
+        const until = Alakazam.transactions.until
+        window.restoreStoreWait = () => (Alakazam.transactions.until = until)
+        Alakazam.transactions.until = async (...args) => {
+            const result = await until(...args)
+            if (Game.buyBulk === 100 && !window.releaseStoreWait) {
+                await new Promise(resolve => (window.releaseStoreWait = resolve))
+            }
+            return result
+        }
+        const product = Alakazam.live.readProducts().find(item => item.index === 0)
+        window.pendingStoreBuy = Alakazam.act.store.buy(product, 100, 1e9).catch(error => ({
+            error: error.name
+        }))
+    })
+    await game.waitForFunction(() => typeof window.releaseStoreWait === 'function')
+    expect(await game.evaluate(() => Game.buyBulk)).toBe(100)
+    await game.keyboard.press('Control+o')
+    await expect(game.locator('#promptContentImportSave')).toHaveCount(1)
+    await game.evaluate(async () => {
+        window.releaseStoreWait()
+        await window.pendingStoreBuy
+        window.restoreStoreWait()
+    })
+    await expect(game.locator('#promptContentImportSave')).toHaveCount(1)
+    expect(await game.evaluate(() => Game.Objects.Cursor.amount)).toBe(0)
+    expect(await game.evaluate(() => [Game.buyMode, Game.buyBulk])).toEqual([1, 1])
+})
+
+test('pausing after gift wrapping retains the actual generated code', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookies = 1e10
+        Game.cookiesEarned = 1e10
+        Game.prestige = 1e6
+        Game.heavenlyChips = 1
+        Game.heavenlyChipsSpent = 999999
+        Game.Upgrades['Wrapping paper'].bought = 1
+    })
+    await publish(game)
+    await game.evaluate(async () => {
+        await Alakazam.save.connect()
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await expect.poll(() => game.evaluate(() => Alakazam.live.readGlobals().cookies)).toBe(1e10)
+    await game.evaluate(() => {
+        const schedule = window.setTimeout.bind(window)
+        window.restoreGiftWait = () => (window.setTimeout = schedule)
+        window.setTimeout = (callback, delay, ...args) => {
+            if (delay === 350 && Alakazam.safety.ownsPrompt('gifts', 'GiftSendReady')) {
+                window.generatedGiftCode = document.getElementById('giftCode').value
+                window.releaseGiftWait = () => callback(...args)
+                return schedule(() => {}, 0)
+            }
+            return schedule(callback, delay, ...args)
+        }
+        window.pendingGiftTick = Alakazam.registry.get('gifts').tick()
+    })
+    await game.waitForFunction(() => typeof window.releaseGiftWait === 'function')
+    expect(await game.evaluate(() => window.generatedGiftCode.length)).toBeGreaterThan(0)
+    expect(await game.evaluate(() => !!Game.hasBuff('Gifted out'))).toBe(true)
+    await game.evaluate(async () => {
+        Alakazam.store.setSetting('enabled', false)
+        window.releaseGiftWait()
+        await window.pendingGiftTick
+        window.restoreGiftWait()
+    })
+    expect(await game.evaluate(() => Alakazam.gifts.heldCode()?.code === window.generatedGiftCode)).toBe(
+        true
+    )
+})
+
+async function cosmeticRecoveryFixture(game, kind, replacement) {
+    return game.evaluate(
+        async ({ kind, replacement }) => {
+            // Page-world DOM coverage uses a test storage adapter; the extension
+            // project separately exercises the real Chrome storage bridge.
+            const disk = {}
+            window.chrome = {
+                storage: {
+                    local: {
+                        get(_keys, callback) {
+                            queueMicrotask(() => callback({ ...disk }))
+                        },
+                        set(values, callback) {
+                            Object.assign(disk, structuredClone(values))
+                            queueMicrotask(() => callback())
+                        }
+                    }
+                }
+            }
+            const original = [4, 5, 6, 1, 2, 3, 4]
+            const temporary = [6, 5, 6, 1, 2, 3, 4]
+            Game.Objects.You.amount = 1
+            Game.Objects.You.refresh()
+            Game.YouCustomizer.load((kind === 'clones' ? temporary : original).join(','))
+            Game.bakeryName = kind === 'name' ? 'Orteil' : 'Acceptance Original'
+            Game.bakeryNameRefresh()
+            Game.WriteSave()
+            await Alakazam.registry.get('saveWatch').tick()
+            await Alakazam.save.connect()
+            Alakazam.store.setSetting('enabled', true)
+            const who = Alakazam.identity.current()
+            const key = kind === 'name' ? 'bakeryNameRecovery' : 'cloneRecovery'
+            const mark =
+                kind === 'name'
+                    ? {
+                          legacyId: who.legacyId,
+                          original: 'Acceptance Original',
+                          expected: 'Orteil'
+                      }
+                    : {
+                          legacyId: who.legacyId,
+                          original,
+                          expected: temporary,
+                          previous: original,
+                          history: [original, temporary]
+                      }
+            Alakazam.store.set(key, mark)
+            await Alakazam.store.flush()
+            window.recoverImportedCosmetic = () =>
+                kind === 'name' ? Alakazam.achievements.recoverName() : Alakazam.clones.recover()
+            const sections = Alakazam.savefile.decode(Game.WriteSave(1)).split('|')
+            const run = sections[2].split(';')
+            if (replacement.startsWith('family-')) run[1] = String(Number(run[1]) - 86400000)
+            if (replacement.startsWith('run-')) run[4] = 'other-run-seed'
+            if (replacement.endsWith('-other')) {
+                if (kind === 'name') run[3] = 'Imported choice'
+                else run[5] = '2,4,1,0,3,5,7'
+            }
+            sections[2] = run.join(';')
+            const raw = escape(btoa(unescape(encodeURIComponent(sections.join('|')))) + '!END!')
+            await window.recoverImportedCosmetic()
+            return {
+                raw,
+                original,
+                temporary,
+                key,
+                stored: localStorage.getItem(Game.SaveTo),
+                journal: Alakazam.store.get(key)
+            }
+        },
+        { kind, replacement }
+    )
+}
+
+for (const kind of ['name', 'clones']) {
+    for (const replacement of ['same-run', 'family-owned', 'family-other', 'run-owned', 'run-other']) {
+        test(`file import ${replacement} preserves ${kind} recovery ownership`, async ({ game }) => {
+            const fixture = await cosmeticRecoveryFixture(game, kind, replacement)
+            const current = () =>
+                game.evaluate(
+                    kind => (kind === 'name' ? Game.bakeryName : Game.YouCustomizer.currentGenes),
+                    kind
+                )
+            const original = kind === 'name' ? 'Acceptance Original' : fixture.original
+            const temporary = replacement.endsWith('-other')
+                ? kind === 'name'
+                    ? 'Imported choice'
+                    : [2, 4, 1, 0, 3, 5, 7]
+                : kind === 'name'
+                  ? 'Orteil'
+                  : fixture.temporary
+            expect(await current()).toEqual(original)
+            expect(await game.evaluate(key => !!Alakazam.store.get(key, null), fixture.key)).toBe(true)
+            await game.locator('#prefsButton').click()
+            await game.locator('#FileLoadInput').setInputFiles({
+                name: 'temporary-cosmetic.txt',
+                mimeType: 'text/plain',
+                buffer: Buffer.from(fixture.raw)
+            })
+            await expect.poll(current).toEqual(temporary)
+            expect(await game.evaluate(() => Alakazam.safety.prompt())).toBe(null)
+            expect(await game.evaluate(() => localStorage.getItem(Game.SaveTo))).toBe(fixture.stored)
+            await game.evaluate(() => window.recoverImportedCosmetic())
+            expect(await current()).toEqual(replacement === 'same-run' ? original : temporary)
+            if (replacement !== 'same-run') {
+                expect(await game.evaluate(key => Alakazam.store.get(key), fixture.key)).toEqual(
+                    fixture.journal
+                )
+            }
+        })
+    }
+}
+
+for (const kind of ['name', 'clones']) {
+    test(`file completion during the ${kind} journal wait releases its owned prompt`, async ({
+        game
+    }) => {
+        const fixture = await cosmeticRecoveryFixture(game, kind, 'family-owned')
+        await game.evaluate(
+            async ({ kind, temporary, key }) => {
+                if (kind === 'name') {
+                    Alakazam.store.forget(key)
+                    await Alakazam.store.flush()
+                } else {
+                    // Prepare an interrupted same-run appearance for recovery.
+                    Game.YouCustomizer.load(temporary.join(','))
+                    Game.bakeryNameRefresh()
+                }
+            },
+            { kind, temporary: fixture.temporary, key: fixture.key }
+        )
+        await game.locator('#prefsButton').click()
+        await game.evaluate(kind => {
+            const flush = Alakazam.store.flush
+            window.restoreCosmeticFlush = () => (Alakazam.store.flush = flush)
+            Alakazam.store.flush = async () => {
+                const result = await flush()
+                if (!window.releaseCosmeticFlush) {
+                    await new Promise(resolve => (window.releaseCosmeticFlush = resolve))
+                }
+                return result
+            }
+            window.pendingCosmetic =
+                kind === 'name'
+                    ? Alakazam.safety.run({ name: 'achievements' }, () =>
+                          Alakazam.achievements.godComplex()
+                      )
+                    : Alakazam.clones.recover()
+        }, kind)
+        await game.waitForFunction(() => typeof window.releaseCosmeticFlush === 'function')
+        const journal = await game.evaluate(key => Alakazam.store.get(key), fixture.key)
+        const prompt = kind === 'name' ? '#promptContentNameBakery' : '#promptContentCustomizeYou'
+        await expect(game.locator(prompt)).toHaveCount(1)
+        await game.locator('#FileLoadInput').setInputFiles({
+            name: 'replacement-family.txt',
+            mimeType: 'text/plain',
+            buffer: Buffer.from(fixture.raw)
+        })
+        await expect
+            .poll(() => game.evaluate(() => Game.fullDate))
+            .not.toBe(await game.evaluate(() => Alakazam.savefile.read().run.fullDate))
+        await game.evaluate(async () => {
+            window.releaseCosmeticFlush()
+            await window.pendingCosmetic
+            window.restoreCosmeticFlush()
+        })
+        await expect(game.locator(prompt)).toBeHidden()
+        expect(await game.evaluate(() => Alakazam.safety.prompt())).toBe(null)
+        expect(
+            await game.evaluate(
+                kind => (kind === 'name' ? Game.bakeryName : Game.YouCustomizer.currentGenes),
+                kind
+            )
+        ).toEqual(kind === 'name' ? 'Orteil' : fixture.temporary)
+        expect(await game.evaluate(key => Alakazam.store.get(key), fixture.key)).toEqual(journal)
+        await game.evaluate(() => window.recoverImportedCosmetic())
+        await expect(game.locator('#promptContentExportSave')).toBeHidden()
+        expect(await game.evaluate(key => Alakazam.store.get(key), fixture.key)).toEqual(journal)
+    })
+}
+
+test('cosmetic recovery retries a temporarily stale actual export', async ({ game }) => {
+    const fixture = await cosmeticRecoveryFixture(game, 'name', 'same-run')
+    await game.locator('#prefsButton').click()
+    await game.locator('#FileLoadInput').setInputFiles({
+        name: 'same-run-temporary-name.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from(fixture.raw)
+    })
+    await expect.poll(() => game.evaluate(() => Game.bakeryName)).toBe('Orteil')
+    await game.evaluate(() => {
+        // Prepare the stale game clock seen during timer throttling. The action
+        // still reads the game's actual Export Save textarea through its UI.
+        Game.time = Date.now() - 10000
+        Alakazam.achievements.recoverName()
+    })
+    expect(await game.evaluate(() => Game.bakeryName)).toBe('Orteil')
+    expect(await game.evaluate(key => !!Alakazam.store.get(key, null), fixture.key)).toBe(true)
+    await expect
+        .poll(
+            () =>
+                game.evaluate(() => {
+                    Game.time = Date.now()
+                    Alakazam.achievements.recoverName()
+                    return Game.bakeryName
+                }),
+            { timeout: 15000, intervals: [500] }
+        )
+        .toBe('Acceptance Original')
 })

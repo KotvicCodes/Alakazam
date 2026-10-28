@@ -32,13 +32,15 @@
     const { priority, COST, PERMANENT_PICKS, SLOT_NAMES, KITTEN, permanentRank, normalise } =
         window.Alakazam.data.heavenly
     const loanData = window.Alakazam.data.loans
-    const act = window.Alakazam.act.ascend
-    const loanAct = window.Alakazam.act.loans
+    const act = window.Alakazam.safety.bind('ascend', window.Alakazam.act.ascend)
+    const loanAct = window.Alakazam.safety.bind('ascend', window.Alakazam.act.loans)
 
     // Once the target is met this module is timing an ascension against a forty
     // second loan window, so it cannot be a slow poller. A tick is a save read and
     // a couple of DOM reads except during the sequence itself, so a second costs
     // nothing worth measuring.
+    const tooltip = window.Alakazam.safety.bind('ascend', catalog)
+
     const INTERVAL_MS = 1000
 
     // the ascend screen redraws its whole tree after every purchase, so a click has
@@ -106,6 +108,12 @@
     // what is being read is the new run rather than an echo of the old one.
     let awaitingReset = null
 
+    // A reload may restore play from the save made before reaching heaven.
+    // Only a restored marker can be reconsidered; an observed return in this
+    // document must still wait for the completed reset's save.
+    let verifyInterrupted = false
+    let verifyRetryAt = 0
+
     // crates whose name could not be read, or that were clicked without the chip
     // count moving. either way there is no point going back to them this visit.
     let skipped = new Set()
@@ -156,11 +164,15 @@
     function awaitReset(count) {
         if (awaitingReset !== null) return
         awaitingReset = count
+        verifyInterrupted = false
+        verifyRetryAt = 0
         store.set('ascendAwaitReset', count)
     }
 
     function clearAwait() {
         awaitingReset = null
+        verifyInterrupted = false
+        verifyRetryAt = 0
         store.forget('ascendAwaitReset')
     }
 
@@ -194,7 +206,7 @@
             return { name: cache.names[crate.id], price: cache.prices[crate.id] }
         }
 
-        const tip = await catalog.readTooltip(crate.element)
+        const tip = await tooltip.readTooltip(crate.element)
         // the hover mutex is held by the catalog module; try again next tick
         if (!tip || !tip.name) return null
 
@@ -255,7 +267,7 @@
     }
 
     function wait(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+        return window.Alakazam.safety.wait('ascend', ms)
     }
 
     //* bestPermanent
@@ -370,7 +382,7 @@
     // tooltip names the slot, and a filled one prints its occupant above the
     // description. Returns null when the hover lock is held elsewhere.
     async function readSlot(crate, index) {
-        const tip = await catalog.readTooltip(crate.element)
+        const tip = await tooltip.readTooltip(crate.element)
         if (!tip || !tip.name) return null
         const name = normalise(tip.name)
         const slot = SLOT_NAMES.indexOf(name)
@@ -544,18 +556,67 @@
         return w && w.active > 0 ? w.hoard : 0
     }
 
-    function commit(s, why) {
-        if (buffs.blocksAscension()) return
-        const hoard = hoardAtRisk()
-        if (hoard > 0) {
-            console.warn(
-                `Alakazam: ascending with wrinklers still on the cookie. Their hoard is lost. ` +
-                    'Popping them is not something Alakazam can do yet (they are drawn on a ' +
-                    'canvas, not clickable elements), so pop them by hand to keep it.'
-            )
+    // Consent lives only in memory and names this run and decision. Reloading,
+    // changing saves, or withdrawing the decision requires fresh consent.
+    let decision = null
+    let decisionNumber = 0
+    const HOARD_RETRY_MS = 30000
+    let hoardCheck = null
+    store.subscribe(settings => {
+        if (settings.enabled === false || settings.ascend === false) decision = null
+    })
+
+    function decisionForRun() {
+        const who = window.Alakazam.identity.current()
+        if (!who.known) return null
+        if (!decision || decision.runId !== who.runId) {
+            decision = { id: `${who.runId}:${++decisionNumber}`, runId: who.runId, discarded: false }
         }
+        return decision
+    }
+
+    function discardHoard(id) {
+        const current = decisionForRun()
+        if (!current || current.id !== id || !window.__alakazam.ascend?.hoardBlocked) return false
+        current.discarded = true
+        return true
+    }
+
+    function hoardSafe(confirming = false) {
+        const current = decisionForRun()
+        if (!current) return false
+        if (current.discarded) return true
+        // A blocked gate stays blocked between retries without repeatedly
+        // interrupting the player with Export Save. Never reuse evidence to
+        // authorize a confirmation: that path still requires a fresh export.
+        if (!confirming && hoardCheck?.decisionId === current.id && Date.now() < hoardCheck.retryAt) {
+            Object.assign(window.__alakazam.ascend, hoardCheck.status)
+            return false
+        }
+        // Replace our confirmation prompt only after checking its ownership, then
+        // read a fresh export immediately before the irreversible confirmation.
+        if (confirming && act.promptIs('ascend')) act.cancelPrompt('ascend')
+        const evidence = act.liveHoard()
+        const safe = evidence && evidence.hoard === 0
+        if (safe) hoardCheck = null
+        if (!safe) {
+            const status = {
+                hoardBlocked: true,
+                decisionId: current.id,
+                blocked: evidence
+                    ? 'Collect the wrinkler hoard or explicitly discard it for this ascent.'
+                    : 'Waiting to verify the live wrinkler hoard. Clear other prompts and retry.',
+                wrinklerHoard: evidence ? evidence.hoard : hoardAtRisk()
+            }
+            hoardCheck = { decisionId: current.id, retryAt: Date.now() + HOARD_RETRY_MS, status }
+            Object.assign(window.__alakazam.ascend, status)
+        }
+        return !!safe
+    }
+
+    function commit(s, why) {
+        if (buffs.blocksAscension() || !hoardSafe()) return
         console.log(`Alakazam: ascending for ${Math.round(s.chipsGained)} heavenly chip(s). ${why}.`)
-        // the last moment the save is certain to describe the run being left
         awaitReset(s.ascensions)
         setPhase('ascending')
         act.openLegacy()
@@ -576,6 +637,7 @@
 
             if (buffs.blocksAscension()) return
 
+            if (!hoardSafe()) return
             taken = []
             harvestFrom = 0
             setPhase('loans')
@@ -583,7 +645,7 @@
         }
 
         if (phase === 'loans') {
-            if (buffs.blocksAscension()) return
+            if (buffs.blocksAscension() || !hoardSafe()) return
             if (takeLoans()) return
             if (taken.length === 0) {
                 // no bank, or every slot already spent. nothing to wait for.
@@ -636,12 +698,17 @@
             }
             // the prompt names itself, so this can never confirm anything else
             if (act.promptIs('ascend')) {
+                if (!hoardSafe(true)) {
+                    act.cancelPrompt('ascend')
+                    return
+                }
+                if (!act.promptIs('ascend')) act.openLegacy()
                 act.confirmPrompt('ascend')
                 return
             }
             // no prompt and no ascend screen: the click was lost, or the player
             // closed it. open it again rather than sitting here.
-            act.openLegacy()
+            if (hoardSafe()) act.openLegacy()
             return
         }
 
@@ -700,6 +767,38 @@
 
         // an ascension has happened and the save has not admitted it yet
         if (awaitingReset !== null && s.ascensions > awaitingReset) clearAwait()
+
+        if (verifyInterrupted && awaitingReset !== null) {
+            if (act.screen() !== 'playing') {
+                // Once this document has seen the sequence in progress, returning
+                // to play can mean a real reincarnation. Keep the anti-echo wait.
+                verifyInterrupted = false
+            } else {
+                // A newer live run can precede its autosave indefinitely.
+                // Keep waiting without reopening Export Save every tick.
+                if (Date.now() < verifyRetryAt) {
+                    window.__alakazam.ascend = { ...s, phase, waitingForSave: true }
+                    return
+                }
+                const evidence = act.liveHoard()
+                const savedRun = window.Alakazam.identity.fromSave(save.get())
+                if (
+                    !evidence ||
+                    evidence.resets !== awaitingReset ||
+                    evidence.runId !== savedRun.runId
+                ) {
+                    verifyRetryAt = Date.now() + HOARD_RETRY_MS
+                    window.__alakazam.ascend = { ...s, phase, waitingForSave: true }
+                    return
+                }
+                // Fresh live identity, including seed/start date/reset count,
+                // proves the old saved run is still playing. Replan from scratch;
+                // this grants no consent to discard its hoard or confirm a prompt.
+                clearAwait()
+                setPhase('watching')
+                decision = null
+            }
+        }
         const echo = awaitingReset !== null && phase === 'watching'
 
         // the target coming and going is a real transition, not noise: production
@@ -720,6 +819,7 @@
             )
         }
         if (!s.ready) announced = false
+        if (phase === 'watching') decision = null
 
         const window_ = loanWindow()
         window.__alakazam.ascend = {
@@ -740,15 +840,47 @@
         if (phase !== 'watching') await drive(s)
     }
 
+    function reset({ previousIdentity, identity } = {}) {
+        hoardCheck = null
+        verifyRetryAt = 0
+        // the committed sequence spans runs. Preserve it on the heavenly screen
+        // for this family, while imports into another family start independently.
+        if (
+            previousIdentity &&
+            identity &&
+            previousIdentity.familyId === identity.familyId &&
+            window.Alakazam.act.ascend.onAscendScreen() &&
+            ['ascending', 'shopping', 'returning'].includes(phase)
+        ) {
+            awaitingReset = null
+            verifyInterrupted = false
+            store.set('ascendPhase', phase)
+            return
+        }
+        phase = 'watching'
+        announced = false
+        awaitingReset = null
+        verifyInterrupted = false
+        skipped = new Set()
+        bought = []
+        taken = []
+        harvestFrom = 0
+        slotsDone = new Set()
+        repickTries = 0
+        setup()
+    }
+
     function setup() {
         // resume whatever phase the last page load left behind
         const saved = store.get('ascendPhase', 'watching')
         if (PHASES.indexOf(saved) !== -1) phase = saved
         const pending = store.get('ascendAwaitReset', null)
-        if (typeof pending === 'number') awaitingReset = pending
+        awaitingReset = typeof pending === 'number' ? pending : null
+        verifyInterrupted = awaitingReset !== null
+        verifyRetryAt = 0
     }
 
-    registry.register({ name: 'ascend', interval: INTERVAL_MS, setup, tick })
+    registry.register({ name: 'ascend', interval: INTERVAL_MS, setup, reset, tick })
 
-    window.Alakazam.ascend = { state, shop, nameOf, loanWindow, takeLoans, PHASES }
+    window.Alakazam.ascend = { state, shop, nameOf, loanWindow, takeLoans, discardHoard, PHASES }
 })()

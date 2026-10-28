@@ -1,28 +1,17 @@
 // wrapped in an IIFE so its top-level names stay private: all content scripts
 // share one scope, so bare top-level declarations across files would collide
 ;(function () {
-    //! Run Identity
-    // Cookie Clicker has no accounts, but every save carries a five-letter `seed`
-    // plus the timestamps for when the save was created and when the current
-    // ascension began. Together those identify a save as well as an account id
-    // would, and they are stable across page refreshes.
-    //
-    //   legacyId -> one save file, survives ascension. namespaces everything we
-    //               remember long term: seed log, settings, achievement work.
-    //   runId    -> one ascension. namespaces anything that resets when the
-    //               player ascends.
-    //
-    // The seed is also what makes the game's random events reproducible, which is
-    // what any future golden cookie prediction would be built on. It is captured
-    // here so that work does not need a second pass over the save.
+    //! Save & Run Identity
+    // fullDate survives ascension, renaming and imports. Imports with the same
+    // creation timestamp deliberately share family state; a hard reset starts a
+    // new family. The seed belongs only to the run. Variant keys stay isolated.
 
     const { savefile } = window.Alakazam
 
     //* hash
     // FNV-1a, 32 bit, rendered as 8 hex characters. we only need a short stable
     // key for storage namespacing, so a non-cryptographic hash is the right tool.
-    // hashing rather than storing the raw fields also keeps the bakery name, which
-    // is user data, out of anything we persist or print.
+    // bakery names are never part of an identity or printed in logs.
     function hash(str) {
         let h = 0x811c9dc5
         for (let i = 0; i < str.length; i++) {
@@ -37,19 +26,32 @@
     // pure: derive identity from an already parsed save. exported separately so
     // it can be tested without a browser.
     function fromSave(save) {
-        if (!save || !save.ok || !save.run) {
-            return { known: false, legacyId: 'unknown', runId: 'unknown', seed: '', ascensions: 0 }
+        const run = save && save.run
+        if (
+            !save ||
+            !save.ok ||
+            !run ||
+            !run.seed ||
+            !Number.isFinite(run.fullDate) ||
+            run.fullDate <= 0 ||
+            !Number.isFinite(run.startDate) ||
+            run.startDate <= 0
+        ) {
+            return { known: false, familyId: 'unknown', legacyId: 'unknown', runId: 'unknown' }
         }
-        const run = save.run
-        // fullDate never changes for a save file; startDate changes every ascension
-        const legacyId = hash(run.seed + '|' + run.fullDate)
-        const runId = hash(run.seed + '|' + run.startDate)
+        const variant = save.key || savefile.SAVE_KEY
+        const familyId = 'v2-' + hash(variant + '|' + run.fullDate)
+        const ascensions = save.scalars ? save.scalars.resets : 0
         return {
-            known: run.seed !== '',
-            legacyId,
-            runId,
+            known: true,
+            familyId,
+            legacyId: familyId,
+            // old namespaces carry no variant metadata; import them only on the canonical key
+            previousLegacyId: variant === savefile.SAVE_KEY ? hash(run.seed + '|' + run.fullDate) : null,
+            previousRecoveryId: variant === savefile.SAVE_KEY ? hash('legacy|' + run.fullDate) : null,
+            runId: hash(familyId + '|' + run.seed + '|' + run.startDate + '|' + ascensions),
             seed: run.seed,
-            ascensions: save.scalars ? save.scalars.resets : 0
+            ascensions
         }
     }
 
@@ -58,13 +60,15 @@
     // callers that need it every tick should hold onto the result and refresh it
     // only when the run id changes (that is, when the player ascends).
     function current() {
-        return fromSave(savefile.read())
+        const saved = savefile.read()
+        // plausible metadata in a stale parse cannot authorize live automation
+        return fromSave(saved.stale ? null : saved)
     }
 
     //* bakeryName
     // the player's own bakery name, needed so the achievement routines can put it
     // back after temporarily renaming the bakery. treated as user data: returned
-    // to callers on request, never logged and never persisted.
+    // to callers on request and never logged. Temporary undo records may persist it.
     function bakeryName(save) {
         const s = save || savefile.read()
         return s && s.ok && s.run ? s.run.bakeryName : ''

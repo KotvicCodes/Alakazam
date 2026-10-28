@@ -29,7 +29,7 @@
     // that survives a game patch (the bitfield is by upgrade id, and ids move), so
     // the schedule is measured off the lump itself instead. See lifeSpan below.
 
-    const { simulateClick } = window.Alakazam.input
+    const { simulateClick } = window.Alakazam.safety.input('lumps')
     const { save, store, registry } = window.Alakazam
 
     const INTERVAL_MS = 30000
@@ -82,7 +82,14 @@
         if (!s.ok || !s.buildings) return
         // once autosave contains a spend, it no longer needs reconciliation
         for (let i = pending.length - 1; i >= 0; i--) {
-            if (s.buildings[pending[i].index]?.level >= pending[i].level) pending.splice(i, 1)
+            const p = pending[i]
+            if (
+                s.buildings[p.index]?.level >= p.level ||
+                // an unreadable click is only a bank hold, not an assumed level.
+                // a fresh trusted save settles a refusal as well as a success.
+                (p.uncertain && !s.stale && s.scalars?.trusted && s.run?.lastDate > p.at)
+            )
+                pending.splice(i, 1)
         }
         // A harvest may leave the live balance above our conservative ceiling.
         // Once all spends are saved, that ceiling must not hide future earnings.
@@ -97,7 +104,7 @@
             const badge = el('productLevel' + b.id)
             const liveLevel = badge ? window.Alakazam.parse.firstNumberIn(badge.innerText) : NaN
             const planned = pending
-                .filter(p => p.index === b.id)
+                .filter(p => p.index === b.id && !p.uncertain)
                 .reduce((n, p) => Math.max(n, p.level), 0)
             const level = Number.isInteger(liveLevel) && liveLevel >= 0 ? liveLevel : b.level
             return { ...b, level: Math.max(level, planned) }
@@ -192,7 +199,7 @@
     // only thing behind the answer so far is the base timing
     function measuredSpan() {
         const s = save.get()
-        if (s.ok && s.scalars && s.scalars.trusted && s.scalars.lumpT) {
+        if (s.ok && s.scalars && s.scalars.lumpsState === 'unlocked' && s.scalars.lumpT) {
             measure(Date.now() - s.scalars.lumpT)
         }
         const held = store.get(LUMP_KEY, 0)
@@ -205,7 +212,7 @@
         const s = save.get()
         if (!s.ok || !s.scalars) return null
         const scalars = s.scalars
-        if (!scalars.lumpT) return null
+        if (scalars.lumpsState !== 'unlocked' || !scalars.lumpT) return null
 
         const age = Date.now() - scalars.lumpT
         const measured = measuredSpan()
@@ -264,6 +271,8 @@
     function nextSpend(lumps) {
         const buildings = levels()
         if (!buildings.length) return null
+        // do not retry an unreadable action before a save settles its outcome
+        if (pending.some(p => p.uncertain)) return null
 
         for (const step of PLAN) {
             const building = buildings[step.building]
@@ -294,6 +303,11 @@
         }
     }
 
+    function spendPrompt() {
+        const node = window.Alakazam.safety.prompt()
+        return node?.id === 'promptContentSpendLump' ? node : null
+    }
+
     //* levelUp
     // The level control is #productLevel<n>. It is not part of the store product
     // it belongs to: the game builds it into the building's own row, over on the
@@ -305,23 +319,46 @@
         const before = banked()
         const level = levels()[spend.index]?.level
         if (level + 1 !== spend.cost || before - spend.cost < spend.reserve) return false
-        const previousPrompt = el('promptContentSpendLump')
+        const previousPrompt = spendPrompt()
         if (previousPrompt) return false
         simulateClick(badge)
-        let prompt = null
+        // remember a confirmation even if the player dismisses it before the wait
+        let prompt = spendPrompt()
+        const spent = () => {
+            const badgeLevel = window.Alakazam.parse.firstNumberIn(badge.innerText)
+            const amount = el('lumpsAmount')
+            const held = amount ? window.Alakazam.parse.firstNumberIn(amount.innerText) : NaN
+            return (
+                badgeLevel > level ||
+                save.get().buildings?.[spend.index]?.level > level ||
+                held <= before - spend.cost
+            )
+        }
+        const reserve = uncertain => {
+            balanceCeiling = Math.min(balanceCeiling, before - spend.cost)
+            const reservation = {
+                index: spend.index,
+                level: level + 1,
+                cost: spend.cost,
+                uncertain,
+                at: Date.now()
+            }
+            pending.push(reservation)
+            return reservation
+        }
         try {
             // confirmations may arrive on a later draw; there is no detached timer
             const outcome = await window.Alakazam.transactions.until(lease, () => {
-                prompt = el('promptContentSpendLump')
-                return prompt || levels()[spend.index]?.level > level || banked() <= before - spend.cost
+                const currentPrompt = spendPrompt()
+                if (currentPrompt) prompt = currentPrompt
+                return currentPrompt || spent()
             })
             if (!outcome || !lease.valid()) {
-                // an unconfirmed prompt spent nothing; an immediate spend whose
-                // redraw is missing must still be reserved until autosave catches up
-                if (!el('promptContentSpendLump')) {
-                    balanceCeiling = Math.min(balanceCeiling, before - spend.cost)
-                    pending.push({ index: spend.index, level: level + 1, cost: spend.cost })
-                }
+                // cancellation of an unconfirmed prompt is not a spend. If no
+                // prompt or result was readable, hold the bank only until a save
+                // settles the click; an invalid lease cannot prove a level-up.
+                if (spent()) reserve(false)
+                else if (!prompt) reserve(true)
                 return false
             }
             if (prompt) {
@@ -336,21 +373,16 @@
                 )
                     return false
                 const option = el('promptOption0')
-                if (!option || el('promptContentSpendLump') !== prompt) return false
+                if (!option || spendPrompt() !== prompt) return false
                 simulateClick(option)
             }
             // account for this spend immediately, before the next autosave or draw
-            balanceCeiling = Math.min(balanceCeiling, before - spend.cost)
-            const reservation = { index: spend.index, level: level + 1, cost: spend.cost }
-            pending.push(reservation)
-            return !!(await window.Alakazam.transactions.until(lease, () => {
-                const badgeLevel = window.Alakazam.parse.firstNumberIn(badge.innerText)
-                const amount = el('lumpsAmount')
-                const held = amount ? window.Alakazam.parse.firstNumberIn(amount.innerText) : NaN
-                return badgeLevel > level || held <= before - spend.cost
-            }))
+            const reservation = reserve(!spent())
+            const observed = await window.Alakazam.transactions.until(lease, spent)
+            if (observed) reservation.uncertain = false
+            return !!observed
         } finally {
-            if (prompt && el('promptContentSpendLump') === prompt) {
+            if (prompt && spendPrompt() === prompt) {
                 const cancel = el('promptOption1')
                 if (cancel) simulateClick(cancel)
             }

@@ -47,28 +47,55 @@
     // Pick up `source`, move over `target`, release. Returns false when either
     // element is missing rather than dispatching a half drag, because a drag left
     // open would leave the game holding a spirit under the player's cursor.
-    async function dragTo(source, target) {
+    async function dragTo(source, target, ctx = window.Alakazam.safety.context('pantheon')) {
         if (!source || !target) return false
-
-        hoverOn(source)
-        dispatchAt(source, 'mousedown')
-        await wait(60)
-
-        // the game decides the drop target from what the pointer is over, so this
-        // hover is doing real work and is not just cosmetic
-        hoverOn(target)
-        dispatchAt(target, 'mousemove')
-        await wait(60)
-
-        dispatchAt(target, 'mouseup')
-        // the game also listens for the release on the document, and depending on
-        // which handler fires first that may be the one that commits the drop
-        dispatchAt(document.body, 'mouseup')
-        await wait(60)
-
-        hoverOff(target)
-        hoverOff(source)
-        return true
+        ctx.check()
+        const lease = window.Alakazam.safety.acquire('tooltip', ctx.owner)
+        if (!lease) return false
+        let released = false
+        let hoveredTarget = false
+        let originalSlot = source
+        while (originalSlot && !/^templeSlot\d+$/.test(originalSlot.id || '')) {
+            originalSlot = originalSlot.parentElement || originalSlot.parent
+        }
+        try {
+            ctx.input('hoverOn', source)
+            ctx.check()
+            dispatchAt(source, 'mousedown')
+            await wait(60)
+            ctx.check()
+            if (!lease.valid()) return false
+            ctx.input('hoverOn', target)
+            hoveredTarget = true
+            dispatchAt(target, 'mousemove')
+            await wait(60)
+            ctx.check()
+            if (!lease.valid()) return false
+            dispatchAt(target, 'mouseup')
+            dispatchAt(document.body, 'mouseup')
+            released = true
+            return true
+        } finally {
+            try {
+                if (!released) {
+                    // Synthetic movement does not emit the slot's mouseout for us.
+                    if (hoveredTarget) hoverOff(target)
+                    // Dropping back onto the original slot preserves an equipped
+                    // spirit without spending a swap; roster spirits return away.
+                    const back = originalSlot || document.body
+                    hoverOn(back)
+                    dispatchAt(back, 'mousemove')
+                    dispatchAt(back, 'mouseup')
+                    if (originalSlot) hoverOff(originalSlot)
+                }
+                if (lease.valid()) {
+                    hoverOff(target)
+                    hoverOff(source)
+                }
+            } finally {
+                lease.release()
+            }
+        }
     }
 
     window.Alakazam = window.Alakazam || {}

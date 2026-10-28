@@ -33,4 +33,4 @@ http.createServer((request, response) => {
     } catch {
         response.writeHead(404).end()
     }
-}).listen(4173, '127.0.0.1')
+}).listen(Number(process.env.ALAKAZAM_TEST_PORT || 4173), '127.0.0.1')

@@ -177,7 +177,7 @@ test('parses buffs, converting frames to seconds', () => {
     assert.equal(buffs[0].arg1, 7)
 })
 
-test('identity is stable per save and changes with the seed or creation date', () => {
+test('family identity survives seed changes; run identity does not', () => {
     const base = {
         ok: true,
         run: { seed: 'abcde', fullDate: 1000, startDate: 2000 },
@@ -190,7 +190,8 @@ test('identity is stable per save and changes with the seed or creation date', (
     const otherRun = identity.fromSave({ ...base, run: { ...base.run, startDate: 8888 } })
 
     assert.equal(a.legacyId, same.legacyId)
-    assert.notEqual(a.legacyId, otherSeed.legacyId)
+    assert.equal(a.legacyId, otherSeed.legacyId)
+    assert.notEqual(a.runId, otherSeed.runId)
     assert.notEqual(a.legacyId, otherSave.legacyId)
     // ascending starts a new run but stays the same save file
     assert.equal(a.legacyId, otherRun.legacyId)
@@ -201,6 +202,23 @@ test('identity degrades to a known-unknown rather than throwing', () => {
     const unknown = identity.fromSave({ ok: false })
     assert.equal(unknown.known, false)
     assert.equal(unknown.legacyId, 'unknown')
+})
+
+test('current identity rejects stale saves before the watcher observes them and recovers when valid', () => {
+    const h = boot({ save: fx.save().raw })
+    const before = h.A.identity.current()
+    assert.equal(before.known, true)
+    let raw = fx.save({ driftedScalars: true }).raw
+    h.ctx.localStorage = { getItem: key => (key === 'CookieClickerGame' ? raw : null) }
+    const stale = h.A.savefile.read()
+    assert.equal(stale.ok, true)
+    assert.equal(stale.stale, true)
+    assert.equal(h.A.identity.fromSave(stale).runId, before.runId, 'metadata alone is still plausible')
+    assert.equal(h.A.save.trusted(), true, 'the watcher still holds its previous valid snapshot')
+    assert.equal(h.A.identity.current().known, false, 'live authorization must use the latest raw save')
+    assert.equal(h.A.identity.current().runId, 'unknown')
+    raw = fx.save().raw
+    assert.deepEqual(h.A.identity.current(), before)
 })
 
 //! Reading the save out of localStorage

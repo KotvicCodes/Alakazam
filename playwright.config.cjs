@@ -14,7 +14,7 @@ module.exports = defineConfig({
     },
     webServer: {
         command: 'node tests/browser/server.cjs',
-        url: 'http://127.0.0.1:4173',
+        url: `http://127.0.0.1:${process.env.ALAKAZAM_TEST_PORT || 4173}`,
         reuseExistingServer: false
     },
     projects: [

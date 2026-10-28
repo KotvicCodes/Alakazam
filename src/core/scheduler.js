@@ -24,6 +24,7 @@
     const FAILURE_LIMIT = 5
 
     const state = new Map()
+    let transitioning = false
     let running = false
     let paused = false
     let driver = null
@@ -64,14 +65,59 @@
     // a module runs only when the scheduler is live, the module has not been
     // disabled by repeated failure, and both the master switch and its own
     // settings flag are on
+    const INDEPENDENT = new Set(['autoclick', 'shimmers', 'wrinklers'])
+
+    function language() {
+        try {
+            return (localStorage.getItem('CookieClickerLang') || 'EN').toUpperCase()
+        } catch {
+            return 'unknown'
+        }
+    }
+
+    function restriction(mod) {
+        if (mod.always || INDEPENDENT.has(mod.name)) return ''
+        if (mod.name === 'clicks') return ''
+        if (language() !== 'EN') return `Unsupported language: ${language()} (requires English)`
+        const who = window.__alakazam.identity
+        if (who && !who.known) return 'Save identity unresolved'
+        return ''
+    }
+
+    function moduleState(mod, slot) {
+        const blocked = restriction(mod)
+        let state = 'running'
+        let reason = ''
+        if (slot.disabled) {
+            state = 'failed'
+            reason = slot.lastError || 'Module disabled after failure'
+        } else if (mod.name !== 'saveWatch' && transitioning) {
+            state = 'blocked'
+            reason = 'Save lifecycle transition'
+        } else if (!store.isReady() && !mod.always) {
+            state = 'blocked'
+            reason = 'Storage not ready'
+        } else if (!running) {
+            state = 'stopped'
+        } else if (!mod.always && store.setting(mod.setting) === false) {
+            state = 'off'
+        } else if (blocked) {
+            state = 'blocked'
+            reason = blocked
+        } else if (!mod.always && (paused || store.setting('enabled') === false)) {
+            state = 'paused'
+        } else if (mod.name === 'hud' && store.setting('hud') === false) {
+            state = 'hidden'
+        } else if (slot.busy) {
+            state = 'busy'
+        }
+        return { state, reason, restriction: blocked }
+    }
+
     function shouldRun(mod, slot) {
-        if (!running) return false
-        if (slot.disabled || slot.busy) return false
-        // an `always` module runs through both the master switch and a pause,
-        // because it is the UI those are operated from
-        if (mod.always) return true
-        if (paused) return false
-        return store.moduleEnabled(mod.setting)
+        const { state } = moduleState(mod, slot)
+        // hidden HUD ticks still detect later enabling; status never depends on it
+        return !slot.busy && ['running', 'hidden'].includes(state)
     }
 
     //* runTick
@@ -114,7 +160,7 @@
     function noteFailure(mod, slot, err) {
         slot.failures++
         slot.lastError = err && err.message ? err.message : String(err)
-        if (slot.failures >= FAILURE_LIMIT) {
+        if (slot.failures >= FAILURE_LIMIT && mod.name !== 'saveWatch') {
             slot.disabled = true
             console.warn(
                 `Alakazam: module "${mod.name}" failed ${slot.failures} times in a row and was switched off`,
@@ -175,6 +221,8 @@
                 await mod.setup()
             } catch (err) {
                 slot.disabled = true
+                slot.failures++
+                slot.lastError = err && err.message ? err.message : String(err)
                 console.warn(`Alakazam: module "${mod.name}" failed to set up and was switched off`, err)
             }
         }
@@ -192,9 +240,34 @@
         )
     }
 
+    // drain old async actions before switching the namespace they write to.
+    // saveWatch owns this transition and must not wait on its own busy slot.
+    async function reconcile(who) {
+        transitioning = true
+        const previousIdentity = window.__alakazam.identity
+        // Publish loss of identity even if loading quarantine fails. The watcher
+        // must remain runnable so the same save can retry or a valid one recover.
+        if (!who.known) window.__alakazam.identity = who
+        window.Alakazam.safety.invalidate()
+        window.Alakazam.transactions?.cancel()
+        try {
+            while ([...state.entries()].some(([name, slot]) => name !== 'saveWatch' && slot.busy)) {
+                await new Promise(resolve => setTimeout(resolve, 10))
+            }
+            await store.ready(who)
+            window.__alakazam.identity = who
+            for (const mod of registry.all()) {
+                if (mod.reset) await mod.reset({ previousIdentity, identity: who })
+            }
+        } finally {
+            transitioning = false
+        }
+    }
+
     function stop() {
         window.Alakazam.transactions?.cancel()
         running = false
+        window.Alakazam.safety.invalidate()
         if (driver) clearInterval(driver)
         driver = null
     }
@@ -202,10 +275,12 @@
     function pause() {
         window.Alakazam.transactions?.cancel()
         paused = true
+        window.Alakazam.safety.pause()
     }
 
     function resume() {
         paused = false
+        window.Alakazam.safety.resume()
     }
 
     function isPaused() {
@@ -217,10 +292,13 @@
     function stats() {
         return registry.all().map(mod => {
             const slot = slotFor(mod)
+            const report = moduleState(mod, slot)
             return {
+                ...report,
                 name: mod.name,
+                setting: mod.setting,
                 interval: mod.interval,
-                enabled: store.moduleEnabled(mod.setting),
+                enabled: ['running', 'busy'].includes(report.state),
                 disabled: slot.disabled,
                 ran: slot.ran,
                 failures: slot.failures,
@@ -230,5 +308,16 @@
     }
 
     window.Alakazam = window.Alakazam || {}
-    window.Alakazam.scheduler = { start, stop, pause, resume, isPaused, stats, budget }
+    window.Alakazam.scheduler = {
+        reconcile,
+        start,
+        stop,
+        pause,
+        resume,
+        isPaused,
+        isRunning: () => running,
+        stats,
+        budget,
+        language
+    }
 })()

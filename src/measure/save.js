@@ -5,7 +5,7 @@
     // Keeps one parsed copy of the save around for every module to share.
     //
     // The game rewrites its save on autosave, so this polls rather than reacting.
-    // Polling is cheap because the check is a length-and-prefix fingerprint, not a
+    // Polling is cheap because the check is a whole-string fingerprint, not a
     // parse: the expensive decode only happens when the blob has actually changed,
     // which in practice is once a minute.
     //
@@ -14,32 +14,47 @@
     // upgrades and achievements are owned, sugar lump timers, prestige. Live
     // numbers come from measure/live.js instead.
 
-    const { savefile, registry } = window.Alakazam
+    const { savefile, identity, store, registry } = window.Alakazam
 
     const TICK_MS = 2000
 
     let current = savefile.read()
-    let fingerprint = savefile.rawFingerprint()
+    let fingerprint = savefile.rawFingerprint(current.key)
     let lastChangeAt = Date.now()
+    let revision = current.ok && !current.stale ? 1 : 0
+    let connected = false
+    let activeIdentity = null
 
-    //* tick
-    // The fingerprint check exists to skip the decode when nothing has changed.
-    // It must not be allowed to skip a retry: a read that failed has no state to
-    // preserve, and if the reason it failed was transient then waiting for the
-    // save to change means waiting for the next autosave to try again. A failed
-    // read is retried every tick until it works.
-    function tick() {
+    // boot opts into lifecycle reconciliation. Keeping this explicit also lets
+    // standalone consumers use the parser/watcher without starting persistence.
+    async function connect() {
+        connected = true
+        await tick()
+    }
+
+    async function reconcile() {
+        if (!connected) return
+        // A stale parse can still contain plausible family metadata. It cannot
+        // authorize that namespace any more than a missing or malformed save.
+        const who = identity.fromSave(current.stale ? null : current)
+        if (activeIdentity && activeIdentity.runId === who.runId && store.isReady()) return
+        const scheduler = window.Alakazam.scheduler
+        await scheduler.reconcile(who)
+        activeIdentity = who
+    }
+
+    async function tick() {
         const next = savefile.rawFingerprint()
-        if (next === fingerprint && current.ok) return
-        fingerprint = next
-        const previouslyOk = current.ok
-        current = savefile.read()
-        // a retry that fails again is not a change, and must not keep resetting
-        // the age shown in the panel
-        if (current.ok !== previouslyOk || current.ok) {
-            lastChangeAt = Date.now()
+        if (next !== fingerprint || !current.ok) {
+            fingerprint = next
+            const previouslyOk = current.ok
+            current = savefile.read()
+            if (current.ok !== previouslyOk || current.ok) lastChangeAt = Date.now()
+            if (current.ok && !current.stale) revision++
+            window.__alakazam.save = current
         }
-        window.__alakazam.save = current
+        // retry a failed namespace load even when the save itself is unchanged
+        await reconcile()
     }
 
     //* get
@@ -90,6 +105,15 @@
 
     function stats() {
         return {
+            revision,
+            changedAt: lastChangeAt,
+            savedAt:
+                current.ok && current.run && Number.isFinite(current.run.lastDate)
+                    ? current.run.lastDate
+                    : null,
+            familyId: identity.fromSave(current).familyId,
+            runId: identity.fromSave(current).runId,
+            trusted: trusted(),
             ok: current.ok,
             stale: current.stale,
             reason: current.reason,
@@ -101,11 +125,12 @@
         }
     }
 
-    registry.register({ name: 'saveWatch', interval: TICK_MS, setting: 'enabled', tick })
+    registry.register({ name: 'saveWatch', interval: TICK_MS, always: true, tick })
 
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.save = {
         get,
+        connect,
         building,
         minigame,
         achievementsWon,

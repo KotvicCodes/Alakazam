@@ -18,6 +18,8 @@
     const { act, save, store, income, registry } = window.Alakazam
     const { PRESETS, SLOTS, nameOf } = window.Alakazam.data.gods
 
+    const drag = window.Alakazam.safety.bind('pantheon', act.drag)
+
     const INTERVAL_MS = 60000
 
     // never spend the last swap on routine tidying: it is the one that would be
@@ -128,7 +130,7 @@
             console.warn('Alakazam: pantheon controls not found, leaving the temple alone')
             return false
         }
-        const ok = await act.drag.dragTo(source, target)
+        const ok = await drag.dragTo(source, target)
         if (ok) {
             store.update('pantheonSwaps', 0, n => n + 1)
             console.log(`Alakazam: slotting ${nameOf(godId)} into the ${SLOTS[slotIndex]} slot`)

@@ -1,45 +1,43 @@
-<!DOCTYPE html>
-<html>
-
-<head>
-    <meta charset="UTF-8">
-    <link rel="stylesheet" href="popup.css">
-</head>
-
-<body>
-    <div class="container">
-        <h1>🍪 Alakazam</h1>
-
-        <div class="status" id="status">
-            <p>Open Cookie Clicker to begin analysis</p>
-        </div>
-
-        <div class="controls" id="controls" style="display: none;"></div>
-
-        <div class="data-section" id="gameData" style="display: none;">
-            <h2>Game Status</h2>
-            <div class="data-item">
-                <span class="label">Cookies:</span>
-                <span class="value" id="cookies">-</span>
-            </div>
-            <div class="data-item">
-                <span class="label">CpS:</span>
-                <span class="value" id="cps">-</span>
-            </div>
-            <div class="data-item">
-                <span class="label">Buildings:</span>
-                <span class="value" id="buildings">-</span>
-            </div>
-        </div>
-
-        <button id="refreshBtn" class="btn">Refresh Data</button>
-
-        <div class="footer">
-            <small id="version"></small>
-        </div>
-    </div>
-
-    <script src="popup.js"></script>
-</body>
-
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Alakazam</title>
+        <link rel="stylesheet" href="popup.css">
+    </head>
+    <body>
+        <main class="container">
+            <header><h1>Alakazam</h1><small id="version"></small></header>
+            <section class="status" aria-label="Active game status">
+                <p id="statusLine" role="status">Connecting to the active tab…</p>
+                <p id="identity" class="muted"></p>
+                <p id="updated" class="muted"></p>
+                <p id="decision"></p>
+                <p id="saveState" class="muted"></p>
+            </section>
+            <button id="pauseBtn" type="button" aria-pressed="false">Pause automation</button>
+            <p class="muted">Controls apply to all game tabs.</p>
+            <section id="gameData" hidden aria-label="Game totals">
+                <dl>
+                    <div><dt>Cookies</dt><dd id="cookies">-</dd></div>
+                    <div><dt>CpS</dt><dd id="cps">-</dd></div>
+                    <div><dt>Buildings</dt><dd id="buildings">-</dd></div>
+                </dl>
+            </section>
+            <details id="configuration">
+                <summary>Configure modules</summary>
+                <div id="controls"></div>
+            </details>
+            <details>
+                <summary>Module diagnostics</summary>
+                <dl id="diagnostics"></dl>
+            </details>
+            <p id="error" role="alert" hidden></p>
+            <button id="refreshBtn" type="button">Refresh status</button>
+        </main>
+        <script src="src/shared/ui.js"></script>
+        <script src="src/parse.js"></script>
+        <script src="src/core/store.js"></script>
+        <script src="popup.js"></script>
+    </body>
 </html>

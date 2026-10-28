@@ -33,8 +33,8 @@
     // way, by opening the options menu and seeing whether the buttons are there,
     // and the cheap checks come first so that hardly ever happens.
 
-    const { simulateClick, typeInto } = window.Alakazam.input
-    const { live, save, store, buffs, registry } = window.Alakazam
+    const { simulateClick, typeInto } = window.Alakazam.safety.input('gifts')
+    const { live, save, store, buffs, registry, safety, identity } = window.Alakazam
 
     const INTERVAL_MS = 60000
 
@@ -97,6 +97,7 @@
     // theirs: closing it under them because a gift sequence finished would be the
     // sort of thing that makes an extension feel possessed.
     let openedByUs = false
+    let pendingGift = null
 
     function menuOpen() {
         const button = el('prefsButton')
@@ -135,7 +136,7 @@
     }
 
     function promptIs(name) {
-        return !!el('promptContent' + name)
+        return window.Alakazam.safety.ownsPrompt('gifts', name)
     }
 
     //! Eligibility
@@ -173,47 +174,100 @@
     // options menu sitting open over the game for most of it. There was never a
     // reason for it beyond the shape of the loop.
     async function step() {
-        // up to four steps: menu, Send, Wrap, Done. Each one checks the screen, so
-        // a step that has not drawn yet simply gets picked up on the next tick.
-        for (let i = 0; i < 4; i++) {
-            if (!stepOnce()) return
-            await wait(MENU_MS)
+        const ctx = safety.scope('gifts')
+        const who = identity.current()
+        if (!who.known || !store.isReady()) return
+        try {
+            if (pendingGift) return
+            // Keep the original run across every menu wait. A new save must not
+            // inherit permission to Wrap from the old run's open prompt.
+            for (let i = 0; i < 4; i++) {
+                ctx.check()
+                if (!sameRun(who)) return
+                if (safety.prompt() && !promptIs('GiftSend')) return
+                if (!stepOnce(who)) return
+                await wait(MENU_MS)
+                if (pendingGift) return
+            }
+        } finally {
+            // Wrap already spent cookies and cooldown. Cancellation may collect
+            // that completed result, but may never Wrap or Redeem another one.
+            await finishGift(ctx)
         }
     }
 
+    function sameRun(who) {
+        const current = identity.current()
+        return current.known && current.familyId === who.familyId && current.runId === who.runId
+    }
+
+    function captureGift(who) {
+        if (!sameRun(who) || !store.isReady() || !promptIs('GiftSendReady')) return
+        const node = safety.prompt()
+        const input = node.querySelector('#giftCode')
+        const code = input && input.value ? String(input.value) : ''
+        if (!code) return
+        const held = { code, at: Date.now(), runId: who.runId }
+        // Queue the write synchronously, while storage still targets the family
+        // that paid for Wrap. Never re-create it in a later namespace after await.
+        store.set(CODE_KEY, held)
+        pendingGift = {
+            who,
+            node,
+            input,
+            done: el('promptOption0'),
+            revision: safety.revision('prompt'),
+            held
+        }
+        console.log(
+            'Alakazam: wrapped a gift. Its code will be redeemed here once the ' +
+                '"Gifted out" hour is up, or after the next ascension.'
+        )
+    }
+
+    async function finishGift(ctx) {
+        const result = pendingGift
+        if (!result || !(await store.flush().catch(() => false))) return
+        if (pendingGift === result) pendingGift = null
+        const { who, node, input, done, revision, held } = result
+        // Only dismiss the exact, untouched result once its code is durable.
+        // A replacement run, player prompt or failed write keeps the UI intact.
+        if (
+            !sameRun(who) ||
+            !store.isReady() ||
+            !promptIs('GiftSendReady') ||
+            safety.prompt() !== node ||
+            safety.revision('prompt') !== revision ||
+            node.querySelector('#giftCode') !== input ||
+            String(input.value) !== held.code ||
+            !done ||
+            el('promptOption0') !== done
+        )
+            return
+        const stored = store.get(CODE_KEY, null)
+        if (stored?.code !== held.code || stored.at !== held.at || stored.runId !== held.runId) return
+        ctx.cleanup(() => ctx.input('simulateClick', done))
+    }
+
     function wait(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+        return window.Alakazam.safety.wait('gifts', ms)
     }
 
     //* stepOnce
     // one click. Returns false when there is nothing further to do right now, which
     // is what stops the loop above.
-    function stepOnce() {
-        // the code is ready and waiting to be read
-        if (promptIs('GiftSendReady')) {
-            const input = el('giftCode')
-            const code = input && input.value ? String(input.value) : ''
-            if (code) {
-                store.set(CODE_KEY, { code, at: Date.now(), runId: runId() })
-                console.log(
-                    'Alakazam: wrapped a gift. It will be redeemed here once the ' +
-                        '"Gifted out" hour is up, or straight after the next ascension, ' +
-                        `whichever comes first:\n${code}`
-                )
-            }
-            // "Done" is this prompt's only option
-            const done = el('promptOption0')
-            if (done) simulateClick(done)
-            // and with the code in hand the sending half is finished
-            return false
-        }
-
+    function stepOnce(who) {
         // the amount and the note are left at whatever the game filled in. The
         // amount is capped at a thousand cookies, which at this point in a run is
         // not a number worth having an opinion about.
         if (promptIs('GiftSend')) {
             const wrap = el('promptOption0')
-            if (wrap) simulateClick(wrap)
+            if (wrap) {
+                simulateClick(wrap)
+                // The game creates GiftSendReady inside Wrap's click handler.
+                // Read it before the next wait can be cancelled or the save moves.
+                captureGift(who)
+            }
             return true
         }
 
@@ -255,8 +309,8 @@
     }
 
     function runId() {
-        const identity = window.__alakazam && window.__alakazam.identity
-        return identity ? identity.runId : ''
+        const who = identity.current()
+        return who.known ? who.runId : ''
     }
 
     //* redeemStep
@@ -360,6 +414,13 @@
     }
 
     async function tick() {
+        const ctx = safety.scope('gifts')
+        const who = pendingGift ? pendingGift.who : identity.current()
+        if (pendingGift) {
+            await finishGift(ctx)
+            if (ctx.active && sameRun(who)) closeOurMenu()
+            return
+        }
         verdict()
         const held = heldCode()
         window.__alakazam.gifts = held
@@ -387,14 +448,22 @@
         }
 
         await step()
-        closeOurMenu()
+        if (ctx.active && sameRun(who)) closeOurMenu()
     }
 
     function hoursLeft(held) {
         return Math.max(0, Math.round((CODE_TTL_MS - (Date.now() - held.at)) / 3600e3))
     }
 
-    registry.register({ name: 'gifts', interval: INTERVAL_MS, tick })
+    registry.register({
+        reset: () => {
+            openedByUs = false
+            pendingGift = null
+        },
+        name: 'gifts',
+        interval: INTERVAL_MS,
+        tick
+    })
 
     window.Alakazam.gifts = { heldCode, eligible, step, redeemable, redeemStep }
 })()

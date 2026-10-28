@@ -2,7 +2,7 @@ const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const { boot } = require('./harness')
 const { clock } = require('./clock')
-const { autosaves } = require('./fixtures')
+const { autosaves, save } = require('./fixtures')
 
 test('controlled harness clocks flush only their own scheduled storage writes', async () => {
     const time = clock()
@@ -14,24 +14,37 @@ test('controlled harness clocks flush only their own scheduled storage writes', 
     h.A.store.set('value', 42)
     other.A.store.set('value', 7)
     time.advance(499)
-    assert.equal(h.disk['legacy:clock'], undefined)
+    assert.equal(h.disk[h.A.store.fieldKey('legacy:clock', 'value')], undefined)
     time.advance(1)
-    assert.equal(h.disk['legacy:clock'].value, 42)
-    assert.equal(other.disk['legacy:other'], undefined)
+    assert.equal(h.disk[h.A.store.fieldKey('legacy:clock', 'value')].value, 42)
+    assert.equal(other.disk[other.A.store.fieldKey('legacy:other', 'value')], undefined)
     otherTime.advance(500)
-    assert.equal(other.disk['legacy:other'].value, 7)
+    assert.equal(other.disk[other.A.store.fieldKey('legacy:other', 'value')].value, 7)
 })
 
-test('autosaves preserve old observations until an explicit publish', () => {
+test('autosaves preserve old observations until an explicit publish', async () => {
     const time = clock()
     const scenario = autosaves({ cookies: 1000, resets: 0 }, { now: time.now })
     const h = boot({ localStorage: scenario.localStorage, clock: time })
     scenario.change({ cookies: 500 })
     time.advance(30000)
-    h.A.registry.get('saveWatch').tick()
+    await h.A.registry.get('saveWatch').tick()
     assert.equal(h.A.save.get().scalars.cookies, 1000)
     scenario.publish()
-    h.A.registry.get('saveWatch').tick()
+    await h.A.registry.get('saveWatch').tick()
     assert.equal(h.A.save.get().scalars.cookies, 500)
     assert.equal(h.A.save.stats().secondsSinceChange, 0)
+})
+
+test('default live export follows the current VM clock, including a later clock replacement', () => {
+    const time = clock()
+    const h = boot({ clock: time, save: save({ now: time.now() }).raw })
+    const exportedAt = () =>
+        h.A.savefile.parse(h.A.savefile.decode(h.game.state.exportSave())).run.lastDate
+    assert.equal(exportedAt(), time.now())
+    time.advance(60000)
+    assert.equal(exportedAt(), time.now())
+    const replacement = clock(time.now() + 5000)
+    h.ctx.Date = replacement.Date
+    assert.equal(exportedAt(), replacement.now())
 })

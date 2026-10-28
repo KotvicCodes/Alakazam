@@ -48,6 +48,8 @@
     let producedSinceSave = 0
     let earnedAtSave = null
     let saveWindowMs = 0
+    let lastRevision = null
+    let lastRunId = null
 
     //* decay
     // an exponential moving average that respects how long it actually was since
@@ -59,6 +61,9 @@
 
     function tick() {
         const now = Date.now()
+        const runId = save.stats().runId
+        if (lastRunId !== null && lastRunId !== runId) reset()
+        lastRunId = runId
         const dt = lastAt ? now - lastAt : TICK_MS
         lastAt = now
 
@@ -87,7 +92,16 @@
     // about once a minute, which is exactly the cadence this wants: long enough for
     // the integral to be meaningful, short enough to follow the run.
     function readWindfall() {
-        if (!save.trusted()) return
+        if (!save.trusted()) {
+            windfallCps = 0
+            earnedAtSave = null
+            producedSinceSave = 0
+            saveWindowMs = 0
+            return
+        }
+        const revision = save.stats().revision
+        if (revision === lastRevision) return
+        lastRevision = revision
         const scalars = save.get().scalars
         if (!scalars || !Number.isFinite(scalars.cookiesEarned)) return
         const earned = scalars.cookiesEarned
@@ -99,7 +113,6 @@
             saveWindowMs = 0
             return
         }
-        if (earned === earnedAtSave) return
 
         const seconds = saveWindowMs / 1000
         if (seconds >= 1) {
@@ -182,7 +195,13 @@
 
     // measures only, so it runs on the master switch rather than a setting of its
     // own, the same as buffs and clicks
-    registry.register({ name: 'income', interval: TICK_MS, setting: 'enabled', tick })
+    function reset() {
+        meanCps = baseCps = buffedCps = buffedShare = goldensOnScreen = windfallCps = 0
+        samples = lastAt = producedSinceSave = saveWindowMs = 0
+        earnedAtSave = lastRevision = lastRunId = null
+    }
+
+    registry.register({ reset, name: 'income', interval: TICK_MS, setting: 'enabled', tick })
 
     window.Alakazam = window.Alakazam || {}
     window.Alakazam.income = { stats, shares }

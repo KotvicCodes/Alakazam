@@ -7,6 +7,8 @@ const fs = require('fs')
 const vm = require('vm')
 const path = require('path')
 const game = require('./game')
+const { storageFixture } = require('./storage')
+const storageByDisk = new WeakMap()
 
 const ROOT = path.join(__dirname, '..')
 
@@ -20,29 +22,11 @@ function boot(opts = {}) {
         f => opts.includeMain === true || f !== 'src/main.js'
     )
 
-    const disk = opts.disk || {}
-    const storageListeners = []
-    const chrome = {
-        storage: {
-            local: {
-                get: (keys, cb) => {
-                    const o = {}
-                    for (const k of keys) if (k in disk) o[k] = disk[k]
-                    cb(o)
-                },
-                set: (obj, cb) => {
-                    const changes = {}
-                    for (const k in obj) {
-                        changes[k] = { oldValue: disk[k], newValue: obj[k] }
-                        disk[k] = obj[k]
-                    }
-                    storageListeners.forEach(fn => fn(changes, 'local'))
-                    cb && cb()
-                }
-            },
-            onChanged: { addListener: fn => storageListeners.push(fn) }
-        }
-    }
+    const disk = opts.storage ? opts.storage.disk : opts.disk || {}
+    if (!storageByDisk.has(disk)) storageByDisk.set(disk, storageFixture(disk))
+    const storage = opts.storage || storageByDisk.get(disk)
+    const chrome = storage.chrome()
+    opts.connectChrome?.(chrome)
 
     const rafQueue = []
     const events = []
@@ -57,6 +41,7 @@ function boot(opts = {}) {
 
     const ctx = {
         console,
+        location: opts.location,
         document: g.doc,
         chrome,
         setTimeout: opts.clock?.setTimeout || setTimeout,
@@ -80,6 +65,7 @@ function boot(opts = {}) {
             }
             return Buffer.from(s, 'base64').toString('binary')
         },
+        addEventListener: (type, fn) => events.push({ type, fn }),
         innerWidth: 1440,
         innerHeight: 900,
         localStorage: opts.localStorage || {
@@ -95,12 +81,39 @@ function boot(opts = {}) {
         vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f })
     }
 
+    const { savefile } = ctx.window.Alakazam
+    const initial = savefile.read()
+    const scalar = initial.scalars || {}
+    g.state.wrinklerHoard = scalar.wrinklersAmount || 0
+    g.state.wrinklers = scalar.wrinklersNumber || 0
+    g.state.shinyHoard = scalar.wrinklersShinyAmount || 0
+    g.state.shinyWrinklers = scalar.wrinklersShiny || 0
+    g.state.exportSave = () => {
+        const fx = require('./fixtures')
+        const decoded = savefile.decode(
+            ctx.localStorage.getItem(savefile.selectedKey()) || opts.save || fx.save().raw
+        )
+        const sections = decoded.split('|')
+        const run = sections[2].split(';')
+        run[2] = String(vm.runInContext('Date.now()', ctx))
+        run[5] = g.state.genes.join(',')
+        sections[2] = run.join(';')
+        const scalars = sections[4].split(';')
+        scalars[23] = g.state.wrinklerHoard
+        scalars[24] = g.state.wrinklers
+        scalars[40] = g.state.shinyWrinklers
+        scalars[41] = g.state.shinyHoard
+        sections[4] = scalars.join(';')
+        return fx.encode(sections.join('|'))
+    }
+
     return {
         A: ctx.window.Alakazam,
         debug: () => ctx.window.__alakazam,
         ctx,
         game: g,
         disk,
+        storage,
         rafQueue,
         frame: () => {
             const q = rafQueue.splice(0, rafQueue.length)

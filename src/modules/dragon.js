@@ -33,6 +33,8 @@
         window.Alakazam.data.dragon
     const { MAX_LEVEL, SECOND_SLOT_LEVEL, DROP_MIN_LEVEL } = window.Alakazam.data.dragon
 
+    const dragonAct = window.Alakazam.safety.bind('dragon', act.dragon)
+
     const INTERVAL_MS = 2000
 
     // one panel visit at a time, with a beat between them
@@ -238,9 +240,12 @@
         // if everything is already paused then this module is not ticking either, so
         // an unpause here could only ever be against the player's wishes
         if (scheduler.isPaused()) return
-        scheduler.pause()
+        const wasOpen = act.dragon.panelOpen()
+        const task = window.Alakazam.safety.scope('dragon')
+        const release = window.Alakazam.safety.isolate('dragon')
+        if (!release) return
         try {
-            const opened = await act.dragon.open()
+            const opened = await dragonAct.open()
             if (!opened) {
                 misses++
                 missingAt = Date.now()
@@ -249,9 +254,12 @@
             misses = 0
             missingAt = 0
             await work()
-            await act.dragon.close()
         } finally {
-            scheduler.resume()
+            try {
+                if (!wasOpen) await task.cleanup(() => act.dragon.close(task))
+            } finally {
+                release()
+            }
         }
     }
 
@@ -286,6 +294,7 @@
     }
 
     async function tick() {
+        if (await dragonAct.recover()) return
         const dragon = dragonState()
         if (!dragon) return
 
@@ -333,9 +342,9 @@
     function climb(dragon) {
         let climbed = 0
         while (climbed < RUNGS_PER_VISIT) {
-            const step = act.dragon.nextStep()
+            const step = dragonAct.nextStep()
             if (!step || !step.affordable) break
-            if (!act.dragon.train()) break
+            if (!dragonAct.train()) break
             climbed++
             // a golden cookie that appeared mid-climb is worth more than the rest of
             // the ladder, and the ladder will still be there in two seconds
@@ -349,12 +358,12 @@
     async function switchAuras(dragon, choice) {
         lastSwitchAt = Date.now()
         if (choice.primary !== dragon.aura) {
-            const ok = await act.dragon.setAura(choice.primary, 0)
+            const ok = await dragonAct.setAura(choice.primary, 0)
             if (ok) console.log(`Alakazam: dragon aura ${nameOf(choice.primary)}. ${choice.why}`)
             return
         }
         if (dragon.slot2 && choice.secondary !== dragon.aura2) {
-            const ok = await act.dragon.setAura(choice.secondary, 1)
+            const ok = await dragonAct.setAura(choice.secondary, 1)
             if (ok) console.log(`Alakazam: second dragon aura ${nameOf(choice.secondary)}`)
         }
     }
@@ -362,7 +371,7 @@
     async function petting() {
         const window_ = dropWindow()
         lastPetAt = Date.now()
-        for (let i = 0; i < PETS_PER_VISIT; i++) act.dragon.pet()
+        for (let i = 0; i < PETS_PER_VISIT; i++) dragonAct.pet()
         noteDrops(window_)
     }
 

@@ -32,7 +32,7 @@ function save(opts = {}) {
     scalars[8] = opts.cookiesReset || 0 // lifetime cookies across every past run
     scalars[14] = opts.resets || 0 // resets
     scalars[17] = opts.wrinklersPopped || 0
-    scalars[22] = 0 // season
+    scalars[22] = opts.season || '' // season is a name, empty when none is active
     scalars[23] = opts.wrinklerHoard || 0 // wrinklersAmount
     scalars[24] = opts.wrinklers || 0 // wrinklersNumber
     scalars[25] = opts.prestige || 0
@@ -89,7 +89,7 @@ function save(opts = {}) {
         [
             opts.startDate || 1750000001000,
             opts.fullDate || 1750000000000,
-            now,
+            opts.lastDate != null ? opts.lastDate : now,
             opts.bakeryName || 'Test Bakery',
             opts.seed || 'abcde'
         ]

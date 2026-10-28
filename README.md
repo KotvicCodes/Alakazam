@@ -47,7 +47,7 @@ for individual commands, fixtures, coverage limits, and regression ownership.
 
 ## Todo
 - Pop wrinklers automatically (they are drawn on a canvas, so this needs hit-testing).
-  This is the one that now costs something: every ascension throws the hoard away
+  Auto-ascension waits for collection or an explicit discard for that ascent.
 - Golden cookie combos, which are the largest single source of cookies in the game
 - Cookie-dunker, which needs the cookie to physically reach the milk
 
@@ -116,11 +116,21 @@ every couple of seconds.
 
 The save lags: the game writes it on autosave, up to 60 seconds behind. So it is
 used only for slow, structural state. Anything Alakazam spends cookies on is read
-live from the DOM.
+live from the DOM. Before loans or ascent, the planner reads a newly generated
+Export Save through the game UI to verify the live wrinkler hoard. A valuable
+hoard visibly defers automation until collected or explicitly discarded for the
+current decision; discard consent is never saved across reloads. Blocked checks
+retry after 30 seconds, so collecting a hoard can take up to that long to be
+noticed. Confirmation still requires a fresh export unless explicitly discarded.
+After a reload, unproven reset verification also retries after 30 seconds;
+receiving the completed run's save clears that wait immediately.
 
 **Your data stays yours.** The raw save string is never logged, never stored
 verbatim, and never leaves your machine. Your bakery name is treated as user data.
-The per-save identifier Alakazam remembers you by is a hash, not the values.
+The per-save identifier is a hash of the legacy creation time and survives seed
+changes. Temporary undo records hold the original bakery name and clone genes
+until the restored values reach the game save or a newer player edit supersedes
+them. Clone recovery also recognizes earlier steps captured by autosave.
 
 ## Architecture
 Content scripts sharing one global (`window.Alakazam`), loaded in the order
@@ -135,10 +145,17 @@ registers itself, so adding one is a file and a manifest line.
   succeeded; `stale` and `reason` flag failed sanity checks. Passing those checks
   does not prove compatibility with a new game layout; a shifted but plausible
   value can pass, so browser regressions against the pinned game remain necessary.
-- `src/core/identity.js` — a stable per-save `legacyId` and per-ascension `runId`,
-  hashed from the save's seed and timestamps.
-- `src/core/store.js` — `chrome.storage.local`, namespaced per save. Also the
-  bridge to the popup, so there is no background worker.
+- `src/core/identity.js` — a stable `familyId` (`legacyId` alias), hashed from the
+  selected variant key and creation timestamp, and a `runId` that also includes
+  the changing seed, run start and reset count.
+- `src/core/store.js` — `chrome.storage.local`, scoped to families and runs, with
+  one entry per field so unrelated writes cannot overwrite one another. Also the
+  bridge to the popup. Recovery-journal claims and writes go through the
+  background worker (`src/background.js`).
+- `src/core/status.js` / `src/background.js` — live tab-specific status, including
+  paused and hidden sessions. The popup verifies the active document before reading
+  its record; closed and navigating tabs discard old records.
+- `src/shared/ui.js` — shared labels, defaults and accessible controls for both UIs.
 - `src/core/registry.js` / `scheduler.js` — modules self-register with their own
   cadence. One frame loop and one millisecond driver run all of them, isolating
   failures and budgeting clicks.
@@ -322,3 +339,42 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for remaining work, including wrinkler
 popping, golden cookie combos, seasons, challenge modes, and the stock market tick
 oracle. Dragon automation, gift redemption, and permanent-slot reassignment are
 already implemented; the roadmap records their history.
+
+## Save lifecycle and storage migration
+
+The live and beta URLs select their respective save keys, even before the first
+autosave. `save.stats()` exposes `revision`, `changedAt` (observation time in ms),
+`savedAt` (the game's `run.lastDate`), `familyId`, `runId`, and `trusted`. Accepted
+changed saves advance revision, including saves with unchanged activity counters;
+unchanged polls and unreadable saves do not. Check trust before measuring.
+
+An imported copy with the same creation timestamp and variant deliberately shares
+family state. Importing another family or hard resetting selects a separate family.
+Ascension changes run identity even when counters increase; reloading the same run
+resumes its state. A committed ascension sequence continues across a run change
+while the same family's heavenly screen is open; importing a different family clears
+that sequence. Achievement progress, clone choices, lump timing, gift codes and
+UI preferences belong to the family. Ascension phases, run start, spell/harvest/swap
+counters, wrinkler advice and gift discovery cooldowns belong to the run. Pending
+writes remain attached to their original scope through switches and failures.
+
+The matching old seed-based `legacy:<hash>` is copied automatically into a family
+baseline; untagged old run state is excluded. The original is preserved. New field
+values and deletion markers take precedence over the copied baseline. Unknown
+startup state is quarantined and never copied into a discovered family. Settings
+use individual field entries too; the old settings object provides initial defaults.
+All writers in this version, including the popup, use these entries. Writes to the
+same field are last-writer-wins; `store.update()` is not a cross-tab atomic counter.
+
+Old namespaces from earlier seeds contain no family metadata, so Alakazam cannot
+safely infer their owner. To copy a namespace you have identified, select the game
+page's Alakazam content-script context in DevTools and run
+`await Alakazam.store.copyLegacy('0123abcd')`, substituting the old eight-character
+hash. This explicitly copies missing family fields into the currently discovered
+family, preserves destination values and deletions, excludes run fields, and leaves
+the source intact. It does not merge arbitrary imported families automatically.
+
+Storage errors appear in the in-page panel with **Retry saving**. The popup shows
+settings failures and retries with **Refresh Data**. `await Alakazam.store.flush()`
+also retries pending writes and rejects if storage still fails; `store.stats()`
+reports readiness, pending entry count and the latest error.

@@ -379,10 +379,12 @@ function build(opts = {}) {
             })
             promptContent.append(opt)
         })
+        promptAnchor.style.display = 'block'
         state.log.push(`prompt ${name}`)
     }
     function closePrompt() {
-        promptContent.children = []
+        promptAnchor.style.display = 'none'
+        if (!opts.keepClosedPrompts) promptContent.children = []
     }
 
     function setMode(cls) {
@@ -514,6 +516,51 @@ function build(opts = {}) {
         ])
     })
 
+    // ---- bakery naming ----
+    {
+        state.bakeryName = opts.bakeryName ?? 'Test Bakery'
+        const bakery = new El('div', { id: 'bakeryName', text: state.bakeryName + "'s bakery" })
+        // The real label always exists. bakeryNameRefresh assigns textContent,
+        // replacing its text node even when the displayed name is unchanged.
+        const refresh = text => {
+            bakery.text = text
+            bakery.children = []
+            bakery.append(new El('#text', { text }))
+        }
+        for (const property of ['textContent', 'innerText']) {
+            Object.defineProperty(bakery, property, {
+                get: () => bakery.text,
+                set: refresh
+            })
+        }
+        refresh(bakery.text)
+        bakery.addEventListener('click', () => {
+            prompt(
+                'NameBakery',
+                [
+                    [
+                        'Confirm',
+                        () => {
+                            const input = doc.getElementById('bakeryNameInput') || state.nameInput
+                            state.bakeryName = input.value
+                            bakery.innerText = state.bakeryName + "'s bakery"
+                            state.log.push('renamed bakery')
+                        }
+                    ],
+                    ['Random'],
+                    ['Cancel']
+                ],
+                inner => {
+                    const input = new El('input', { id: 'bakeryNameInput' })
+                    input.value = state.bakeryName
+                    state.nameInput = input
+                    inner.append(input)
+                }
+            )
+        })
+        doc.body.append(bakery)
+    }
+
     // ---- the options menu and gift codes ----
     // The Send and Redeem buttons only exist once the Wrapping paper heavenly
     // upgrade is owned, which is exactly why the extension looks for them rather
@@ -525,6 +572,16 @@ function build(opts = {}) {
     function drawMenu() {
         menu.children = []
         if (!prefsButton.classList.contains('selected')) return
+        const exportButton = new El('a', { class: 'option', text: 'Export save' })
+        exportButton.setAttribute('onclick', 'Game.ExportSave();')
+        exportButton.addEventListener('click', () => {
+            prompt('ExportSave', [['All done!']], inner => {
+                const field = new El('textarea', { id: 'textareaPrompt' })
+                field.value = state.exportSave ? state.exportSave() : ''
+                inner.append(field)
+            })
+        })
+        menu.append(exportButton)
         if (!opts.wrappingPaper) return
         const box = new El('div', { id: 'giftStuff', class: 'optionBox' })
         const send = new El('a', { class: 'option', text: 'Send' })

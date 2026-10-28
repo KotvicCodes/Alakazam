@@ -236,12 +236,12 @@ test('untrusted saves immediately invalidate all previous estimates', () => {
     assert.equal(m.h.A.clicks.clicksPerSecond(), 0)
 })
 
-test('the existing save watcher also detects zero activity through saved timestamps', () => {
+test('the existing save watcher also detects zero activity through saved timestamps', async () => {
     const h = boot()
     const advance = clock(h)
     let raw
     h.ctx.localStorage.getItem = key => (key === 'CookieClickerGame' ? raw : null)
-    function write(clicks, handmade, resets = 0) {
+    async function write(clicks, handmade, resets = 0) {
         const sections = fx
             .save({ cookieClicks: clicks, handmadeCookies: handmade, resets })
             .text.split('|')
@@ -249,17 +249,17 @@ test('the existing save watcher also detects zero activity through saved timesta
         run[2] = h.ctx.testNow
         sections[2] = run.join(';')
         raw = fx.encode(sections.join('|'))
-        h.A.registry.get('saveWatch').tick()
-        h.A.registry.get('clicks').tick()
+        await h.A.registry.get('saveWatch').tick()
+        await h.A.registry.get('clicks').tick()
         return h.A.clicks.stats()
     }
-    write(1000, 1e6)
+    await write(1000, 1e6)
     advance(60000)
-    assert.equal(write(1600, 1.6e6).clickCps, 10000)
+    assert.equal((await write(1600, 1.6e6)).clickCps, 10000)
     advance(1000)
-    assert.equal(write(0, 0, 1).measured, false)
+    assert.equal((await write(0, 0, 1)).measured, false)
     advance(60000)
-    assert.equal(write(0, 0, 1).registeredPerSecond, 0)
+    assert.equal((await write(0, 0, 1)).registeredPerSecond, 0)
 })
 
 test('French research tooltips cannot bypass canonical upgrade policy', async () => {
