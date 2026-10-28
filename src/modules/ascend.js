@@ -112,6 +112,7 @@
     // Only a restored marker can be reconsidered; an observed return in this
     // document must still wait for the completed reset's save.
     let verifyInterrupted = false
+    let verifyRetryAt = 0
 
     // crates whose name could not be read, or that were clicked without the chip
     // count moving. either way there is no point going back to them this visit.
@@ -164,12 +165,14 @@
         if (awaitingReset !== null) return
         awaitingReset = count
         verifyInterrupted = false
+        verifyRetryAt = 0
         store.set('ascendAwaitReset', count)
     }
 
     function clearAwait() {
         awaitingReset = null
         verifyInterrupted = false
+        verifyRetryAt = 0
         store.forget('ascendAwaitReset')
     }
 
@@ -771,6 +774,12 @@
                 // to play can mean a real reincarnation. Keep the anti-echo wait.
                 verifyInterrupted = false
             } else {
+                // A newer live run can precede its autosave indefinitely.
+                // Keep waiting without reopening Export Save every tick.
+                if (Date.now() < verifyRetryAt) {
+                    window.__alakazam.ascend = { ...s, phase, waitingForSave: true }
+                    return
+                }
                 const evidence = act.liveHoard()
                 const savedRun = window.Alakazam.identity.fromSave(save.get())
                 if (
@@ -778,6 +787,7 @@
                     evidence.resets !== awaitingReset ||
                     evidence.runId !== savedRun.runId
                 ) {
+                    verifyRetryAt = Date.now() + HOARD_RETRY_MS
                     window.__alakazam.ascend = { ...s, phase, waitingForSave: true }
                     return
                 }
@@ -832,6 +842,7 @@
 
     function reset({ previousIdentity, identity } = {}) {
         hoardCheck = null
+        verifyRetryAt = 0
         // the committed sequence spans runs. Preserve it on the heavenly screen
         // for this family, while imports into another family start independently.
         if (
@@ -866,6 +877,7 @@
         const pending = store.get('ascendAwaitReset', null)
         awaitingReset = typeof pending === 'number' ? pending : null
         verifyInterrupted = awaitingReset !== null
+        verifyRetryAt = 0
     }
 
     registry.register({ name: 'ascend', interval: INTERVAL_MS, setup, reset, tick })

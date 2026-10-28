@@ -348,6 +348,59 @@ test('heavenly-screen reload replans the unchanged run instead of waiting foreve
     expect(await page.evaluate(() => Alakazam.ascend.state().phase)).toBe('loans')
 })
 
+test('restored reset verification waits quietly until the newer save arrives', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookiesEarned = 0
+        Game.cookiesReset = 0
+        Game.resets = 0
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await publish(game)
+    const result = await game.evaluate(async () => {
+        Alakazam.store.set('ascendPhase', 'watching')
+        Alakazam.store.set('ascendAwaitReset', 0)
+        const mod = Alakazam.registry.get('ascend')
+        await mod.setup()
+        Game.resets = 1
+        const exportSave = Game.ExportSave
+        let exports = 0
+        Game.ExportSave = function (...args) {
+            exports++
+            return exportSave.apply(this, args)
+        }
+        try {
+            for (let i = 0; i < 10; i++) await mod.tick()
+            const waiting = __alakazam.ascend.waitingForSave
+            const pending = Alakazam.store.get('ascendAwaitReset', null)
+            const beforeSave = exports
+            Game.WriteSave()
+            await Alakazam.registry.get('saveWatch').tick()
+            await mod.tick()
+            return {
+                waiting,
+                pending,
+                beforeSave,
+                exports,
+                afterSave: __alakazam.ascend.waitingForSave === true,
+                marker: Alakazam.store.get('ascendAwaitReset', null),
+                phase: Alakazam.ascend.state().phase,
+                prompt: Alakazam.safety.prompt()?.id || null
+            }
+        } finally {
+            Game.ExportSave = exportSave
+            Alakazam.store.setSetting('enabled', false)
+        }
+    })
+    expect(result.waiting).toBe(true)
+    expect(result.pending).toBe(0)
+    expect(result.beforeSave).toBe(1)
+    expect(result.exports).toBe(1)
+    expect(result.afterSave).toBe(false)
+    expect(result.marker).toBeNull()
+    expect(result.phase).toBe('watching')
+    expect(result.prompt).toBeNull()
+})
+
 test('rounded-price refusal stops unchanged retries and recovers after funding', async ({ game }) => {
     await game.evaluate(() => {
         Game.cookies = 1e6

@@ -670,7 +670,7 @@ for (const key of ['CookieClickerGame', 'CookieClickerGameBeta']) {
     })
 }
 
-async function heavenlyReload({ key = 'CookieClickerGame', phase = 'shopping', hoard = 0 } = {}) {
+async function heavenlyReload({ key = 'CookieClickerGame', phase = 'shopping', hoard = 0, clock } = {}) {
     const disk = {}
     const first = variantAscent(key, { disk })
     await first.A.save.connect()
@@ -682,7 +682,7 @@ async function heavenlyReload({ key = 'CookieClickerGame', phase = 'shopping', h
     await first.A.store.flush()
 
     // A real interrupted heavenly reload restores the old saved run in play.
-    const h = variantAscent(key, { disk })
+    const h = variantAscent(key, { disk, clock })
     h.game.state.wrinklerHoard = hoard
     h.game.state.wrinklers = hoard ? 1 : 0
     await h.A.save.connect()
@@ -690,6 +690,65 @@ async function heavenlyReload({ key = 'CookieClickerGame', phase = 'shopping', h
 }
 
 for (const key of ['CookieClickerGame', 'CookieClickerGameBeta']) {
+    test(`${key} restored reset marker limits exports while the completed save is pending`, async () => {
+        const time = clock(Date.now())
+        const h = await heavenlyReload({ key, phase: 'watching', clock: time })
+        let exports = 0
+        const completed = () =>
+            fx.save({
+                cookies: 0,
+                cookiesEarned: 0,
+                cookiesReset: S.cookiesFor(365),
+                resets: 1,
+                seed: 'reincarnated',
+                lastDate: time.now()
+            }).raw
+        h.game.state.exportSave = () => {
+            exports++
+            return completed()
+        }
+        const mod = h.A.registry.get('ascend')
+        await mod.tick()
+        for (let i = 0; i < 29; i++) {
+            time.advance(1000)
+            await mod.tick()
+            assert.equal(h.debug().ascend.waitingForSave, true)
+            assert.equal(h.A.store.get('ascendAwaitReset'), 0)
+            assert.equal(h.A.safety.prompt(), null)
+        }
+        assert.equal(exports, 1)
+        time.advance(1000)
+        await mod.tick()
+        assert.equal(exports, 2, 'retry inconclusive verification after 30 seconds')
+        h.ctx.localStorage.setItem(key, completed())
+        await h.A.registry.get('saveWatch').tick()
+        await mod.tick()
+        assert.equal(h.A.store.get('ascendAwaitReset', null), null)
+        assert.notEqual(h.debug().ascend.waitingForSave, true)
+        assert.equal(h.A.ascend.state().phase, 'watching')
+        assert.equal(h.game.state.log.includes('prompt Ascend'), false)
+    })
+
+    for (const restart of [false, true]) {
+        test(`${key} interrupted verification recovers after ${restart ? 'lifecycle reset' : 'retry expiry'}`, async () => {
+            const time = clock(Date.now())
+            const h = await heavenlyReload({ key, phase: 'watching', clock: time })
+            const exportSave = h.game.state.exportSave
+            h.game.state.exportSave = () => 'unreadable'
+            const mod = h.A.registry.get('ascend')
+            await mod.tick()
+            h.game.state.exportSave = exportSave
+            await mod.tick()
+            assert.equal(h.debug().ascend.waitingForSave, true)
+            if (restart) await mod.reset()
+            else time.advance(30000)
+            await mod.tick()
+            assert.equal(h.A.store.get('ascendAwaitReset', null), null)
+            assert.notEqual(h.debug().ascend.waitingForSave, true)
+            assert.equal(h.A.ascend.state().phase, 'loans')
+        })
+    }
+
     for (const phase of ['shopping', 'watching', 'returning', 'ascending']) {
         test(`${key} reload recovers pending reset zero from ${phase} with unchanged live run`, async () => {
             const h = await heavenlyReload({ key, phase })

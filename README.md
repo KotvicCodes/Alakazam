@@ -122,6 +122,8 @@ hoard visibly defers automation until collected or explicitly discarded for the
 current decision; discard consent is never saved across reloads. Blocked checks
 retry after 30 seconds, so collecting a hoard can take up to that long to be
 noticed. Confirmation still requires a fresh export unless explicitly discarded.
+After a reload, unproven reset verification also retries after 30 seconds;
+receiving the completed run's save clears that wait immediately.
 
 **Your data stays yours.** The raw save string is never logged, never stored
 verbatim, and never leaves your machine. Your bakery name is treated as user data.
