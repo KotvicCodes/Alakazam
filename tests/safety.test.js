@@ -4,6 +4,7 @@ const { boot, waitFor } = require('./harness')
 const { El } = require('./dom')
 const fx = require('./fixtures')
 const { slowStore } = require('./store-fixture')
+const { clock } = require('./clock')
 
 // Hold a real await at its boundary so races do not depend on wall-clock timing.
 function hold(h, ms) {
@@ -755,7 +756,8 @@ async function ascent(opts = {}) {
     const h = await ready({
         save: fx.save({ cookiesEarned: base, ...opts.save }).raw,
         game: { officeLevel: 5, ...opts.game },
-        disk: opts.disk
+        disk: opts.disk,
+        clock: opts.clock
     })
     await h.A.registry.get('ascend').setup()
     return h
@@ -779,11 +781,16 @@ test('valuable live hoard visibly blocks loans and ascent even when autosave say
 })
 
 test('a fresh export proving the hoard was collected releases the gate despite stale saved hoard', async () => {
-    const h = await ascent({ save: { wrinklers: 8, wrinklerHoard: 5e15 } })
+    const time = clock(Date.now())
+    const h = await ascent({ save: { wrinklers: 8, wrinklerHoard: 5e15 }, clock: time })
     await advance(h)
     assert.equal(h.debug().ascend.hoardBlocked, true)
     h.game.state.wrinklers = 0
     h.game.state.wrinklerHoard = 0
+    await advance(h)
+    assert.equal(h.game.state.loansTaken.length, 0)
+    assert.equal(h.debug().ascend.hoardBlocked, true)
+    time.advance(30000)
     await advance(h, 2)
     assert.equal(h.game.state.loansTaken.length, 1)
     assert.equal(h.A.save.get().scalars.wrinklersAmount, 5e15)
