@@ -93,11 +93,12 @@
     // falls back to the pessimistic prior above rather than being guessed at.
 
     //* normaliseName
-    // tooltips say "Cursors" and "Wizard towers"; the store says "Cursor" and
-    // "Wizard tower". compare on a lowercase, de-pluralised form.
+    // tooltips say "Cursors", "Factories" and "Clones"; the store says "Cursor",
+    // "Factory" and "You". compare on a lowercase, de-pluralised form.
     function normaliseName(name) {
         const n = (name || '').trim().toLowerCase()
-        return n.endsWith('s') ? n.slice(0, -1) : n
+        const singular = n.endsWith('ies') ? n.slice(0, -3) + 'y' : n.endsWith('s') ? n.slice(0, -1) : n
+        return singular === 'clone' ? 'you' : singular
     }
 
     function findBuilding(buildings, name) {
@@ -121,6 +122,30 @@
         const text = (upgrade.description || '').replace(/\s+/g, ' ')
         if (!text) return NaN
 
+        // "The mouse and cursors are twice as efficient." doubles the base
+        // cursor and mouse terms before additive Thousand fingers bonuses are
+        // added. Once cursor per-unit CpS exceeds the pure doubling range, an
+        // additive finger bonus is mixed into the tooltip total and cannot be
+        // separated, so report the gain as unknown rather than overstating it.
+        if (/mouse and cursors are twice as efficient/i.test(text)) {
+            const cursor = findBuilding(view.buildings, 'cursor')
+            if (
+                cursor &&
+                Number.isFinite(cursor.perUnitCps) &&
+                Number.isFinite(cursor.baseCps) &&
+                cursor.perUnitCps > cursor.baseCps * 8
+            ) {
+                return NaN
+            }
+            const cursorCps = cursor ? buildingContribution(cursor) : NaN
+            const clickCps = view.clickCps
+            if (!Number.isFinite(cursorCps) && !Number.isFinite(clickCps)) return NaN
+            return (
+                (Number.isFinite(cursorCps) && cursorCps > 0 ? cursorCps : 0) +
+                (Number.isFinite(clickCps) && clickCps > 0 ? clickCps : 0)
+            )
+        }
+
         // "Cursors are twice as efficient." / "... are 4 times as efficient."
         let m = /([\w' ]+?) are (twice|thrice|[\d.]+ times) as efficient/i.exec(text)
         if (m) {
@@ -133,7 +158,27 @@
                       : parseFloat(m[2])
             const contribution = building ? buildingContribution(building) : NaN
             if (Number.isFinite(contribution) && Number.isFinite(factor)) {
-                return contribution * (factor - 1)
+                let delta = contribution * (factor - 1)
+                // grandma synergies also boost another building line by +1% per N grandmas
+                const syn =
+                    /([\w' ]+?) gain \+?([\d.]+)% (?:cps|cookies per second) per (?:(\d+) )?grandmas?/i.exec(
+                        text
+                    )
+                if (syn && building) {
+                    const target = findBuilding(view.buildings, syn[1])
+                    const targetCps = target ? buildingContribution(target) : NaN
+                    const pct = parseFloat(syn[2])
+                    const per = syn[3] ? parseFloat(syn[3]) : 1
+                    if (
+                        Number.isFinite(targetCps) &&
+                        Number.isFinite(building.owned) &&
+                        Number.isFinite(pct) &&
+                        per > 0
+                    ) {
+                        delta += targetCps * (pct / 100) * (building.owned / per)
+                    }
+                }
+                return delta
             }
         }
 
@@ -184,12 +229,6 @@
                     .filter(b => normaliseName(b.name) !== 'cursor')
                     .reduce((n, b) => n + (Number.isFinite(b.owned) ? b.owned : 0), 0)
                 return rate * parseFloat(m[1]) * nonCursor
-            }
-
-            // "The mouse and cursors are twice as efficient." applies to clicking,
-            // not to the cursor building line
-            if (/mouse and cursors are twice as efficient/i.test(text)) {
-                return Number.isFinite(view.clickCps) ? view.clickCps : NaN
             }
         }
 
