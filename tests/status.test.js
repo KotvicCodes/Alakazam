@@ -103,6 +103,43 @@ test('HUD rows stay in summary order when readings appear, disappear and return'
     assert.equal(body.querySelector('[data-key="purchase"]'), control)
 })
 
+test('HUD renders stock market profit and achievement progress rows', async () => {
+    const h = boot({ save: fx.save({}).raw })
+    await h.A.store.ready('t')
+    h.A.registry.get('hud').setup()
+    const body = h.game.doc.getElementById('alakazam-hud-body')
+    const rowValue = label => {
+        const node = body
+            .querySelectorAll('.az-row')
+            .find(row => !row.hidden && row.firstChild.textContent === label)
+        return node ? node.children[1].textContent : null
+    }
+
+    h.debug().market = { trading: true, profit: 12500, signals: ['Cereals buy @10.0'] }
+    h.debug().achievements = {
+        won: 45,
+        known: 500,
+        waiting: ['statsPanel', 'oldenDays']
+    }
+    h.A.hud.render()
+    assert.equal(rowValue('trading'), 'on')
+    assert.equal(rowValue('profit'), '$12.5k')
+    assert.equal(rowValue('unlocked'), '45/500')
+    assert.equal(rowValue('hunting'), 'statsPanel, oldenDays')
+
+    h.debug().market = { trading: false, profit: -320, signals: [] }
+    h.debug().achievements = { won: 47, known: 500, waiting: [] }
+    h.A.hud.render()
+    assert.equal(rowValue('trading'), 'advisory only')
+    assert.equal(rowValue('profit'), '-$320')
+    assert.equal(rowValue('unlocked'), '47/500')
+    assert.equal(rowValue('hunting'), null)
+
+    h.debug().market = { trading: true, profit: 0, signals: [] }
+    h.A.hud.render()
+    assert.equal(rowValue('profit'), null)
+})
+
 for (const release of ['pointerup', 'pointercancel']) {
     test(`HUD keeps an active drag through refreshes and saves it on ${release}`, async () => {
         const h = boot({})
