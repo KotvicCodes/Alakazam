@@ -117,6 +117,52 @@
         }
     }
 
+    //! Offices & Brokers
+
+    //* upgradeOffice
+    // cursor levels 2, 4, 8, 10 and 12 unlock the five office tiers, which expand
+    // warehouse capacity, reveal the three loan slots, and award Pyramid scheme at
+    // the Palace of Greed
+    function upgradeOffice() {
+        const button = document.getElementById('bankOfficeUpgrade')
+        if (
+            !button ||
+            button.style.display === 'none' ||
+            button.classList.contains('bankButtonOff') ||
+            button.classList.contains('disabled')
+        )
+            return false
+        simulateClick(button)
+        console.log('Alakazam: upgraded stock market office')
+        return true
+    }
+
+    //* hireBroker
+    // each broker takes 5% off trading overhead multiplicatively and costs 20
+    // minutes of highest raw CpS
+    function hireBroker() {
+        const button = document.getElementById('bankBrokersBuy')
+        if (
+            !button ||
+            button.style.display === 'none' ||
+            button.classList.contains('bankButtonOff') ||
+            button.classList.contains('disabled')
+        )
+            return false
+        const scalars = save.get().scalars
+        const rawCps = scalars?.trusted ? scalars.cookiesPsRawHighest : NaN
+        const cost = rawCps * 1200
+        if (
+            !Number.isFinite(cost) ||
+            cost < 0 ||
+            cost > window.Alakazam.live.readGlobals().cookies * 0.1
+        )
+            return false
+        simulateClick(button)
+        console.log('Alakazam: hired stock market broker')
+        return true
+    }
+
     //! Trading
 
     function candidate(good, selling, overhead) {
@@ -202,6 +248,10 @@
         }
 
         if (!s.trading) return
+        if (!window.__alakazam?.ascend?.phase || window.__alakazam.ascend.phase === 'watching') {
+            upgradeOffice()
+            hireBroker()
+        }
         if (Date.now() - lastTradeAt < TRADE_COOLDOWN_MS) return
         const lease = window.Alakazam.transactions.acquire('marketTrading')
         if (!lease) return
@@ -233,5 +283,13 @@
         }
     })
 
-    window.Alakazam.market = { state, signalFor, restingValue, GOODS, MODES }
+    window.Alakazam.market = {
+        state,
+        signalFor,
+        restingValue,
+        upgradeOffice,
+        hireBroker,
+        GOODS,
+        MODES
+    }
 })()
