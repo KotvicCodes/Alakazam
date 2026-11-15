@@ -122,10 +122,21 @@
         const text = (upgrade.description || '').replace(/\s+/g, ' ')
         if (!text) return NaN
 
-        // "The mouse and cursors are twice as efficient." doubles both the cursor
-        // building line and mouse clicking
+        // "The mouse and cursors are twice as efficient." doubles the base
+        // cursor and mouse terms before additive Thousand fingers bonuses are
+        // added. Once cursor per-unit CpS exceeds the pure doubling range, an
+        // additive finger bonus is mixed into the tooltip total and cannot be
+        // separated, so report the gain as unknown rather than overstating it.
         if (/mouse and cursors are twice as efficient/i.test(text)) {
             const cursor = findBuilding(view.buildings, 'cursor')
+            if (
+                cursor &&
+                Number.isFinite(cursor.perUnitCps) &&
+                Number.isFinite(cursor.baseCps) &&
+                cursor.perUnitCps > cursor.baseCps * 8
+            ) {
+                return NaN
+            }
             const cursorCps = cursor ? buildingContribution(cursor) : NaN
             const clickCps = view.clickCps
             if (!Number.isFinite(cursorCps) && !Number.isFinite(clickCps)) return NaN

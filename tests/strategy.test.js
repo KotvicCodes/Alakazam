@@ -345,6 +345,52 @@ test('mouse and cursors doubling sums cursor building production and click CpS',
         S.upgradeDeltaCps({ description: 'The mouse and cursors are twice as efficient.' }, idle),
         50
     )
+    // when Thousand fingers has inflated cursor per-unit CpS (e.g. 10.4 CpS per
+    // cursor with 25 cursors and 100 grandmas), the additive finger term cannot
+    // be separated from the base doubling, so the upgrade reports unknown rather
+    // than claiming 260 CpS
+    const withThousandFingers = view({
+        clicksPerSecond: 0,
+        clickCps: 0,
+        buildings: [
+            {
+                name: 'Cursor',
+                owned: 25,
+                price: 1000,
+                perUnitCps: 10.4,
+                baseCps: 0.1,
+                affordable: true
+            },
+            {
+                name: 'Grandma',
+                owned: 100,
+                price: 5000,
+                perUnitCps: 4,
+                baseCps: 1,
+                affordable: true
+            }
+        ],
+        upgrades: [
+            {
+                name: 'Ambidextrous',
+                price: 10000,
+                kind: 'buy',
+                affordable: true,
+                description: 'The mouse and cursors are twice as efficient.'
+            }
+        ]
+    })
+    assert.ok(
+        Number.isNaN(
+            S.upgradeDeltaCps(
+                { description: 'The mouse and cursors are twice as efficient.' },
+                withThousandFingers
+            )
+        )
+    )
+    const scored = S.scoreUpgrades(withThousandFingers)
+    assert.equal(scored[0].measured, false)
+    assert.equal(scored[0].payback, Infinity)
 })
 
 test('grandma synergy upgrades include both grandma doubling and target building bonus', () => {
