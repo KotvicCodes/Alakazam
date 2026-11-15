@@ -132,22 +132,30 @@
 
     //! Shimmers, buffs, wrinklers
 
+    const SEASONAL_SHIMMER_SHEET = /hearts\.png|bunnies\.png|familiars\.png|spamCookies\.gif/i
+    const NEGATIVE_SPRITE_Y = /^[^\s]+\s+-0*[1-9]/
+
     //* readShimmers
     // The class the game actually uses is .goldenCookie, not .golden, so the type
     // is read from the class list as-is rather than guessed at.
     //
-    // Wrath cookies share the .goldenCookie class and are told apart only by the
-    // sprite the game sets on them, so that is what gets checked. When the sprite
-    // cannot be read the shimmer is treated as an ordinary golden cookie, which
-    // keeps the safe behaviour of clicking it.
+    // Wrath cookies share the .goldenCookie class and are told apart by their
+    // sprite, alt attribute, or seasonal row offset (row 1 on seasonal sheets).
     function readShimmers() {
         const shimmers = []
         document.querySelectorAll('#shimmers .shimmer').forEach(sh => {
             const type = Array.from(sh.classList).find(c => c !== 'shimmer') || 'unknown'
             const image = (sh.style && sh.style.backgroundImage) || ''
+            const position = ((sh.style && sh.style.backgroundPosition) || '').trim()
+            const alt = sh.getAttribute?.('alt') || ''
+            const seasonalWrath = SEASONAL_SHIMMER_SHEET.test(image) && NEGATIVE_SPRITE_Y.test(position)
             shimmers.push({
                 type,
-                wrath: /wrath|wrinkler/i.test(image) || sh.classList.contains('wrath'),
+                wrath:
+                    /wrath|wrinkler/i.test(image) ||
+                    sh.classList.contains('wrath') ||
+                    /wrath|colère/i.test(alt) ||
+                    seasonalWrath,
                 element: sh
             })
         })

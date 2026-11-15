@@ -245,6 +245,114 @@ test('shimmer types are read from the class the game actually uses', () => {
     assert.equal(read[2].type, 'reindeer')
 })
 
+test('seasonal wrath cookies are detected from row 1 sprite offsets & alt text and skipped while buffed', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    const shimmers = h.game.doc.getElementById('shimmers')
+
+    const makeShimmer = (sheet, pos, alt) => {
+        const el = new El('div', {
+            class: 'shimmer goldenCookie',
+            style: {
+                backgroundImage: `url(img/${sheet})`,
+                backgroundPosition: pos
+            }
+        })
+        if (alt) el.setAttribute('alt', alt)
+        return el
+    }
+
+    const wrathHearts = makeShimmer('hearts.png', '-192px -96px')
+    const wrathBunnies = makeShimmer('bunnies.png', '0px -96px')
+    const wrathFamiliars = makeShimmer('familiars.png', '-96px -96px')
+    const wrathSpam = makeShimmer('spamCookies.gif', '-256px -128px')
+    const wrathAlt = makeShimmer('goldCookie.png', '0px 0px', 'Wrath cookie')
+    const goldenHearts = makeShimmer('hearts.png', '-192px 0px')
+    const goldenBunnies = makeShimmer('bunnies.png', '0px 0px')
+    const goldenFamiliars = makeShimmer('familiars.png', '-96px 0px', 'Golden cookie')
+    const goldenSpam = makeShimmer('spamCookies.gif', '0px 0px')
+
+    shimmers.append(
+        wrathHearts,
+        wrathBunnies,
+        wrathFamiliars,
+        wrathSpam,
+        wrathAlt,
+        goldenHearts,
+        goldenBunnies,
+        goldenFamiliars,
+        goldenSpam
+    )
+
+    const read = h.A.live.readShimmers()
+    assert.deepEqual(
+        read.map(s => s.wrath),
+        [true, true, true, true, true, false, false, false, false]
+    )
+
+    // while a buff is running, seasonal wrath cookies must be skipped and
+    // seasonal golden cookies must still be clicked
+    shimmers.children = []
+    const activeWrath = makeShimmer('familiars.png', '-96px -96px')
+    const activeGolden = makeShimmer('familiars.png', '0px 0px')
+    shimmers.append(activeWrath, activeGolden)
+    h.game.gainBuff('Frenzy', 0.2)
+
+    h.A.registry.get('shimmers').tick()
+    assert.equal(activeWrath.events.includes('click'), false, 'seasonal wrath cookie skipped under buff')
+    assert.equal(
+        activeGolden.events.includes('click'),
+        true,
+        'seasonal golden cookie clicked under buff'
+    )
+    assert.deepEqual(h.A.shimmers.counts(), { golden: 1, wrath: 0, reindeer: 0, skipped: 1 })
+})
+
+test('shimmers clicks the first golden cookie immediately and holds the next one until fading luck', async () => {
+    const h = boot({})
+    await h.A.store.ready('t')
+    const shimmers = h.game.doc.getElementById('shimmers')
+    const mod = h.A.registry.get('shimmers')
+
+    const spawnGolden = opacity => {
+        const el = new El('div', {
+            class: 'shimmer goldenCookie',
+            style: { backgroundImage: 'url(img/goldCookie.png)', opacity: String(opacity) }
+        })
+        el.addEventListener('click', () => {
+            shimmers.children = shimmers.children.filter(c => c !== el)
+        })
+        shimmers.append(el)
+        return el
+    }
+
+    // first golden cookie is clicked right away so Early bird is earned first
+    const first = spawnGolden(0.1)
+    mod.tick()
+    assert.equal(first.events.includes('click'), true)
+    assert.equal(h.A.shimmers.counts().golden, 1)
+    assert.equal(h.A.store.get('fadingLuckDone', false), false)
+
+    // second solo golden cookie is held until its opacity peaks and fades <= 0.12
+    const second = spawnGolden(0.08)
+    for (const op of [0.08, 0.5, 0.92, 0.35]) {
+        second.style.opacity = String(op)
+        mod.tick()
+        assert.equal(second.events.includes('click'), false, `held at opacity ${op}`)
+    }
+    second.style.opacity = '0.1'
+    mod.tick()
+    assert.equal(second.events.includes('click'), true, 'clicked once faded into Fading luck window')
+    assert.equal(h.A.shimmers.counts().golden, 2)
+    assert.equal(h.A.store.get('fadingLuckDone', false), true)
+
+    // subsequent golden cookies are clicked immediately again
+    const third = spawnGolden(0.2)
+    mod.tick()
+    assert.equal(third.events.includes('click'), true)
+    assert.equal(h.A.shimmers.counts().golden, 3)
+})
+
 test('wrinklers are canvas drawn, so there is nothing to find', () => {
     const h = boot({})
     assert.deepEqual(h.A.live.readWrinklers().elements, [])
