@@ -137,6 +137,27 @@
         { id: 4, key: 'woodChips', farms: 300, tickMinutes: 5, mutationBoost: 3 }
     ]
 
+    //* Plot limits
+    // unlocked [x0, y0, x1, y1] bounds per farm level from 1 to 9+. the save
+    // always serializes all 36 tiles even while outer rings are still locked.
+    const PLOT_LIMITS = [
+        [2, 2, 4, 4],
+        [2, 2, 5, 4],
+        [2, 2, 5, 5],
+        [1, 2, 5, 5],
+        [1, 1, 5, 5],
+        [1, 1, 6, 5],
+        [1, 1, 6, 6],
+        [0, 1, 6, 6],
+        [0, 0, 6, 6]
+    ]
+
+    function isTileUnlocked(x, y, level = 1) {
+        if (!Number.isFinite(level) || level < 1) return false
+        const limits = PLOT_LIMITS[Math.max(1, Math.min(PLOT_LIMITS.length, Math.floor(level))) - 1]
+        return x >= limits[0] && x < limits[2] && y >= limits[1] && y < limits[3]
+    }
+
     function byKey(key) {
         const id = PLANTS.findIndex(p => p.key === key)
         return id === -1 ? null : { id, ...PLANTS[id] }
@@ -154,11 +175,15 @@
 
     //* reachable
     // whether a mutation can be attempted right now: every parent it needs must
-    // already be in the seed log, and it must need at most `slots` plants
+    // already be in the seed log and plantable, and the plot must fit all parents
+    // plus at least one empty tile for the mutation to appear in
     function reachable(mutation, unlockedKeys, slots) {
         if (mutation.parents.length === 0) return false
-        if (mutation.parents.length > slots) return false
-        return mutation.parents.every(p => unlockedKeys.indexOf(p) !== -1)
+        if (mutation.parents.length + 1 > slots) return false
+        return mutation.parents.every(p => {
+            const plant = byKey(p)
+            return Boolean(plant && !plant.unplantable && unlockedKeys.indexOf(p) !== -1)
+        })
     }
 
     window.Alakazam = window.Alakazam || {}
@@ -169,9 +194,11 @@
         VALUABLE,
         WEEDS,
         SOILS,
+        PLOT_LIMITS,
         byKey,
         byId,
         recipesFor,
-        reachable
+        reachable,
+        isTileUnlocked
     }
 })()

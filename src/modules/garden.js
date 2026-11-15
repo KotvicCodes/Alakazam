@@ -49,6 +49,7 @@
 
         for (let y = 0; y < SIZE; y++) {
             for (let x = 0; x < SIZE; x++) {
+                if (!plants.isTileUnlocked(x, y, farm.level)) continue
                 const tile = garden.plot[y][x]
                 if (tile.empty) empty.push({ x, y })
                 else occupied.push({ ...tile, plant: plants.byId(tile.plantId) })
@@ -78,11 +79,11 @@
     // among those keeps the wait down.
     function nextGoal(s) {
         let best = null
+        const slots = s.plotTiles ?? SIZE * SIZE
         for (const plant of plants.PLANTS) {
-            if (plant.unplantable) continue
             if (s.unlocked.indexOf(plant.key) !== -1) continue
             for (const recipe of plants.recipesFor(plant.key)) {
-                if (!plants.reachable(recipe, s.unlocked, s.plotTiles)) continue
+                if (!plants.reachable(recipe, s.unlocked, slots)) continue
                 if (!best || recipe.chance > best.recipe.chance) best = { plant, recipe }
             }
         }
@@ -131,14 +132,89 @@
         return y <= 0 && y % 48 === 0 ? { x, y } : null
     }
 
+    function isAdjacent(a, b) {
+        return Math.abs(a.x - b.x) <= 1 && Math.abs(a.y - b.y) <= 1 && (a.x !== b.x || a.y !== b.y)
+    }
+
+    function compareScores(a, b) {
+        for (let i = 0; i < a.length; i++) {
+            if (a[i] !== b[i]) return a[i] - b[i]
+        }
+        return 0
+    }
+
+    //* bestNursery
+    // find the best empty tile that can host the current recipe's mutation, along
+    // with the adjacent occupied parent tiles it uses and the empty neighbors left
+    // to plant into
+    function bestNursery(s, goal) {
+        if (
+            !s ||
+            !goal ||
+            !goal.recipe ||
+            !Array.isArray(s.occupied) ||
+            !Array.isArray(s.empty) ||
+            s.empty.length === 0
+        )
+            return null
+
+        const parents = goal.recipe.parents
+        const neededCounts = {}
+        for (const key of parents) {
+            neededCounts[key] = (neededCounts[key] || 0) + 1
+        }
+
+        let best = null
+        for (const center of s.empty) {
+            const seenCounts = {}
+            const matchedTiles = []
+            for (const tile of s.occupied) {
+                if (!isAdjacent(tile, center)) continue
+                const key = tile.plant && tile.plant.key
+                if (key && (seenCounts[key] || 0) < (neededCounts[key] || 0)) {
+                    seenCounts[key] = (seenCounts[key] || 0) + 1
+                    matchedTiles.push(tile)
+                }
+            }
+
+            const missing = []
+            for (const key of parents) {
+                if (seenCounts[key] > 0) seenCounts[key]--
+                else missing.push(key)
+            }
+
+            const neighbors = s.empty.filter(t => isAdjacent(t, center))
+            if (neighbors.length < missing.length) continue
+
+            const score = [
+                matchedTiles.length,
+                neighbors.length,
+                neighbors.indexOf(s.empty[0]) !== -1 ? 1 : 0
+            ]
+            if (!best || compareScores(score, best.score) > 0) {
+                best = { center, matchedTiles, missing, neighbors, score }
+            }
+        }
+        return best
+    }
+
     //* worthHarvesting
     // three reasons to pull a plant: it is a species we have never harvested and
     // doing so writes it into the seed log, it pays out cookies or a sugar lump,
-    // or it is a weed crowding the plot.
-    function worthHarvesting(tile, s) {
+    // or it is a weed crowding the plot. active mutation parents adjacent to the
+    // chosen nursery stay planted once their own seed is unlocked so they can
+    // mature and mutate; excess or non-viable copies are still harvested.
+    function worthHarvesting(tile, s, goal = s ? nextGoal(s) : null) {
         if (!tile.plant) return null
         const key = tile.plant.key
         if (s.unlocked.indexOf(key) === -1) return 'unlocks its seed'
+        if (goal && goal.recipe && goal.recipe.parents.indexOf(key) !== -1) {
+            if (!Array.isArray(s.occupied) || !Array.isArray(s.empty)) return null
+            const nursery = bestNursery(s, goal)
+            if (nursery && nursery.matchedTiles.some(p => p.x === tile.x && p.y === tile.y)) {
+                return null
+            }
+        }
         if (plants.VALUABLE.indexOf(key) !== -1) return 'pays out when harvested'
         if (plants.WEEDS.indexOf(key) !== -1) return 'is a weed'
         return null
@@ -205,12 +281,42 @@
         const seed = seedEl(plant.id)
         const el = tileEl(tile.x, tile.y)
         if (!seed || !el) return false
+        if (el.style && el.style.display === 'none') return false
         if (seed.classList && seed.classList.contains('locked')) return false
         // an autosave may still call this empty after a plant has appeared here.
         // clicking an occupied tile would unearth it instead of planting.
         const icon = document.getElementById(`gardenTileIcon-${tile.x}-${tile.y}`)
         if (!icon || !el.contains(icon) || icon.style.display !== 'none') return false
         return withSeed(seed, () => simulateClick(el))
+    }
+
+    //* planPlanting
+    // pair each missing recipe parent with an empty tile adjacent to the chosen
+    // nursery tile while keeping that nursery tile empty for the mutation
+    function planPlanting(s, goal) {
+        const nursery = bestNursery(s, goal)
+        if (!nursery || nursery.missing.length === 0) return []
+
+        const pool = nursery.neighbors.slice()
+        const active = nursery.matchedTiles.slice()
+        const chosen = []
+
+        while (chosen.length < nursery.missing.length && pool.length > 0) {
+            let bestIdx = 0
+            let bestAdj = -1
+            for (let i = 0; i < pool.length; i++) {
+                const adj = active.filter(p => isAdjacent(p, pool[i])).length
+                if (adj > bestAdj) {
+                    bestAdj = adj
+                    bestIdx = i
+                }
+            }
+            const [tile] = pool.splice(bestIdx, 1)
+            chosen.push(tile)
+            active.push(tile)
+        }
+
+        return chosen.map((tile, i) => ({ key: nursery.missing[i], tile }))
     }
 
     //* preferWoodChips
@@ -252,18 +358,17 @@
 
         // harvest anything finished and worth taking
         for (const tile of s.occupied) {
-            const why = worthHarvesting(tile, s)
+            const why = worthHarvesting(tile, s, goal)
             if (!why) continue
             if (!harvest(tile, why)) continue
             lastActionAt = Date.now()
             return
         }
 
-        // then fill empty ground with whatever the current goal needs
-        if (!goal || s.empty.length === 0) return
-        const needed = goal.recipe.parents
-        for (let i = 0; i < Math.min(needed.length, s.empty.length); i++) {
-            if (plantAt(needed[i], s.empty[i])) lastActionAt = Date.now()
+        // then fill empty ground with whatever the current goal still lacks,
+        // always keeping an empty nursery tile for the mutation to appear in
+        for (const step of planPlanting(s, goal)) {
+            if (plantAt(step.key, step.tile)) lastActionAt = Date.now()
         }
     }
 
