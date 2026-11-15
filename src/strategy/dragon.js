@@ -17,8 +17,8 @@
 
     const { AURAS, auraById, trainedAuras } = window.Alakazam.data.dragon
 
-    // Elder Battalion counts building types other than grandmas, and there are
-    // twenty buildings in the game
+    // Elder Battalion counts non-grandma buildings owned; the building-type count
+    // stays as a fallback when only type counts are supplied
     const BUILDING_TYPES = 20
 
     // What share of production comes from kittens. The game does not render the milk
@@ -64,11 +64,16 @@
                 }
 
             case 'grandmas': {
-                const types = state.otherBuildingTypes || BUILDING_TYPES - 1
-                const share = state.grandmaShare || 0
+                const count = Number.isFinite(state.otherBuildings)
+                    ? state.otherBuildings
+                    : state.otherBuildingTypes || BUILDING_TYPES - 1
+                const boost = amount * count
+                const rawShare = Math.min(1, Math.max(0, state.grandmaShare || 0))
+                const equipped = state.aura === aura.id || state.aura2 === aura.id
+                const share = equipped ? rawShare / (1 + boost * (1 - rawShare)) : rawShare
                 return {
-                    gain: amount * types * share * cps,
-                    why: `${pct(amount * types)} of the ${pct(share)} of production that is grandmas`
+                    gain: boost * share * cps,
+                    why: `${pct(boost)} of the ${pct(share)} of production that is grandmas`
                 }
             }
 
@@ -228,12 +233,16 @@
     // the best aura, and the best of the rest for the second slot once a fully
     // trained dragon has one. The game refuses to put the same aura in both, and
     // taking the two best separately is the same answer as scoring every pair unless
-    // two auras overlap, which only Reality Bending does: it is worth a tenth of the
-    // others whichever slot it sits in.
+    // two auras overlap, which only Reality Bending does: its tenth of the primary
+    // aura stacks additively on a multiplier the first slot is already providing.
     function chooseAuras(state) {
         const table = scoreAuras(state)
         const best = table[0] || null
-        const second = state.slot2 ? table[1] || null : null
+        const second =
+            state.slot2 && best
+                ? table.slice(1).sort((a, b) => secondSlotGain(b, best) - secondSlotGain(a, best))[0] ||
+                  null
+                : null
 
         return {
             primary: best ? best.aura : 0,
@@ -241,6 +250,11 @@
             why: best ? `${best.name}: ${best.why}` : 'the dragon knows no auras yet',
             table
         }
+    }
+
+    function secondSlotGain(row, best) {
+        if (!best || row.aura !== 18 || best.score <= 1) return row.gain
+        return row.gain - 0.1 * best.gain * (1 - 1 / best.score)
     }
 
     window.Alakazam = window.Alakazam || {}

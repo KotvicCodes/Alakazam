@@ -147,6 +147,58 @@ test('an assumption is flagged as one', () => {
     assert.match(milk.why, /assumed/)
 })
 
+test('Elder Battalion counts non-grandma building units and un-boosts an active aura', () => {
+    const S = boot({}).A.strategy.dragon
+    // 5,000 non-grandma buildings (+5,000%) on a 5% unboosted grandma share adds 2.5x cps
+    const unequipped = S.chooseAuras({
+        ...MID_RUN,
+        slot2: true,
+        grandmaShare: 0.05,
+        otherBuildings: 5000
+    })
+    assert.equal(unequipped.primary, 3, 'Elder Battalion leads once non-grandma units are counted')
+    assert.equal(unequipped.secondary, 15, 'Radiant Appetite takes the second slot')
+    const battalion = unequipped.table.find(r => r.aura === 3)
+    assert.ok(Math.abs(battalion.gain - 2.5 * MID_RUN.cps) < 1)
+
+    // once Elder Battalion is equipped, grandma output in the tooltip is 51x higher,
+    // raising measured grandmaShare from 0.05 to (51 * 0.05) / (0.95 + 51 * 0.05)
+    const boostedShare = (51 * 0.05) / (0.95 + 51 * 0.05)
+    const equipped = S.chooseAuras({
+        ...MID_RUN,
+        slot2: true,
+        aura: 3,
+        aura2: 15,
+        grandmaShare: boostedShare,
+        otherBuildings: 5000
+    })
+    const activeBattalion = equipped.table.find(r => r.aura === 3)
+    assert.ok(
+        Math.abs(activeBattalion.gain - battalion.gain) < 1,
+        'an already-equipped Elder Battalion is not multiplied by its own boost a second time'
+    )
+    assert.equal(equipped.primary, 3)
+    assert.equal(equipped.secondary, 15)
+})
+
+test('income.shares sums non-grandma building units from the store and falls back to the save', async () => {
+    const h = await ready(
+        dragonBoot({
+            amounts: { 0: 10, 1: 20, 2: 30 },
+            owned: [400, 350, 250, 150, 0, 0, 0, 0]
+        })
+    )
+    const liveShares = h.A.income.shares()
+    assert.equal(liveShares.otherBuildings, 400 + 250 + 150, 'grandmas at index 1 are excluded')
+    assert.equal(liveShares.otherBuildingTypes, 3)
+
+    // when no store products are rendered, shares() falls back to the parsed save buildings
+    const productsEl = h.game.doc.getElementById('products')
+    productsEl.children = []
+    const saveShares = h.A.income.shares()
+    assert.equal(saveShares.otherBuildings, 10 + 30)
+})
+
 //! Reaching the panel
 
 test('the dragon tab is clicked where it is drawn, whatever the zoom', async () => {
@@ -274,6 +326,24 @@ test('the module puts the best aura in and says why', async () => {
     assert.equal(state.level, 27)
     assert.equal(state.wanted, 'Radiant Appetite')
     assert.match(state.why, /Radiant Appetite/)
+})
+
+test('when Elder Battalion overtakes Radiant Appetite in slot 0, it fills slot 1 instead of overwriting slot 0', async () => {
+    const h = await ready(
+        dragonBoot({
+            level: 27,
+            aura: 15,
+            aura2: 0,
+            dragon: { level: 27, aura: 15, aura2: 0 },
+            owned: [500, 10, 500, 500, 500, 500, 500, 500]
+        })
+    )
+    // hover the grandma product so catalog.buildingCps(1) is populated (10 * 1 / 25 = 0.4 share)
+    await h.A.registry.get('catalog').tick()
+    await h.A.registry.get('catalog').tick()
+    await h.A.registry.get('dragon').tick()
+    assert.equal(h.game.dragon.aura, 15, 'Radiant Appetite stays in the first slot')
+    assert.equal(h.game.dragon.aura2, 3, 'Elder Battalion is placed into the second slot')
 })
 
 test('a production buff does not stop the dragon growing any more', async () => {

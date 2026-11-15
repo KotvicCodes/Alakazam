@@ -157,6 +157,8 @@
         return {
             ...income.shares(),
             level: dragon.level,
+            aura: dragon.aura,
+            aura2: dragon.aura2,
             slot2: dragon.slot2,
             cps,
             clickCps: measured.clickCps || 0,
@@ -195,13 +197,27 @@
         if (Date.now() - lastSwitchAt < SWITCH_COOLDOWN_MS) return false
 
         const total = Math.max(1, inputs.cps + inputs.clickCps)
-        const gainOf = id => {
-            const row = choice.table.find(r => r.aura === id)
-            return row ? row.gain : 0
+        const rowOf = id => choice.table.find(r => r.aura === id) || null
+        const pairGain = (a, b) => {
+            const first = rowOf(a)
+            const second = dragon.slot2 ? rowOf(b) : null
+            const firstGain = first ? first.gain : 0
+            const secondGain = second ? second.gain : 0
+            if (!first || !second) return firstGain + secondGain
+            if (second.aura === 18 && first.score > 1) {
+                return firstGain + secondGain - 0.1 * first.gain * (1 - 1 / first.score)
+            }
+            if (first.aura === 18 && second.score > 1) {
+                return firstGain + secondGain - 0.1 * second.gain * (1 - 1 / second.score)
+            }
+            return firstGain + secondGain
         }
-        const wanted = gainOf(choice.primary) + (dragon.slot2 ? gainOf(choice.secondary) : 0)
-        const have = gainOf(dragon.aura) + (dragon.slot2 ? gainOf(dragon.aura2) : 0)
+        const wanted = pairGain(choice.primary, choice.secondary)
+        const have = pairGain(dragon.aura, dragon.aura2)
         if (choice.primary === dragon.aura && (!dragon.slot2 || choice.secondary === dragon.aura2)) {
+            return false
+        }
+        if (dragon.slot2 && choice.primary === dragon.aura2 && choice.secondary === dragon.aura) {
             return false
         }
         return wanted - have > SWITCH_MARGIN * total
@@ -357,6 +373,22 @@
 
     async function switchAuras(dragon, choice) {
         lastSwitchAt = Date.now()
+        if (dragon.slot2 && choice.primary === dragon.aura2) {
+            if (choice.secondary !== dragon.aura) {
+                const ok = await dragonAct.setAura(choice.secondary, 0)
+                if (ok) console.log(`Alakazam: dragon aura ${nameOf(choice.secondary)}`)
+            }
+            return
+        }
+        if (dragon.slot2 && choice.secondary === dragon.aura) {
+            if (choice.primary !== dragon.aura2) {
+                const ok = await dragonAct.setAura(choice.primary, 1)
+                if (ok) {
+                    console.log(`Alakazam: second dragon aura ${nameOf(choice.primary)}. ${choice.why}`)
+                }
+            }
+            return
+        }
         if (choice.primary !== dragon.aura) {
             const ok = await dragonAct.setAura(choice.primary, 0)
             if (ok) console.log(`Alakazam: dragon aura ${nameOf(choice.primary)}. ${choice.why}`)
