@@ -14,13 +14,92 @@
     // running. Golden cookies and reindeer are always worth clicking.
 
     const { simulateClick } = window.Alakazam.safety.input('shimmers')
-    const { live, registry } = window.Alakazam
+    const { firstNumberIn } = window.Alakazam.parse
+    const { live, registry, save, store } = window.Alakazam
 
     const INTERVAL_MS = 50
+    const FADING_LUCK_ID = 268
+    const FADING_LUCK_PEAK = 0.85
+    // even at the ~68.9s maximum golden-cookie lifespan (Lucky day + Serendipity +
+    // 36 mature green rot on clay), opacity <= 0.10 is strictly under 30 frames (1s)
+    const FADING_LUCK_MAX_OPACITY = 0.1
 
     const counts = { golden: 0, wrath: 0, reindeer: 0, skipped: 0 }
+    const opacityState = new WeakMap()
+    let seenSpellsCast = null
+    let seenDomSpellsCast = null
+    let attemptRevision = null
+
+    //* readOpacity
+    // returns the inline opacity when it is a finite number in [0, 1], or NaN when
+    // the shimmer is not animating opacity
+    function readOpacity(element) {
+        const raw = element?.style?.opacity
+        if (raw === undefined || raw === null || String(raw).trim() === '') return NaN
+        const value = Number(raw)
+        return Number.isFinite(value) && value >= 0 && value <= 1 ? value : NaN
+    }
+
+    //* readDomSpellsCast
+    // #grimoireInfo renders "Spells cast: X (total: Y)" live on screen, including
+    // manual player casts that do not increment store.get('spellsCast', 0)
+    function readDomSpellsCast() {
+        const info = document.getElementById('grimoireInfo')
+        if (!info) return NaN
+        const value = firstNumberIn(info.innerText)
+        return Number.isFinite(value) && value >= 0 ? value : NaN
+    }
+
+    function hasFadingLuck() {
+        const s = save?.get?.()
+        const hasAchievementBit = Boolean(
+            s?.ok && Array.isArray(s.achievements) && s.achievements.length > FADING_LUCK_ID
+        )
+        if (hasAchievementBit && s.achievements[FADING_LUCK_ID]) {
+            if (attemptRevision !== null || store.get('fadingLuckAttemptAt', 0) > 0) {
+                attemptRevision = null
+                store.forget('fadingLuckAttemptAt')
+            }
+            if (!store.get('fadingLuckDone', false)) store.set('fadingLuckDone', true)
+            return true
+        }
+        if (store.get('fadingLuckDone', false) !== true) return false
+        if (hasAchievementBit) {
+            const attemptAt = store.get('fadingLuckAttemptAt', 0)
+            const lastDate = Number.isFinite(s.run?.lastDate) ? s.run.lastDate : 0
+            const revision = save?.stats?.()?.revision ?? 0
+            const saveAdvanced =
+                (attemptAt > 0 && lastDate > attemptAt) ||
+                (attemptRevision !== null && revision > attemptRevision) ||
+                (attemptAt === 0 && attemptRevision === null)
+            if (saveAdvanced) {
+                attemptRevision = null
+                store.forget('fadingLuckAttemptAt')
+                store.set('fadingLuckDone', false)
+                return false
+            }
+        }
+        return true
+    }
 
     function tick() {
+        const spellsCast = store.get('spellsCast', 0)
+        if (seenSpellsCast === null || spellsCast < seenSpellsCast) seenSpellsCast = spellsCast
+
+        const domSpellsCast = readDomSpellsCast()
+        if (seenDomSpellsCast === null) {
+            seenDomSpellsCast = Number.isFinite(domSpellsCast)
+                ? domSpellsCast
+                : (save?.minigame?.('grimoire')?.spellsCast ?? 0)
+        } else if (Number.isFinite(domSpellsCast) && domSpellsCast < seenDomSpellsCast) {
+            seenDomSpellsCast = domSpellsCast
+        }
+
+        const conjuredBySpell =
+            spellsCast > seenSpellsCast ||
+            (Number.isFinite(domSpellsCast) && domSpellsCast > seenDomSpellsCast)
+        const fadingLuckWon = hasFadingLuck()
+
         const shimmers = live.readShimmers()
         if (shimmers.length === 0) return
 
@@ -33,10 +112,77 @@
                 counts.skipped++
                 continue
             }
+
+            // once Early bird is secured on the first golden cookie, hold one solo
+            // natural golden cookie (never a reindeer, wrath, buffed combo cookie,
+            // or FTHOF spell cookie which lacks spawnLead) until its opacity fades
+            // into the final second so the save earns Fading luck
+            const holdForFadingLuck =
+                !shimmer.wrath &&
+                shimmer.type !== 'reindeer' &&
+                !buffed &&
+                !conjuredBySpell &&
+                shimmers.length === 1 &&
+                counts.golden >= 1 &&
+                !fadingLuckWon
+
+            let earnedFadingLuck = false
+            if (holdForFadingLuck) {
+                const opacity = readOpacity(shimmer.element)
+                if (Number.isFinite(opacity)) {
+                    const prev = opacityState.get(shimmer.element)
+                    const peak = Math.max(prev ? prev.peak : 0, opacity)
+                    const falling = (prev && prev.falling) || (prev !== undefined && opacity < prev.last)
+                    const u = 0.5 * (1 + Math.pow(Math.max(0, 1 - opacity), 0.25))
+                    const fallingTicks = falling ? (prev && prev.falling ? prev.fallingTicks + 1 : 1) : 0
+                    const firstFallingU = falling ? (prev && prev.falling ? prev.firstFallingU : u) : 0
+                    const du = fallingTicks >= 2 && u > prev.u ? u - prev.u : 0
+                    const avgDu =
+                        fallingTicks >= 2 && u > firstFallingU
+                            ? (u - firstFallingU) / (fallingTicks - 1)
+                            : 0
+                    const step = Math.max(du, avgDu)
+                    const aboutToExpire = fallingTicks >= 3 && step > 0 && u + step * 2 >= 1
+                    opacityState.set(shimmer.element, {
+                        peak,
+                        last: opacity,
+                        falling,
+                        u,
+                        fallingTicks,
+                        firstFallingU
+                    })
+                    const inFadePhase = peak >= FADING_LUCK_PEAK || falling
+                    if (
+                        !inFadePhase ||
+                        (opacity > FADING_LUCK_MAX_OPACITY && !aboutToExpire) ||
+                        opacity <= 0
+                    ) {
+                        continue
+                    }
+                    earnedFadingLuck = true
+                }
+            }
+
             simulateClick(shimmer.element)
-            if (shimmer.wrath) counts.wrath++
-            else if (shimmer.type === 'reindeer') counts.reindeer++
-            else counts.golden++
+            if (shimmer.wrath) {
+                counts.wrath++
+                if (conjuredBySpell) {
+                    seenSpellsCast = spellsCast
+                    if (Number.isFinite(domSpellsCast)) seenDomSpellsCast = domSpellsCast
+                }
+            } else if (shimmer.type === 'reindeer') counts.reindeer++
+            else {
+                counts.golden++
+                if (conjuredBySpell) {
+                    seenSpellsCast = spellsCast
+                    if (Number.isFinite(domSpellsCast)) seenDomSpellsCast = domSpellsCast
+                }
+                if (earnedFadingLuck) {
+                    attemptRevision = save?.stats?.()?.revision ?? 0
+                    store.set('fadingLuckAttemptAt', Date.now())
+                    store.set('fadingLuckDone', true)
+                }
+            }
         }
     }
 
