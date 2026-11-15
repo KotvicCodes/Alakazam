@@ -992,6 +992,115 @@ test('the ticker gives up if no click ever registers', async () => {
     assert.equal(comments.events.filter(e => e === 'click').length, 0, 'should have stopped poking it')
 })
 
+test('tickerTarget and tickerText prefer #commentsText1 where the game binds its click handler', async () => {
+    const h = boot({})
+    const d = h.game.doc
+    const comments = new El('div', { id: 'comments' })
+    const text = new El('div', { id: 'commentsText' })
+    const layer1 = new El('div', { id: 'commentsText1', class: 'commentsText', text: 'active news 0' })
+    const layer2 = new El('div', { id: 'commentsText2', class: 'commentsText', text: 'fading news' })
+    text.append(layer1, layer2)
+    comments.append(text)
+    d.body.append(comments)
+
+    assert.equal(h.A.achievements.tickerTarget(), layer1)
+    assert.equal(h.A.achievements.tickerText(), 'active news 0')
+
+    // Cookie Clicker binds AddEvent(Game.tickerL, 'click', ...) on #commentsText1;
+    // events bubble up from child to ancestor, never down from #comments.
+    let clicks = 0
+    layer1.addEventListener('click', () => {
+        clicks++
+        layer2.text = layer1.text
+        layer1.text = 'active news ' + clicks
+    })
+
+    await h.A.store.ready('t')
+    await h.A.achievements.clickTicker()
+    assert.equal(clicks, 6)
+    assert.equal(h.A.store.get('tickerClicks', 0), 6)
+})
+
+test('ticker clicking stops at 50 for Tabloid addiction, but still claims Fortune Cookies', async () => {
+    const h = boot({ disk: { 'legacy:t': { tickerClicks: 50 } } })
+    assert.equal(h.A.achievements.TICKER_TARGET, 50)
+
+    const d = h.game.doc
+    const comments = new El('div', { id: 'comments' })
+    const text = new El('div', { id: 'commentsText' })
+    const layer1 = new El('div', { id: 'commentsText1', class: 'commentsText', text: 'ordinary news' })
+    const layer2 = new El('div', { id: 'commentsText2', class: 'commentsText' })
+    text.append(layer1, layer2)
+    comments.append(text)
+    d.body.append(comments)
+
+    let clicks = 0
+    layer1.addEventListener('click', () => {
+        clicks++
+        // Game.TickerDraw() moves the clicked fortune into #commentsText2 as it fades out
+        layer2.children = layer1.children.slice()
+        layer2.children.forEach(c => (c.parentElement = layer2))
+        layer1.children = []
+        layer1.innerText = 'news after fortune ' + clicks
+    })
+
+    await h.A.store.ready('t')
+    await h.A.registry.get('achievements').tick()
+    assert.equal(clicks, 0, 'does not hammer the ticker past 50 on ordinary news')
+    assert.equal(h.A.store.get('fortunesClicked', 0), 0)
+
+    // a natural rotation spawns a Fortune Cookie inside #commentsText1
+    layer1.text = ''
+    layer1.append(new El('span', { class: 'fortune', text: 'Today is your lucky day!' }))
+
+    await h.A.registry.get('achievements').tick()
+    assert.equal(clicks, 1, 'clicks the fortune even after tickerClicks >= 50')
+    assert.equal(h.A.store.get('fortunesClicked', 0), 1)
+    assert.equal(h.debug().achievements.fortunesClicked, 1)
+
+    // the departing fortune in #commentsText2 is not clicked a second time
+    await h.A.registry.get('achievements').tick()
+    assert.equal(clicks, 1)
+    assert.equal(h.A.store.get('fortunesClicked', 0), 1)
+})
+
+test('justWrong sells a grandma only when at least two are owned and no ascension is running', async () => {
+    const h = boot({
+        game: { bank: 1e6, owned: [0, 1, 0, 0, 0, 0, 0, 0] },
+        disk: {
+            'legacy:t': {
+                'attempts:statsPanel': 4,
+                'attempts:oldenDays': 4,
+                'attempts:godComplex': 4
+            }
+        }
+    })
+    await h.A.store.ready('t')
+    const job = h.A.achievements.ONE_OFFS.find(j => j.name === 'justWrong')
+    assert.ok(job, 'justWrong should be registered in ONE_OFFS')
+    assert.equal(job.ready(), false, 'never sells the last grandma')
+
+    h.A.registry.get('achievements').setup()
+    await h.A.registry.get('achievements').tick()
+    assert.equal(h.game.state.owned[1], 1)
+    assert.equal(h.A.achievements.attempts('justWrong'), 0)
+
+    // once two grandmas are owned, it still holds off while an ascension is in flight
+    h.game.state.owned[1] = 2
+    h.game.refresh()
+    h.debug().ascend = { phase: 'loans' }
+    assert.equal(job.ready(), false, 'holds off during ascension')
+
+    h.debug().ascend = { phase: 'watching' }
+    assert.equal(job.ready(), true)
+
+    await h.A.registry.get('achievements').tick()
+    assert.equal(h.game.state.owned[1], 1, 'sold one grandma for Just wrong')
+    assert.equal(h.game.state.mode, 'buy', 'restored the store to buy mode')
+    assert.equal(h.game.state.amount, 1)
+    assert.equal(h.A.achievements.giveUp('justWrong'), true, 'retired after selling')
+})
+
 //! Version reporting
 
 test('no version number is hardcoded into the popup markup', () => {
