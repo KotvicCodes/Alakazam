@@ -144,18 +144,22 @@
     function readShimmers() {
         const shimmers = []
         document.querySelectorAll('#shimmers .shimmer').forEach(sh => {
-            const type = Array.from(sh.classList).find(c => c !== 'shimmer') || 'unknown'
+            const classType = Array.from(sh.classList).find(c => c !== 'shimmer')
             const image = (sh.style && sh.style.backgroundImage) || ''
             const position = ((sh.style && sh.style.backgroundPosition) || '').trim()
             const alt = sh.getAttribute?.('alt') || ''
+            const isReindeer =
+                classType === 'reindeer' || /reindeer/i.test(image) || /reindeer|renne/i.test(alt)
+            const type = isReindeer ? 'reindeer' : classType || 'unknown'
             const seasonalWrath = SEASONAL_SHIMMER_SHEET.test(image) && NEGATIVE_SPRITE_Y.test(position)
             shimmers.push({
                 type,
                 wrath:
-                    /wrath|wrinkler/i.test(image) ||
-                    sh.classList.contains('wrath') ||
-                    /wrath|colère/i.test(alt) ||
-                    seasonalWrath,
+                    !isReindeer &&
+                    (/wrath|wrinkler/i.test(image) ||
+                        sh.classList.contains('wrath') ||
+                        /wrath|colère/i.test(alt) ||
+                        seasonalWrath),
                 element: sh
             })
         })
