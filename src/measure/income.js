@@ -161,7 +161,9 @@
     const WRINKLER_RETURN = 1.1
 
     function shares() {
-        const scalars = (save.get() || {}).scalars || {}
+        const saved = save.get() || {}
+        const scalars = saved.scalars || {}
+        const buildings = saved.buildings || []
         const cps = Math.max(0, meanCps || live.readGlobals().cps || 0)
         const products = live.readProducts()
 
@@ -184,10 +186,15 @@
         const wrinklers = scalars.wrinklersNumber || 0
         const wrinklerCps = wrinklers > 0 ? wrinklers * WRINKLER_BITE * WRINKLER_RETURN * cps : 0
 
+        const otherBuildings = products.length
+            ? products.reduce((sum, p) => sum + (p.index === 1 ? 0 : p.owned || 0), 0)
+            : buildings.reduce((sum, b, i) => sum + (i === 1 ? 0 : (b && b.amount) || 0), 0)
+
         return {
             grandmaShare,
             prestigeShare,
             wrinklerCps,
+            otherBuildings,
             otherBuildingTypes: Math.max(0, products.filter(p => p.owned > 0).length - 1),
             prestigeAssumed: true
         }
