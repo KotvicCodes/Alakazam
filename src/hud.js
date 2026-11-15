@@ -334,6 +334,12 @@
         if (debug.market) {
             section('stock market')
             row('trading', debug.market.trading ? 'on' : 'advisory only')
+            if (Number.isFinite(debug.market.profit) && debug.market.profit !== 0) {
+                row(
+                    'profit',
+                    `${debug.market.profit < 0 ? '-' : ''}$${format(Math.abs(debug.market.profit))}`
+                )
+            }
             row('signals', debug.market.signals.slice(0, 3).join(', ') || 'nothing notable')
         }
 
@@ -384,6 +390,14 @@
             section('wrinklers')
             row('on the cookie', debug.wrinklers.active)
             if (debug.wrinklers.worthPopping) row('advice', 'pop them by hand', true)
+        }
+
+        if (debug.achievements && debug.achievements.known > 0) {
+            section('achievements')
+            row('unlocked', `${debug.achievements.won}/${debug.achievements.known}`)
+            if (debug.achievements.waiting?.length > 0) {
+                row('hunting', debug.achievements.waiting.join(', '))
+            }
         }
 
         const broken = scheduler.stats().filter(m => m.disabled || m.failures > 0)
