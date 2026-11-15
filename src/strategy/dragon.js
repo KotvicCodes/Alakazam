@@ -20,6 +20,18 @@
     // Elder Battalion counts non-grandma buildings owned; the building-type count
     // stays as a fallback when only type counts are supplied
     const BUILDING_TYPES = 20
+    const ELDER_BATTALION = 3
+    const REALITY_BENDING = 18
+
+    function unboostedGrandmaShare(rawShare, boost, state) {
+        const clamped = Math.min(1, Math.max(0, rawShare || 0))
+        let activeMult = 0
+        if (state.aura === ELDER_BATTALION || state.aura2 === ELDER_BATTALION) activeMult += 1
+        if (state.aura === REALITY_BENDING || state.aura2 === REALITY_BENDING) activeMult += 0.1
+        const activeBoost = boost * activeMult
+        if (!(activeBoost > 0) || clamped <= 0) return clamped
+        return clamped / (1 + activeBoost * (1 - clamped))
+    }
 
     // What share of production comes from kittens. The game does not render the milk
     // multiplier anywhere, so this is a stated assumption rather than a measurement,
@@ -68,9 +80,7 @@
                     ? state.otherBuildings
                     : state.otherBuildingTypes || BUILDING_TYPES - 1
                 const boost = amount * count
-                const rawShare = Math.min(1, Math.max(0, state.grandmaShare || 0))
-                const equipped = state.aura === aura.id || state.aura2 === aura.id
-                const share = equipped ? rawShare / (1 + boost * (1 - rawShare)) : rawShare
+                const share = unboostedGrandmaShare(state.grandmaShare, boost, state)
                 return {
                     gain: boost * share * cps,
                     why: `${pct(boost)} of the ${pct(share)} of production that is grandmas`
@@ -217,11 +227,16 @@
             .map(aura => {
                 const others = trained.filter(a => a.id !== aura.id)
                 const { gain, why, assumed } = gainOf(aura, state, others)
+                const base =
+                    aura.kind === 'click' || aura.kind === 'flightRoll'
+                        ? state.clickCps || 0
+                        : state.cps || 0
                 return {
                     aura: aura.id,
                     name: aura.name,
                     gain,
                     score: 1 + gain / income,
+                    mult: base > 0 ? 1 + gain / base : 1 + gain / income,
                     assumed: !!assumed,
                     why
                 }
@@ -253,8 +268,17 @@
     }
 
     function secondSlotGain(row, best) {
-        if (!best || row.aura !== 18 || best.score <= 1) return row.gain
-        return row.gain - 0.1 * best.gain * (1 - 1 / best.score)
+        if (!row) return 0
+        if (!best) return row.gain
+        const bestMult = best.mult || best.score
+        const rowMult = row.mult || row.score
+        if (row.aura === 18 && bestMult > 1) {
+            return Math.max(0, row.gain - 0.1 * best.gain * (1 - 1 / bestMult))
+        }
+        if (best.aura === 18 && rowMult > 1) {
+            return Math.max(0, row.gain - 0.1 * row.gain * (1 - 1 / rowMult))
+        }
+        return row.gain
     }
 
     window.Alakazam = window.Alakazam || {}

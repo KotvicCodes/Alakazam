@@ -181,6 +181,68 @@ test('Elder Battalion counts non-grandma building units and un-boosts an active 
     assert.equal(equipped.secondary, 15)
 })
 
+test('Reality Bending overlap correction uses the affected production multiplier when clickCps is high', async () => {
+    const S = boot({}).A.strategy.dragon
+    const choice = S.chooseAuras({
+        level: 27,
+        slot2: true,
+        cps: 1e6,
+        clickCps: 19e6,
+        grandmaShare: 0.5,
+        otherBuildings: 10000
+    })
+    const battalion = choice.table.find(r => r.aura === 3)
+    assert.equal(battalion.mult, 51, 'Elder Battalion multiplies production by 51x')
+    assert.equal(battalion.score, 3.5, 'score divides by total cps + clickCps')
+    assert.equal(choice.primary, 3, 'Elder Battalion takes the primary slot')
+    assert.equal(
+        choice.secondary,
+        15,
+        'Radiant Appetite beats Reality Bending once overlap is discounted by the 51x production multiplier'
+    )
+
+    // module check: with Elder Battalion + Radiant Appetite equipped under high clickCps,
+    // the dragon keeps Radiant Appetite and does not replace it with Reality Bending,
+    // and if Reality Bending is in slot 2 it is replaced by Radiant Appetite
+    const boostedShare = (101 * 0.5) / (0.5 + 101 * 0.5)
+    for (const startAura2 of [15, 18]) {
+        const h = await ready(
+            dragonBoot({
+                level: 27,
+                aura: 3,
+                aura2: startAura2,
+                dragon: { level: 27, aura: 3, aura2: startAura2 },
+                owned: [5000, 100, 5000, 0, 0, 0, 0, 0]
+            })
+        )
+        h.A.income.stats = () => ({
+            cps: 1e6,
+            baseCps: 1e6,
+            clickCps: 19e6,
+            goldenCps: 0,
+            buffMult: 1,
+            buffedShare: 0,
+            goldensOnScreen: 0,
+            measured: true
+        })
+        h.A.income.shares = () => ({
+            grandmaShare: boostedShare,
+            prestigeShare: 0.9,
+            wrinklerCps: 0,
+            otherBuildings: 10000,
+            otherBuildingTypes: 2,
+            prestigeAssumed: true
+        })
+        await h.A.registry.get('dragon').tick()
+        assert.equal(h.game.dragon.aura, 3)
+        assert.equal(
+            h.game.dragon.aura2,
+            15,
+            `slot 2 ends on Radiant Appetite when starting from aura2=${startAura2}`
+        )
+    }
+})
+
 test('income.shares sums non-grandma building units from the store and falls back to the save', async () => {
     const h = await ready(
         dragonBoot({
@@ -197,6 +259,65 @@ test('income.shares sums non-grandma building units from the store and falls bac
     productsEl.children = []
     const saveShares = h.A.income.shares()
     assert.equal(saveShares.otherBuildings, 10 + 30)
+})
+
+test('Reality Bending 0.1x Elder Battalion boost is removed when normalizing grandmaShare', async () => {
+    const S = boot({}).A.strategy.dragon
+    const unboosted = 0.0005
+    const otherBuildings = 5000
+    const expectedGain = 50 * unboosted * MID_RUN.cps // 2.5% of CpS
+
+    const cases = [
+        { label: 'neither equipped', aura: 15, aura2: 0, mult: 0 },
+        { label: 'Reality Bending in slot 2', aura: 15, aura2: 18, mult: 0.1 },
+        { label: 'Reality Bending in slot 1', aura: 18, aura2: 15, mult: 0.1 },
+        { label: 'Elder Battalion equipped', aura: 3, aura2: 15, mult: 1.0 },
+        { label: 'both Elder Battalion and Reality Bending equipped', aura: 3, aura2: 18, mult: 1.1 }
+    ]
+
+    for (const c of cases) {
+        const activeBoost = 50 * c.mult
+        const measuredShare =
+            (unboosted * (1 + activeBoost)) / (1 + unboosted * activeBoost)
+        const choice = S.chooseAuras({
+            ...MID_RUN,
+            slot2: true,
+            aura: c.aura,
+            aura2: c.aura2,
+            grandmaShare: measuredShare,
+            otherBuildings
+        })
+        const battalion = choice.table.find(r => r.aura === 3)
+        assert.ok(
+            Math.abs(battalion.gain - expectedGain) < 1,
+            `${c.label}: Elder Battalion gain is ${battalion.gain}, expected ${expectedGain}`
+        )
+        assert.equal(choice.primary, 15, `${c.label}: Radiant Appetite stays primary`)
+        assert.equal(choice.secondary, 18, `${c.label}: Reality Bending stays secondary without thrashing`)
+    }
+
+    // module check: with Radiant Appetite + Reality Bending equipped and measured grandmaShare = 0.0005 * 6 / (1 + 0.0005 * 5),
+    // dragon.tick() keeps Reality Bending and does not swap to Elder Battalion
+    const h = await ready(
+        dragonBoot({
+            level: 27,
+            aura: 15,
+            aura2: 18,
+            dragon: { level: 27, aura: 15, aura2: 18 },
+            owned: [2500, 10, 2500, 0, 0, 0, 0, 0]
+        })
+    )
+    h.A.income.shares = () => ({
+        grandmaShare: (unboosted * 6) / (1 + unboosted * 5),
+        prestigeShare: 0.9,
+        wrinklerCps: 0,
+        otherBuildings,
+        otherBuildingTypes: 2,
+        prestigeAssumed: true
+    })
+    await h.A.registry.get('dragon').tick()
+    assert.equal(h.game.dragon.aura, 15)
+    assert.equal(h.game.dragon.aura2, 18, 'Reality Bending is not replaced by Elder Battalion')
 })
 
 //! Reaching the panel

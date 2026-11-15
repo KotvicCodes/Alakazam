@@ -204,11 +204,13 @@
             const firstGain = first ? first.gain : 0
             const secondGain = second ? second.gain : 0
             if (!first || !second) return firstGain + secondGain
-            if (second.aura === 18 && first.score > 1) {
-                return firstGain + secondGain - 0.1 * first.gain * (1 - 1 / first.score)
+            const firstMult = first.mult || first.score
+            const secondMult = second.mult || second.score
+            if (second.aura === 18 && firstMult > 1) {
+                return firstGain + secondGain - 0.1 * first.gain * (1 - 1 / firstMult)
             }
-            if (first.aura === 18 && second.score > 1) {
-                return firstGain + secondGain - 0.1 * second.gain * (1 - 1 / second.score)
+            if (first.aura === 18 && secondMult > 1) {
+                return firstGain + secondGain - 0.1 * second.gain * (1 - 1 / secondMult)
             }
             return firstGain + secondGain
         }
