@@ -42,9 +42,10 @@
     const RETRY_COOLDOWN_MS = 60000
 
     // Tabloid addiction is the only click-count achievement on the news ticker and
-    // unlocks at 50 clicks. Stopping there matters: every manual click resets
-    // Game.TickerAge, which suppresses the natural rotations that Fortune Cookies
-    // only spawn on.
+    // unlocks at 50 clicks in a single session (Game.TickerClicks is not saved).
+    // Stopping there matters: every manual click resets Game.TickerAge, which
+    // suppresses the natural rotations that Fortune Cookies only spawn on.
+    const TABLOID_ADDICTION_ID = 247
     const TICKER_TARGET = 50
     const TICKER_PER_TICK = 6
 
@@ -57,6 +58,7 @@
     const TICKER_MAX_TRIES = 200
 
     let pending = []
+    let sessionTickerClicks = 0
 
     function attempts(name) {
         return store.get('attempts:' + name, 0)
@@ -284,9 +286,9 @@
             lease = window.Alakazam.transactions.acquire('achievements', ctx)
             if (!lease) await wait(25)
         }
-        if (!lease) return false
+        if (!lease) return 'defer'
         try {
-            if (!justWrongReady()) return false
+            if (!justWrongReady()) return 'defer'
             const grandma = window.Alakazam.live?.readProducts().find(p => p.index === 1) || {
                 index: 1
             }
@@ -346,6 +348,11 @@
                         throw err
                     }
                     console.warn(`Alakazam: achievement routine "${job.name}" failed`, err)
+                }
+
+                if (worked === 'defer') {
+                    pending.push(job)
+                    continue
                 }
 
                 // Opening a menu is the expensive, visible part, and it happened
@@ -421,6 +428,26 @@
         return !(below && below.contains && below.contains(fortune))
     }
 
+    //* hasTabloidAddiction
+    // Game.TickerClicks is an in-memory counter that resets to 0 on every page
+    // reload, while Tabloid addiction (id 247) requires 50 clicks in one session.
+    // If a previous session stopped before 50 and the save still lacks achievement
+    // 247, persisted tickerClicks alone cannot retire ticker clicking.
+    function hasTabloidAddiction() {
+        if (sessionTickerClicks >= TICKER_TARGET || store.get('tabloidAddictionDone', false) === true) {
+            return true
+        }
+        const s = save.get()
+        if (s.ok && Array.isArray(s.achievements) && s.achievements.length > TABLOID_ADDICTION_ID) {
+            if (s.achievements[TABLOID_ADDICTION_ID]) {
+                store.set('tabloidAddictionDone', true)
+                return true
+            }
+            return false
+        }
+        return store.get('tickerClicks', 0) >= TICKER_TARGET
+    }
+
     //* clickTicker
     // The ticker achievement is pure persistence, but only clicks the game actually
     // registers count, and it registers at most one per news item. Firing a dozen
@@ -434,13 +461,17 @@
     // clicked whenever they appear to unlock O Fortuna and the fortune upgrades.
     async function clickTicker() {
         const needClicks =
-            store.get('tickerClicks', 0) < TICKER_TARGET &&
-            !(store.get('tickerTries', 0) > TICKER_MAX_TRIES && store.get('tickerClicks', 0) === 0)
+            !hasTabloidAddiction() &&
+            !(
+                store.get('tickerTries', 0) > TICKER_MAX_TRIES &&
+                sessionTickerClicks === 0 &&
+                store.get('tickerClicks', 0) === 0
+            )
         if (!needClicks && !hasFortune()) return
 
         const steps = needClicks ? TICKER_PER_TICK : 1
         for (let i = 0; i < steps; i++) {
-            if (i > 0 && store.get('tickerClicks', 0) >= TICKER_TARGET && !hasFortune()) break
+            if (i > 0 && hasTabloidAddiction() && !hasFortune()) break
             const target = tickerTarget()
             if (!target) return
             const fortune = hasFortune()
@@ -453,7 +484,11 @@
                 store.set('fortunesClicked', store.get('fortunesClicked', 0) + 1)
             }
             if (changed) {
+                sessionTickerClicks++
                 store.set('tickerClicks', store.get('tickerClicks', 0) + 1)
+                if (sessionTickerClicks >= TICKER_TARGET) {
+                    store.set('tabloidAddictionDone', true)
+                }
             }
             if (fortune && hasFortune()) break
         }
@@ -487,6 +522,7 @@
     registry.register({
         reset: () => {
             pending = []
+            sessionTickerClicks = 0
             retryAt.clear()
             setup()
         },
@@ -501,7 +537,9 @@
         attempts,
         giveUp,
         MAX_ATTEMPTS,
+        TABLOID_ADDICTION_ID,
         TICKER_TARGET,
+        hasTabloidAddiction,
         tickerTarget,
         tickerText,
         clickTicker,

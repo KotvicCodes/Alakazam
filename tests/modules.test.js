@@ -1064,6 +1064,51 @@ test('ticker clicking stops at 50 for Tabloid addiction, but still claims Fortun
     assert.equal(h.A.store.get('fortunesClicked', 0), 1)
 })
 
+test('persisted tickerClicks from an earlier reload do not stop before Tabloid addiction unlocks', async () => {
+    // Game.TickerClicks resets to 0 on every reload and is not stored in the save.
+    // If 49 clicks were recorded before a reload and save achievement 247 is still
+    // locked, clicking must not stop after 1 click in the new session.
+    const h = boot({
+        save: fx.save({ achievementBits: '0'.repeat(300) }).raw,
+        disk: { 'legacy:t': { tickerClicks: 49 } }
+    })
+    assert.equal(h.A.save.get().achievements[247], false)
+
+    const d = h.game.doc
+    const comments = new El('div', { id: 'comments' })
+    const text = new El('div', { id: 'commentsText' })
+    const layer1 = new El('div', { id: 'commentsText1', class: 'commentsText', text: 'news 0' })
+    text.append(layer1)
+    comments.append(text)
+    d.body.append(comments)
+
+    let sessionClicks = 0
+    layer1.addEventListener('click', () => {
+        sessionClicks++
+        layer1.text = 'news ' + sessionClicks
+    })
+
+    await h.A.store.ready('t')
+    await h.A.achievements.clickTicker()
+    assert.equal(
+        sessionClicks,
+        6,
+        'continues past persisted tickerClicks === 50 when Tabloid addiction is still locked'
+    )
+    assert.equal(h.A.store.get('tickerClicks', 0), 55)
+    assert.equal(h.A.achievements.hasTabloidAddiction(), false)
+
+    while (sessionClicks < h.A.achievements.TICKER_TARGET) {
+        await h.A.achievements.clickTicker()
+    }
+    assert.equal(sessionClicks, 50, 'stops once 50 clicks are registered in the current session')
+    assert.equal(h.A.store.get('tabloidAddictionDone', false), true)
+    assert.equal(h.A.achievements.hasTabloidAddiction(), true)
+
+    await h.A.achievements.clickTicker()
+    assert.equal(sessionClicks, 50, 'does not click further after 50 session clicks')
+})
+
 test('justWrong sells a grandma only when at least two are owned and no ascension is running', async () => {
     const h = boot({
         game: { bank: 1e6, owned: [0, 1, 0, 0, 0, 0, 0, 0] },
@@ -1099,6 +1144,40 @@ test('justWrong sells a grandma only when at least two are owned and no ascensio
     assert.equal(h.game.state.mode, 'buy', 'restored the store to buy mode')
     assert.equal(h.game.state.amount, 1)
     assert.equal(h.A.achievements.giveUp('justWrong'), true, 'retired after selling')
+})
+
+test('justWrong defers while purchase holds the store lease and sells once it is released', async () => {
+    const h = boot({
+        game: { bank: 1e6, owned: [0, 2, 0, 0, 0, 0, 0, 0] },
+        disk: {
+            'legacy:t': {
+                'attempts:statsPanel': 4,
+                'attempts:oldenDays': 4,
+                'attempts:godComplex': 4
+            }
+        }
+    })
+    await h.A.store.ready('t')
+    h.A.registry.get('achievements').setup()
+
+    const held = h.A.transactions.acquire('purchase')
+    assert.ok(held, 'purchase should acquire the store transaction lease')
+
+    for (let i = 0; i < 5; i++) {
+        await h.A.registry.get('achievements').tick()
+        assert.equal(
+            h.A.achievements.attempts('justWrong'),
+            0,
+            'deferring on lease contention must not count as an attempt'
+        )
+        assert.equal(h.game.state.owned[1], 2)
+    }
+    assert.equal(h.A.achievements.giveUp('justWrong'), false)
+
+    held.release()
+    await h.A.registry.get('achievements').tick()
+    assert.equal(h.game.state.owned[1], 1, 'sold one grandma as soon as the purchase lease released')
+    assert.equal(h.A.achievements.giveUp('justWrong'), true)
 })
 
 //! Version reporting
