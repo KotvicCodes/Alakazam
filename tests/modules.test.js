@@ -278,6 +278,42 @@ test('more wizard towers make the casting cycle longer', () => {
     assert.match(G.towerAdvice(38, 1).note, /slower/)
 })
 
+test('capped magic casts Haggler Charm when Force the Hand of Fate stays covered & holds back otherwise', () => {
+    function grimoireBoot(barText, towers = 530) {
+        const h = boot({
+            save: fx.save({
+                levels: { 7: 1 },
+                amounts: { 7: towers },
+                minigames: { 7: fx.grimoire({ magic: 100 }) }
+            }).raw
+        })
+        const bar = new El('div', { id: 'grimoireBarText', text: barText })
+        const spell0 = new El('div', { id: 'grimoireSpell0' })
+        const spell4 = new El('div', { id: 'grimoireSpell4' })
+        spell0.addEventListener('click', () => h.game.state.log.push('cast Conjure Baked Goods'))
+        spell4.addEventListener('click', () => h.game.state.log.push("cast Haggler's Charm"))
+        h.game.doc.body.append(bar, spell0, spell4)
+        return h
+    }
+
+    // 96/100: capped (>= 95), Haggler costs 20, leaving 76 >= 70 (FTHOF cost)
+    const covered = grimoireBoot('96/100')
+    covered.A.registry.get('grimoire').tick()
+    assert.deepEqual(covered.game.state.log, ["cast Haggler's Charm"])
+    assert.equal(covered.A.store.get('spellsCast', 0), 1)
+
+    // 50/50: capped, but Haggler costs 15 and would leave 35 < 40 (FTHOF cost)
+    const uncovered = grimoireBoot('50/50', 100)
+    uncovered.A.registry.get('grimoire').tick()
+    assert.deepEqual(uncovered.game.state.log, [])
+    assert.equal(uncovered.A.store.get('spellsCast', 0), 0)
+
+    // 20/20: FTHOF costs 22 (> maxMagic), so Conjure Baked Goods is cast instead
+    const tiny = grimoireBoot('20/20', 15)
+    tiny.A.registry.get('grimoire').tick()
+    assert.deepEqual(tiny.game.state.log, ['cast Conjure Baked Goods'])
+})
+
 //! Sugar lumps
 
 function lumpSave(hours, lumps, levels, amounts) {
@@ -514,6 +550,81 @@ test('resting value rises with the bank level', () => {
     const M = boot({}).A.market
     assert.equal(M.restingValue(0, 10), 19)
     assert.equal(M.restingValue(16, 10), 179)
+})
+
+test('market upgrades the office & hires brokers when affordable and skips them when off or dear', async () => {
+    function officeBoot({
+        bank = 1e6,
+        cps = 25,
+        rawCps = 50,
+        tooltipCost = null,
+        officeClass = '',
+        brokerClass = ''
+    } = {}) {
+        const h = boot({
+            save: fx.save({
+                rawCps,
+                levels: { 5: 1 },
+                amounts: { 5: 20 },
+                minigames: { 5: fx.market({ officeLevel: 1, brokers: 2 }) }
+            }).raw,
+            game: { bank, cps }
+        })
+        const office = new El('div', { id: 'bankOfficeUpgrade', class: officeClass })
+        const brokers = new El('div', { id: 'bankBrokers' })
+        const broker = new El('div', { id: 'bankBrokersBuy', class: brokerClass })
+        brokers.append(broker)
+        if (tooltipCost !== null) {
+            brokers.setAttribute('onMouseOver', 'Game.tooltip.draw(...)')
+            brokers.addEventListener('mouseover', () => {
+                const tip = new El('div', { id: 'tooltipMarketBrokers' })
+                tip.append(
+                    new El('b', { class: 'hasTinyCookie green', text: '20 minutes' }),
+                    new El('b', {
+                        class: 'hasTinyCookie green',
+                        text: `${tooltipCost.toLocaleString('en-US')} cookies`
+                    })
+                )
+                h.game.tooltip.children = []
+                h.game.tooltip.text = ''
+                h.game.tooltip.append(tip)
+            })
+        }
+        office.addEventListener('click', () => h.game.state.log.push('upgraded office'))
+        broker.addEventListener('click', () => h.game.state.log.push('hired broker'))
+        h.game.doc.body.append(office, brokers)
+        return h
+    }
+
+    // broker costs 50 * 1200 = 60,000 <= 10% of 1,000,000 (100,000)
+    const affordable = officeBoot({ tooltipCost: 60000 })
+    await affordable.A.registry.get('market').tick()
+    assert.deepEqual(affordable.game.state.log, ['upgraded office', 'hired broker'])
+
+    // bankButtonOff on both buttons prevents clicking
+    const locked = officeBoot({ officeClass: 'bankButtonOff', brokerClass: 'bankButtonOff' })
+    await locked.A.registry.get('market').tick()
+    assert.deepEqual(locked.game.state.log, [])
+
+    // broker costs 500 * 1200 = 600,000 > 10% of 1,000,000
+    const dear = officeBoot({ rawCps: 500, officeClass: 'bankButtonOff' })
+    await dear.A.registry.get('market').tick()
+    assert.deepEqual(dear.game.state.log, [])
+
+    // stale saved rawCps (50) lags live CpS (750 -> 900,000 > 10% of 1,000,000)
+    const staleLiveCps = officeBoot({ rawCps: 50, cps: 750, officeClass: 'bankButtonOff' })
+    await staleLiveCps.A.registry.get('market').tick()
+    assert.deepEqual(staleLiveCps.game.state.log, [])
+
+    // stale saved rawCps (50) and low current CpS (25), but broker tooltip shows 900,000
+    const staleTooltip = officeBoot({
+        rawCps: 50,
+        cps: 25,
+        tooltipCost: 900000,
+        officeClass: 'bankButtonOff'
+    })
+    await staleTooltip.A.registry.get('market').tick()
+    assert.deepEqual(staleTooltip.game.state.log, [])
 })
 
 //! Scheduler

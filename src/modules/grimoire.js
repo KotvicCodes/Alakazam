@@ -47,6 +47,7 @@
 
     const FTHOF = SPELLS[1]
     const CONJURE = SPELLS[0]
+    const HAGGLER = SPELLS[4]
 
     // casting drops the bar a long way, and regeneration is slowest when the bar
     // is low, so idle spending only happens while comfortably full
@@ -217,10 +218,16 @@
         // otherwise, only spend when the bar is essentially full: regeneration
         // scales with how full it is, so running it down is self-defeating
         const conjureCost = spellCost(CONJURE, s.magicM, s.discount)
-        if (s.magic >= s.magicM * IDLE_CAST_FRACTION && s.magic >= conjureCost) {
+        const hagglerCost = spellCost(HAGGLER, s.magicM, s.discount)
+        if (s.magic >= s.magicM * IDLE_CAST_FRACTION) {
             // hold the bar for Force the Hand of Fate if it is nearly affordable,
             // rather than spending it on cookies moments before a buff lands
-            if (s.magic < s.fthofCost) cast(CONJURE, 'magic is capped and would otherwise be wasted')
+            if (s.magic < s.fthofCost) {
+                if (s.magic >= conjureCost)
+                    cast(CONJURE, 'magic is capped and would otherwise be wasted')
+            } else if (s.magic >= hagglerCost && s.magic - hagglerCost >= s.fthofCost) {
+                cast(HAGGLER, 'magic is capped and Force the Hand of Fate remains covered')
+            }
         }
     }
 
