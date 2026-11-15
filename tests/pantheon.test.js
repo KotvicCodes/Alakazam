@@ -194,3 +194,43 @@ test('explain prints the ranking and hands back the state', async () => {
     assert.ok(out)
     assert.equal(out.current[0], MURIDAL)
 })
+
+test('failed slot when temple DOM is missing does not start the settle cooldown', async () => {
+    const { El } = require('./dom')
+    const h = await ready(pantheonBoot({ slots: [-1, -1, -1], swaps: 3 }))
+    const mod = h.A.registry.get('pantheon')
+
+    // first tick has no temple DOM elements, so slot() fails and must not lock out retries
+    await mod.tick()
+
+    const doc = h.game.doc
+    const desired = h.A.pantheon.state().desired
+    for (const id of desired) {
+        doc.body.append(new El('div', { id: 'templeGodDrag' + id }))
+    }
+    const sockets = [0, 1, 2].map(i => new El('div', { id: 'templeSlot' + i }))
+    doc.body.append(...sockets)
+
+    // immediate retry succeeds without waiting 90s for SETTLE_MS
+    await mod.tick()
+    for (const socket of sockets) {
+        assert.ok(socket.events.includes('mouseup'))
+    }
+})
+
+test('correcting a layout prefers filling an empty wrong slot first', async () => {
+    const { El } = require('./dom')
+    // desired idle layout is [JEREMY, MOKALSIUM, DOTJEIESS]; slot 0 has MOKALSIUM (wrong)
+    // and slot 1 is empty (-1, wrong), so tick should fill empty slot 1 first
+    const h = await settle(await ready(pantheonBoot({ slots: [MOKALSIUM, -1, DOTJEIESS], swaps: 3 })))
+    const doc = h.game.doc
+    for (const id of [JEREMY, MOKALSIUM, DOTJEIESS]) {
+        doc.body.append(new El('div', { id: 'templeGodDrag' + id }))
+    }
+    const sockets = [0, 1, 2].map(i => new El('div', { id: 'templeSlot' + i }))
+    doc.body.append(...sockets)
+
+    await h.A.registry.get('pantheon').tick()
+    assert.equal(sockets[0].events.includes('mouseup'), false)
+    assert.equal(sockets[1].events.includes('mouseup'), true)
+})

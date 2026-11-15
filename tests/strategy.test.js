@@ -313,3 +313,45 @@ test('clicking upgrades have zero click value when nothing is clicking', () => {
     const idle = view({ clicksPerSecond: 0, clickCps: 0 })
     assert.equal(S.upgradeDeltaCps({ description: 'Clicking gains +1% of your CpS.' }, idle), 0)
 })
+
+test('normalises irregular plural Factories and Clone building names', () => {
+    const v = view({
+        buildings: [
+            {
+                name: 'Factory',
+                owned: 10,
+                price: 130000,
+                perUnitCps: 260,
+                baseCps: 260,
+                affordable: true
+            },
+            { name: 'You', owned: 5, price: 5e26, perUnitCps: 1000, baseCps: 1000, affordable: true }
+        ]
+    })
+    assert.equal(S.upgradeDeltaCps({ description: 'Factories are twice as efficient.' }, v), 2600)
+    assert.equal(S.upgradeDeltaCps({ description: 'Clones are twice as efficient.' }, v), 5000)
+})
+
+test('mouse and cursors doubling sums cursor building production and click CpS', () => {
+    // 100 cursors at 0.5 CpS = 50 CpS from the building line, plus 660 clickCps
+    const clicky = view({ clicksPerSecond: 3.3, clickCps: 660 })
+    assert.equal(
+        S.upgradeDeltaCps({ description: 'The mouse and cursors are twice as efficient.' }, clicky),
+        710
+    )
+    // when idle (clickCps is 0), the cursor building contribution is still counted
+    const idle = view({ clicksPerSecond: 0, clickCps: 0 })
+    assert.equal(
+        S.upgradeDeltaCps({ description: 'The mouse and cursors are twice as efficient.' }, idle),
+        50
+    )
+})
+
+test('grandma synergy upgrades include both grandma doubling and target building bonus', () => {
+    // 50 grandmas at 4 CpS = 200; 24 farms at 20 CpS = 480, +1% per grandma (+50%) = 240
+    const delta = S.upgradeDeltaCps(
+        { description: 'Grandmas are twice as efficient. Farms gain +1% CpS per grandma.' },
+        view()
+    )
+    assert.equal(delta, 440)
+})

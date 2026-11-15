@@ -151,9 +151,9 @@
 
         // setting up an empty pantheon is what the three starting swaps are for
         if (s.current.every(god => god === -1) && s.swaps >= 3) {
-            lastActionAt = Date.now()
             for (let i = 0; i < 3; i++) {
-                await slot(s.desired[i], i)
+                if (!(await slot(s.desired[i], i))) break
+                lastActionAt = Date.now()
             }
             return
         }
@@ -162,9 +162,15 @@
         // only when the layout on offer is worth the swap
         if (s.swaps <= RESERVE_SWAPS) return
         if (!s.worthIt) return
-        lastActionAt = Date.now()
-        const fix = s.wrong[0]
-        await slot(s.desired[fix], fix)
+        const empty = s.wrong.find(i => s.current[i] === -1)
+        const directSwap = s.wrong.find(i => {
+            const other = s.current.indexOf(s.desired[i])
+            return other !== -1 && s.desired[other] === s.current[i]
+        })
+        const fix = empty ?? directSwap ?? s.wrong[0]
+        if (await slot(s.desired[fix], fix)) {
+            lastActionAt = Date.now()
+        }
     }
 
     function logOccasionally(s) {
