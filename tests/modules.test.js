@@ -553,7 +553,14 @@ test('resting value rises with the bank level', () => {
 })
 
 test('market upgrades the office & hires brokers when affordable and skips them when off or dear', async () => {
-    function officeBoot({ bank = 1e6, rawCps = 50, officeClass = '', brokerClass = '' } = {}) {
+    function officeBoot({
+        bank = 1e6,
+        cps = 25,
+        rawCps = 50,
+        tooltipCost = null,
+        officeClass = '',
+        brokerClass = ''
+    } = {}) {
         const h = boot({
             save: fx.save({
                 rawCps,
@@ -561,18 +568,36 @@ test('market upgrades the office & hires brokers when affordable and skips them 
                 amounts: { 5: 20 },
                 minigames: { 5: fx.market({ officeLevel: 1, brokers: 2 }) }
             }).raw,
-            game: { bank }
+            game: { bank, cps }
         })
         const office = new El('div', { id: 'bankOfficeUpgrade', class: officeClass })
+        const brokers = new El('div', { id: 'bankBrokers' })
         const broker = new El('div', { id: 'bankBrokersBuy', class: brokerClass })
+        brokers.append(broker)
+        if (tooltipCost !== null) {
+            brokers.setAttribute('onMouseOver', 'Game.tooltip.draw(...)')
+            brokers.addEventListener('mouseover', () => {
+                const tip = new El('div', { id: 'tooltipMarketBrokers' })
+                tip.append(
+                    new El('b', { class: 'hasTinyCookie green', text: '20 minutes' }),
+                    new El('b', {
+                        class: 'hasTinyCookie green',
+                        text: `${tooltipCost.toLocaleString('en-US')} cookies`
+                    })
+                )
+                h.game.tooltip.children = []
+                h.game.tooltip.text = ''
+                h.game.tooltip.append(tip)
+            })
+        }
         office.addEventListener('click', () => h.game.state.log.push('upgraded office'))
         broker.addEventListener('click', () => h.game.state.log.push('hired broker'))
-        h.game.doc.body.append(office, broker)
+        h.game.doc.body.append(office, brokers)
         return h
     }
 
     // broker costs 50 * 1200 = 60,000 <= 10% of 1,000,000 (100,000)
-    const affordable = officeBoot()
+    const affordable = officeBoot({ tooltipCost: 60000 })
     await affordable.A.registry.get('market').tick()
     assert.deepEqual(affordable.game.state.log, ['upgraded office', 'hired broker'])
 
@@ -585,6 +610,21 @@ test('market upgrades the office & hires brokers when affordable and skips them 
     const dear = officeBoot({ rawCps: 500, officeClass: 'bankButtonOff' })
     await dear.A.registry.get('market').tick()
     assert.deepEqual(dear.game.state.log, [])
+
+    // stale saved rawCps (50) lags live CpS (750 -> 900,000 > 10% of 1,000,000)
+    const staleLiveCps = officeBoot({ rawCps: 50, cps: 750, officeClass: 'bankButtonOff' })
+    await staleLiveCps.A.registry.get('market').tick()
+    assert.deepEqual(staleLiveCps.game.state.log, [])
+
+    // stale saved rawCps (50) and low current CpS (25), but broker tooltip shows 900,000
+    const staleTooltip = officeBoot({
+        rawCps: 50,
+        cps: 25,
+        tooltipCost: 900000,
+        officeClass: 'bankButtonOff'
+    })
+    await staleTooltip.A.registry.get('market').tick()
+    assert.deepEqual(staleTooltip.game.state.log, [])
 })
 
 //! Scheduler
