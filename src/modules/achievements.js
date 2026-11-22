@@ -45,7 +45,7 @@
     // unlocks at 50 clicks in a single session (Game.TickerClicks is not saved).
     // Stopping there matters: every manual click resets Game.TickerAge, which
     // suppresses the natural rotations that Fortune Cookies only spawn on.
-    const TABLOID_ADDICTION_ID = 247
+    const TABLOID_ADDICTION_ID = 243
     const TICKER_TARGET = 50
     const TICKER_PER_TICK = 6
 
@@ -59,6 +59,7 @@
 
     let pending = []
     let sessionTickerClicks = 0
+    let tickerCompletionRevision = null
 
     function attempts(name) {
         return store.get('attempts:' + name, 0)
@@ -432,20 +433,28 @@
     // Game.TickerClicks is an in-memory counter that resets to 0 on every page
     // reload, while Tabloid addiction (id 247) requires 50 clicks in one session.
     // If a previous session stopped before 50 and the save still lacks achievement
-    // 247, persisted tickerClicks alone cannot retire ticker clicking.
+    // 243, persisted tickerClicks alone cannot retire ticker clicking.
     function hasTabloidAddiction() {
-        if (sessionTickerClicks >= TICKER_TARGET || store.get('tabloidAddictionDone', false) === true) {
-            return true
-        }
         const s = save.get()
         if (s.ok && Array.isArray(s.achievements) && s.achievements.length > TABLOID_ADDICTION_ID) {
             if (s.achievements[TABLOID_ADDICTION_ID]) {
                 store.set('tabloidAddictionDone', true)
                 return true
             }
-            return false
+            // Extension storage can be newer than a reloaded game save, or an
+            // imported backup can remove a previously confirmed achievement.
+            // Only this document's observations may bridge the autosave delay.
+            if (store.get('tabloidAddictionDone', false)) store.forget('tabloidAddictionDone')
+            if (
+                tickerCompletionRevision !== null &&
+                save.stats().revision !== tickerCompletionRevision
+            ) {
+                sessionTickerClicks = 0
+                tickerCompletionRevision = null
+            }
+            return sessionTickerClicks >= TICKER_TARGET
         }
-        return store.get('tickerClicks', 0) >= TICKER_TARGET
+        return sessionTickerClicks >= TICKER_TARGET || store.get('tickerClicks', 0) >= TICKER_TARGET
     }
 
     //* clickTicker
@@ -487,7 +496,7 @@
                 sessionTickerClicks++
                 store.set('tickerClicks', store.get('tickerClicks', 0) + 1)
                 if (sessionTickerClicks >= TICKER_TARGET) {
-                    store.set('tabloidAddictionDone', true)
+                    tickerCompletionRevision = save.stats().revision
                 }
             }
             if (fortune && hasFortune()) break
@@ -523,6 +532,7 @@
         reset: () => {
             pending = []
             sessionTickerClicks = 0
+            tickerCompletionRevision = null
             retryAt.clear()
             setup()
         },

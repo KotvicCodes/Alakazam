@@ -1066,13 +1066,15 @@ test('ticker clicking stops at 50 for Tabloid addiction, but still claims Fortun
 
 test('persisted tickerClicks from an earlier reload do not stop before Tabloid addiction unlocks', async () => {
     // Game.TickerClicks resets to 0 on every reload and is not stored in the save.
-    // If 49 clicks were recorded before a reload and save achievement 247 is still
+    // If 49 clicks were recorded before a reload and save achievement 243 is still
     // locked, clicking must not stop after 1 click in the new session.
     const h = boot({
-        save: fx.save({ achievementBits: '0'.repeat(300) }).raw,
+        localStorage: fx.storage({
+            CookieClickerGame: fx.save({ achievementBits: '0'.repeat(300) }).raw
+        }),
         disk: { 'legacy:t': { tickerClicks: 49 } }
     })
-    assert.equal(h.A.save.get().achievements[247], false)
+    assert.equal(h.A.save.get().achievements[243], false)
 
     const d = h.game.doc
     const comments = new El('div', { id: 'comments' })
@@ -1102,11 +1104,52 @@ test('persisted tickerClicks from an earlier reload do not stop before Tabloid a
         await h.A.achievements.clickTicker()
     }
     assert.equal(sessionClicks, 50, 'stops once 50 clicks are registered in the current session')
-    assert.equal(h.A.store.get('tabloidAddictionDone', false), true)
+    assert.equal(
+        h.A.store.get('tabloidAddictionDone', false),
+        false,
+        'inferred completion stays in memory'
+    )
     assert.equal(h.A.achievements.hasTabloidAddiction(), true)
 
     await h.A.achievements.clickTicker()
     assert.equal(sessionClicks, 50, 'does not click further after 50 session clicks')
+
+    await h.A.store.flush()
+    const reloaded = boot({
+        save: fx.save({ achievementBits: '0'.repeat(300) }).raw,
+        disk: h.disk
+    })
+    const headline = new El('div', { id: 'commentsText1', text: 'reloaded news' })
+    let reloadClicks = 0
+    headline.addEventListener('click', () => (headline.innerText = 'news ' + ++reloadClicks))
+    reloaded.game.doc.body.append(headline)
+    await reloaded.A.store.ready('t')
+    await reloaded.A.achievements.clickTicker()
+    assert.equal(reloadClicks, 6, 'reload before the game autosaves the achievement retries it')
+
+    // A backup imported into this document must also invalidate inferred or
+    // persisted completion when its newer save revision lacks the achievement.
+    h.A.save.get().achievements[243] = true
+    assert.equal(h.A.achievements.hasTabloidAddiction(), true)
+    assert.equal(h.A.store.get('tabloidAddictionDone', false), true)
+    h.ctx.localStorage.setItem(
+        'CookieClickerGame',
+        fx.save({ achievementBits: '0'.repeat(300), lastDate: Date.now() + 1 }).raw
+    )
+    await h.A.registry.get('saveWatch').tick()
+    await h.A.achievements.clickTicker()
+    assert.equal(sessionClicks, 56, 'an older backup with the achievement missing resumes clicking')
+    assert.equal(h.A.store.get('tabloidAddictionDone', false), false)
+})
+
+test('a persisted Tabloid completion flag cannot override a missing save achievement', async () => {
+    const h = boot({
+        save: fx.save({ achievementBits: '0'.repeat(300) }).raw,
+        disk: { 'legacy:t': { tickerClicks: 50, tabloidAddictionDone: true } }
+    })
+    await h.A.store.ready('t')
+    assert.equal(h.A.achievements.hasTabloidAddiction(), false)
+    assert.equal(h.A.store.get('tabloidAddictionDone', false), false)
 })
 
 test('justWrong sells a grandma only when at least two are owned and no ascension is running', async () => {
