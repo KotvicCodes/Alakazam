@@ -228,11 +228,23 @@ test('post-plan spending unlocks level 10 achievements, then Cursor 20, then top
         }
     )
 
-    // once every owned building is at least level 10, level Cursor up to 20 for Aura gloves
+    // Aura gloves alone stops improving clicks at Cursor 10. Until Luminous
+    // gloves is bought, surplus lumps should continue helping the top producer.
     for (const id of [1, 2, 5, 6, 7]) {
         buildings[id].level = 10
         h.game.levelBadges[id].innerText = 'lvl 10'
     }
+    const upgrades = h.A.save.get().upgrades
+    upgrades[719] = { id: 719, bought: 1 }
+    for (const luminous of [undefined, { id: 720, unlocked: 1, bought: 0 }]) {
+        upgrades[720] = luminous
+        const spend = h.A.lumps.nextSpend(113)
+        assert.equal(spend.index, 7)
+        assert.equal(spend.why, 'highest producing building')
+        assert.equal(spend.cost, 11)
+    }
+    // Once both gloves are owned, Cursor 13-20 adds the intended click bonus.
+    upgrades[720] = { id: 720, bought: 1 }
     assert.equal(h.A.lumps.nextSpend(112), null)
     assert.deepEqual(
         { ...h.A.lumps.nextSpend(113) },
@@ -241,7 +253,7 @@ test('post-plan spending unlocks level 10 achievements, then Cursor 20, then top
             name: 'Cursor',
             cost: 13,
             reserve: 100,
-            why: 'Aura gloves click bonus'
+            why: 'Luminous gloves click bonus'
         }
     )
 

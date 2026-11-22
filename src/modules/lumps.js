@@ -73,6 +73,9 @@
     // below this, lumps are spent; at or above it they are banked, because holding
     // 100 is itself worth 1% production per lump
     const BANK_TARGET = 100
+    // Cookie Clicker 2.058: Aura gloves caps at Cursor 10 until Luminous gloves.
+    const AURA_GLOVES_ID = 719
+    const LUMINOUS_GLOVES_ID = 720
 
     let lastHarvestAt = 0
     const pending = []
@@ -287,17 +290,21 @@
 
         // plan complete: keep a hundred banked for the production bonus, then
         // bring every owned building to level 10 for its achievement, take
-        // cursors to 20 for Aura gloves, and put the rest into top production
+        // cursors to 20 when the gloves support it, then favor top production
         if (lumps <= BANK_TARGET) return null
         const owned = buildings.filter(b => b.amount > 0).sort((a, b) => b.totalCookies - a.totalCookies)
         if (!owned.length) return null
         const under10 = owned.find(b => b.level < 10)
-        const cursor20 = buildings[0]?.amount > 0 && buildings[0].level < 20 ? buildings[0] : null
+        const upgrades = save.get().upgrades
+        const extendedGloves =
+            upgrades?.[AURA_GLOVES_ID]?.bought && upgrades?.[LUMINOUS_GLOVES_ID]?.bought
+        const cursor20 =
+            extendedGloves && buildings[0]?.amount > 0 && buildings[0].level < 20 ? buildings[0] : null
         const best = under10 || cursor20 || owned[0]
         const why = under10
             ? 'level 10 achievement'
             : cursor20
-              ? 'Aura gloves click bonus'
+              ? 'Luminous gloves click bonus'
               : 'highest producing building'
         const cost = best.level + 1
         if (cost > lumps - BANK_TARGET) return null
