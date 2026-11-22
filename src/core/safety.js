@@ -16,7 +16,7 @@
     const expected = {
         achievements: ['NameBakery', 'ExportSave'],
         clones: ['CustomizeYou', 'ExportSave'],
-        gifts: ['GiftSend', 'GiftSendReady', 'GiftRedeem'],
+        gifts: ['GiftSend', 'GiftSendReady', 'GiftRedeem', 'GiftRedeemed'],
         ascend: ['Ascend', 'Reincarnate', 'PickPermaUpgrade', 'ExportSave'],
         dragon: ['PickDragonAura'],
         lumps: ['SpendLump']
@@ -213,7 +213,7 @@
                     // Gifts dismiss completed Wrap results only after persisting
                     // their code. Failed storage must leave that result visible.
                     if (name === 'GiftSendReady') return
-                    const option = ['CustomizeYou', 'ExportSave'].includes(name)
+                    const option = ['CustomizeYou', 'ExportSave', 'GiftRedeemed'].includes(name)
                         ? 0
                         : name === 'NameBakery'
                           ? 2
@@ -252,8 +252,8 @@
         return resource ? revisions.get(resource) || 0 : userRevision
     }
 
-    // LoadSave refreshes this label with textContent, replacing its text node
-    // even when the imported name is unchanged. Check the node synchronously:
+    // ImportSaveCode resets the bakery label before LoadSave restores its name,
+    // replacing its text node even for the same run. Check it synchronously:
     // FileReader.onload can finish long after selection and any intervening
     // recovery. Prompt revisions alone cannot prove cosmetics are still live.
     function cosmeticCheck() {

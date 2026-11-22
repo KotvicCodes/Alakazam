@@ -24,6 +24,11 @@
     const MAX_CLICKS = 300
 
     const DONE_KEY = 'clonesStyled'
+    const DECLINED_KEY = 'clonesStyleDeclined'
+    // Cookie Clicker 2.058; browser coverage checks the game's own definition.
+    const LIKENESS_ID = 597
+    let earnedHere = null
+    let completedHere = null
 
     //* THEIRS_KEY
     // the live snapshot for inspection; the recovery journal owns restoration.
@@ -67,7 +72,28 @@
     }
 
     function done() {
-        return store.get(DONE_KEY, false) === true
+        if (store.get(DECLINED_KEY, false)) return true
+        const saved = save.get()
+        const hasBit = saved.ok && saved.achievements?.length > LIKENESS_ID
+        if (hasBit && saved.achievements[LIKENESS_ID]) {
+            if (!store.get(DONE_KEY, false)) store.set(DONE_KEY, true)
+            return true
+        }
+        if (hasBit && store.get(DONE_KEY, false)) store.forget(DONE_KEY)
+        if (completedHere?.runId === identity.current().runId && completedHere.unchanged()) return true
+        return !hasBit && store.get(DONE_KEY, false) === true
+    }
+
+    function completed() {
+        completedHere = {
+            runId: identity.current().runId,
+            unchanged: safety.cosmeticCheck()
+        }
+        // Local observations bridge autosave only in this document. Persist
+        // completion once the actual achievement is present in the game save.
+        const saved = save.get()
+        if (!saved.ok || saved.achievements?.length <= LIKENESS_ID || saved.achievements[LIKENESS_ID])
+            store.set(DONE_KEY, true)
     }
 
     //* ownsAYou
@@ -192,6 +218,7 @@
             return false
         const superseded = () => {
             store.forget(RECOVERY_KEY)
+            store.set(DECLINED_KEY, true)
             store.set(DONE_KEY, true)
             if (safety.ownsPrompt('clones', 'CustomizeYou')) {
                 ctx.input('simulateClick', el('promptOption0'))
@@ -221,7 +248,7 @@
         }
         store.set(RECOVERY_KEY, restoredHere.mark)
         forgetIfSaved(mark)
-        if (mark.earned) store.set(DONE_KEY, true)
+        if (mark.earned && earnedHere?.runId === runId && earnedHere.unchanged()) completed()
         ctx.input('simulateClick', el('promptOption0'))
         return true
     }
@@ -282,6 +309,7 @@
                 if (!(await move(FREE_GENE, 1, ctx, mark, who.runId, unchanged))) return
                 if (!(await move(FREE_GENE, -1, ctx, mark, who.runId, unchanged))) return
                 mark.earned = true
+                earnedHere = { runId: who.runId, unchanged: safety.cosmeticCheck() }
                 store.set(RECOVERY_KEY, { ...mark })
             } finally {
                 await ctx.cleanup(() => restore(mark, ctx, who.runId, unchanged))

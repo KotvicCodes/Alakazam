@@ -341,9 +341,14 @@
             const disabled = !button || String(button.className || '').indexOf('disabled') !== -1
             if (!disabled) {
                 simulateClick(button)
+                if (!promptIs('GiftRedeemed') || !safety.ownsPrompt('gifts', 'GiftRedeemed'))
+                    return false
                 store.set(REDEEMED_KEY, Date.now())
                 store.forget(CODE_KEY)
                 noteRedeemed()
+                // The real game opens a result modal with a single Done option.
+                // Dismiss only our exact owned result so other modules can resume.
+                simulateClick(el('promptOption0'))
                 return false
             }
 
