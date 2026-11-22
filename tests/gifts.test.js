@@ -177,7 +177,16 @@ test('the whole redeem happens in one tick, not one click a minute', async () =>
     const h = await heldBoot({ validCode: 'TESTCODE123456' })
     await h.A.registry.get('gifts').tick()
     assert.ok(h.game.state.log.indexOf('redeemed a gift') !== -1)
+    assert.ok(h.game.state.log.includes('prompt GiftRedeemed'), 'models the real result modal')
+    assert.equal(h.A.safety.prompt(), null, 'Done dismisses the owned result')
     assert.equal(h.game.doc.getElementById('prefsButton').classList.contains('selected'), false)
+    const cookie = h.game.doc.getElementById('bigCookie')
+    const before = cookie.events.filter(type => type === 'click').length
+    await h.A.registry.get('autoclick').tick()
+    assert.ok(
+        cookie.events.filter(type => type === 'click').length > before,
+        'the result does not block later automation'
+    )
 })
 
 test('the whole wrap happens in one tick too', async () => {

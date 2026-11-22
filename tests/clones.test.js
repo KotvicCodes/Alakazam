@@ -102,6 +102,99 @@ test('nothing happens until a You is owned', async () => {
     assert.deepEqual(state.genes, [0, 1, 0, 0, 0, 0, 0])
 })
 
+test('reload before autosave does not suppress a missing likeness achievement', async () => {
+    const genes = [4, 5, 6, 1, 2, 3, 4]
+    const raw = fx.save({
+        amounts: { 19: 1 },
+        appearance: genes.join(','),
+        achievementBits: '0'.repeat(650)
+    }).raw
+    const first = boot({ save: raw, game: { genes: genes.slice() } })
+    await first.A.store.ready(first.A.identity.current())
+    await first.A.registry.get('clones').tick()
+    assert.equal(first.game.state.likenessWon, true)
+    assert.equal(first.A.store.get('clonesStyled', false), false)
+    const actions = first.game.state.log.length
+    await first.A.registry.get('clones').tick()
+    assert.equal(first.game.state.log.length, actions, 'unsaved completion is remembered locally')
+    await first.A.store.flush()
+
+    const reloaded = boot({ save: raw, disk: first.disk, game: { genes: genes.slice() } })
+    await reloaded.A.store.ready(reloaded.A.identity.current())
+    await reloaded.A.registry.get('clones').tick()
+    assert.equal(reloaded.game.state.likenessWon, true)
+    assert.deepEqual(reloaded.game.state.genes, genes)
+})
+
+test('recovering an earned journal after reload does not claim an unsaved achievement', async () => {
+    const genes = [4, 5, 6, 1, 2, 3, 4]
+    const raw = fx.save({
+        amounts: { 19: 1 },
+        appearance: genes.join(','),
+        achievementBits: '0'.repeat(650)
+    }).raw
+    const localStorage = fx.storage({ CookieClickerGame: raw })
+    const first = boot({ localStorage, game: { genes: genes.slice() } })
+    await first.A.store.ready(first.A.identity.current())
+    const flush = first.A.store.flush
+    let writes = 0
+    first.A.store.flush = async () => {
+        const ok = await flush()
+        if (++writes === 4) {
+            const sections = first.A.savefile.decode(raw).split('|')
+            const run = sections[2].split(';')
+            run[5] = first.game.state.genes.join(',')
+            sections[2] = run.join(';')
+            localStorage.setItem('CookieClickerGame', fx.encode(sections.join('|')))
+        }
+        return ok
+    }
+    await first.A.registry.get('clones').tick()
+    await flush()
+    assert.equal(first.A.store.get('cloneRecovery').earned, true)
+    assert.equal(first.game.state.likenessWon, true)
+    const interrupted = first.A.savefile.read().run.appearance
+    const reloaded = boot({
+        localStorage,
+        disk: first.disk,
+        game: { genes: Array.from(interrupted) }
+    })
+    await reloaded.A.store.ready(reloaded.A.identity.current())
+    await reloaded.A.clones.recover()
+    assert.deepEqual(reloaded.game.state.genes, genes)
+    assert.equal(reloaded.game.state.likenessWon, false, 'restoration alone earns no achievement')
+    localStorage.setItem('CookieClickerGame', raw)
+    await reloaded.A.registry.get('saveWatch').tick()
+    await reloaded.A.registry.get('clones').tick()
+    await reloaded.A.registry.get('clones').tick()
+    assert.equal(reloaded.game.state.likenessWon, true, 'retry after saving the restored look')
+    assert.deepEqual(reloaded.game.state.genes, genes)
+})
+
+test('a saved likeness achievement overrides legacy completion when a backup loses it', async () => {
+    const genes = [4, 5, 6, 1, 2, 3, 4]
+    const missing = fx.save({
+        amounts: { 19: 1 },
+        appearance: genes.join(','),
+        achievementBits: '0'.repeat(650)
+    }).raw
+    const complete = fx.save({
+        amounts: { 19: 1 },
+        appearance: genes.join(','),
+        achievementBits: '0'.repeat(597) + '1' + '0'.repeat(52)
+    }).raw
+    const localStorage = fx.storage({ CookieClickerGame: complete })
+    const h = boot({ localStorage, game: { genes: genes.slice() } })
+    await h.A.store.ready(h.A.identity.current())
+    await h.A.registry.get('clones').tick()
+    assert.equal(h.game.state.likenessWon, false, 'saved award needs no arrow clicks')
+    assert.equal(h.A.store.get('clonesStyled', false), true)
+    localStorage.setItem('CookieClickerGame', missing)
+    await h.A.registry.get('saveWatch').tick()
+    await h.A.registry.get('clones').tick()
+    assert.equal(h.game.state.likenessWon, true, 'missing award in an older backup is retried')
+})
+
 test('it runs once and then leaves the clones alone', async () => {
     const h = boot({ save: cloneSave() })
     await styleClones(h)

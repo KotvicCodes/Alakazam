@@ -5,6 +5,13 @@
     // its lease, including while a module is asleep waiting for the game to draw
     const { store } = window.Alakazam
     let owner = null
+    const heldModifiers = new Set()
+    const modifier = event =>
+        event.key === 'Shift' || event.keyCode === 16
+            ? 'Shift'
+            : event.key === 'Control' || event.keyCode === 17
+              ? 'Control'
+              : null
 
     function cancel() {
         if (owner) owner.cancelled = true
@@ -15,12 +22,32 @@
             type,
             event => {
                 if (!event.isTrusted) return
+                if (type === 'keydown') {
+                    const key = modifier(event)
+                    if (key) heldModifiers.add(key)
+                    // Cookie Clicker clears its key state on Tab as well.
+                    if (event.key === 'Tab' || event.keyCode === 9) heldModifiers.clear()
+                }
                 cancel()
                 if (owner && /^storeBulk/.test(event.target?.id || '')) owner.userControls = true
             },
             true
         )
     }
+    document.addEventListener(
+        'keyup',
+        event => {
+            if (event.isTrusted) heldModifiers.delete(modifier(event))
+        },
+        true
+    )
+    // Match the game's reset when a tab becomes hidden/visible. A plain blur
+    // does not reset Game.keys, so it cannot safely authorize another purchase.
+    window.addEventListener('visibilitychange', event => {
+        if (!event.isTrusted) return
+        heldModifiers.clear()
+        cancel()
+    })
     store.subscribe(() => {
         if (owner && !store.moduleEnabled(owner.setting)) cancel()
     })
@@ -30,6 +57,7 @@
         const ctx = context || window.Alakazam.safety.scope(moduleName)
         if (
             owner ||
+            heldModifiers.size > 0 ||
             !ctx.active ||
             !store.moduleEnabled(setting) ||
             window.Alakazam.scheduler.isPaused()
@@ -46,6 +74,7 @@
                 return (
                     owner === lease &&
                     !lease.cancelled &&
+                    heldModifiers.size === 0 &&
                     ctx.active &&
                     resource.valid() &&
                     store.moduleEnabled(setting) &&

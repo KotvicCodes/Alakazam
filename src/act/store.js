@@ -102,16 +102,28 @@
 
     function observeRedraw(mode, amount) {
         clearRedraw()
-        const pending = { before: prices(), mode, amount, drawn: false }
+        const pending = {
+            before: prices(),
+            mode,
+            amount,
+            drawn: false,
+            names: new Set(document.querySelectorAll('.product.unlocked .productName'))
+        }
         redraw = pending
-        // text assignments may redraw the same price (for example when a
-        // cancelled switch is restored before the next frame)
+        // Identical textContent assignments can produce no mutation in Chromium.
+        // The game's synchronous building rebuild also replaces productName's
+        // innerHTML immediately before writing its price, so that replacement
+        // witnesses a completed redraw even when every price stays identical.
         if (window.MutationObserver) {
             pending.observer = new MutationObserver(records => {
                 pending.drawn ||= records.some(record => {
                     const node =
                         record.target.nodeType === 3 ? record.target.parentElement : record.target
-                    return node?.classList?.contains('price')
+                    if (node?.classList?.contains('price')) return true
+                    // A single building can rebuild independently. With unchanged
+                    // prices, require every visible product's name replacement
+                    // before treating the entire store refresh as complete.
+                    return pending.names.delete(node) && pending.names.size === 0
                 })
             })
             const products = el('products')

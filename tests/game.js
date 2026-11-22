@@ -613,7 +613,7 @@ function build(opts = {}) {
                     if (button.classList.contains('disabled')) return
                     state.log.push('redeemed a gift')
                     gainBuff('Gifted out', 0)
-                    closePrompt()
+                    prompt('GiftRedeemed', [['Done']])
                 })
                 inner.append(input, button)
             })
