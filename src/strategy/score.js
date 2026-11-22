@@ -93,16 +93,24 @@
     // falls back to the pessimistic prior above rather than being guessed at.
 
     //* normaliseName
-    // tooltips say "Cursors" and "Wizard towers"; the store says "Cursor" and
-    // "Wizard tower". compare on a lowercase, de-pluralised form.
+    // tooltips say "Cursors", "Factories" and "Clones"; the store says "Cursor",
+    // "Factory" and "You". compare on a lowercase, de-pluralised form.
     function normaliseName(name) {
         const n = (name || '').trim().toLowerCase()
-        return n.endsWith('s') ? n.slice(0, -1) : n
+        const singular = n.endsWith('ies') ? n.slice(0, -3) + 'y' : n.endsWith('s') ? n.slice(0, -1) : n
+        return singular === 'clone' ? 'you' : singular
     }
 
     function findBuilding(buildings, name) {
         const wanted = normaliseName(name)
-        return buildings.find(b => normaliseName(b.name) === wanted) || null
+        // The catalog includes the tooltip heading and tags before the effect.
+        // Only the building immediately before "are"/"gain" names the target.
+        return (
+            buildings.find(b => {
+                const key = normaliseName(b.name)
+                return wanted === key || wanted.endsWith(' ' + key)
+            }) || null
+        )
     }
 
     //* buildingContribution
@@ -121,6 +129,14 @@
         const text = (upgrade.description || '').replace(/\s+/g, ' ')
         if (!text) return NaN
 
+        // This doubles the base mouse/cursor terms before additive finger and
+        // clicking bonuses. The measured totals do not separate those terms,
+        // and their size cannot establish which bonuses are owned. Keep the
+        // gain unknown until those base components can be measured separately.
+        if (/mouse and cursors are twice as efficient/i.test(text)) {
+            return NaN
+        }
+
         // "Cursors are twice as efficient." / "... are 4 times as efficient."
         let m = /([\w' ]+?) are (twice|thrice|[\d.]+ times) as efficient/i.exec(text)
         if (m) {
@@ -133,7 +149,27 @@
                       : parseFloat(m[2])
             const contribution = building ? buildingContribution(building) : NaN
             if (Number.isFinite(contribution) && Number.isFinite(factor)) {
-                return contribution * (factor - 1)
+                let delta = contribution * (factor - 1)
+                // grandma synergies also boost another building line by +1% per N grandmas
+                const syn =
+                    /([\w' ]+?) gain \+?([\d.]+)% (?:cps|cookies per second) per (?:(\d+) )?grandmas?/i.exec(
+                        text
+                    )
+                if (syn && building) {
+                    const target = findBuilding(view.buildings, syn[1])
+                    const targetCps = target ? buildingContribution(target) : NaN
+                    const pct = parseFloat(syn[2])
+                    const per = syn[3] ? parseFloat(syn[3]) : 1
+                    if (
+                        Number.isFinite(targetCps) &&
+                        Number.isFinite(building.owned) &&
+                        Number.isFinite(pct) &&
+                        per > 0
+                    ) {
+                        delta += targetCps * (pct / 100) * (building.owned / per)
+                    }
+                }
+                return delta
             }
         }
 
@@ -184,12 +220,6 @@
                     .filter(b => normaliseName(b.name) !== 'cursor')
                     .reduce((n, b) => n + (Number.isFinite(b.owned) ? b.owned : 0), 0)
                 return rate * parseFloat(m[1]) * nonCursor
-            }
-
-            // "The mouse and cursors are twice as efficient." applies to clicking,
-            // not to the cursor building line
-            if (/mouse and cursors are twice as efficient/i.test(text)) {
-                return Number.isFinite(view.clickCps) ? view.clickCps : NaN
             }
         }
 
