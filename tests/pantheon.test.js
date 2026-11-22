@@ -10,6 +10,7 @@ const DOTJEIESS = 5
 const MURIDAL = 6
 const JEREMY = 7
 const MOKALSIUM = 8
+const SKRUUIA = 9
 
 const IDLE_RUN = {
     cps: 1e12,
@@ -24,7 +25,8 @@ const IDLE_RUN = {
 function pantheonBoot(opts = {}) {
     return boot({
         save: fx.save({
-            prestige: 1000,
+            prestige: opts.prestige === undefined ? 1000 : opts.prestige,
+            wrinklers: opts.wrinklers || 0,
             dragonAura: opts.dragonAura || 0,
             levels: { 6: opts.templeLevel === undefined ? 1 : opts.templeLevel },
             amounts: { 6: 100 },
@@ -193,4 +195,95 @@ test('explain prints the ranking and hands back the state', async () => {
     const out = h.A.pantheon.explain()
     assert.ok(out)
     assert.equal(out.current[0], MURIDAL)
+})
+
+test('failed slot when temple DOM is missing does not start the settle cooldown', async () => {
+    const { El } = require('./dom')
+    const h = await ready(pantheonBoot({ slots: [-1, -1, -1], swaps: 3 }))
+    const mod = h.A.registry.get('pantheon')
+
+    // first tick has no temple DOM elements, so slot() fails and must not lock out retries
+    await mod.tick()
+
+    const doc = h.game.doc
+    const desired = h.A.pantheon.state().desired
+    for (const id of desired) {
+        doc.body.append(new El('div', { id: 'templeGodDrag' + id }))
+    }
+    const sockets = [0, 1, 2].map(i => new El('div', { id: 'templeSlot' + i }))
+    doc.body.append(...sockets)
+
+    // immediate retry succeeds without waiting 90s for SETTLE_MS
+    await mod.tick()
+    for (const socket of sockets) {
+        assert.ok(socket.events.includes('mouseup'))
+    }
+})
+
+test('correcting a layout prefers filling an empty wrong slot first', async () => {
+    const { El } = require('./dom')
+    // with prestige 0 and 10 wrinklers, desired layout is [JEREMY, DOTJEIESS, SKRUUIA];
+    // filling empty slot 1 with DOTJEIESS (+5% CpS while keeping SKRUUIA's +8.25% in
+    // diamond) beats replacing SKRUUIA in slot 0 with JEREMY (+1.75% net CpS)
+    const h = await settle(
+        await ready(
+            pantheonBoot({
+                prestige: 0,
+                wrinklers: 10,
+                slots: [SKRUUIA, -1, MOKALSIUM],
+                swaps: 3
+            })
+        )
+    )
+    const doc = h.game.doc
+    for (const id of [JEREMY, SKRUUIA, DOTJEIESS, MOKALSIUM]) {
+        doc.body.append(new El('div', { id: 'templeGodDrag' + id }))
+    }
+    const sockets = [0, 1, 2].map(i => new El('div', { id: 'templeSlot' + i }))
+    doc.body.append(...sockets)
+
+    await h.A.registry.get('pantheon').tick()
+    assert.equal(sockets[0].events.includes('mouseup'), false)
+    assert.equal(sockets[1].events.includes('mouseup'), true)
+})
+
+test('correcting a layout does not waste the last usable swap on a zero-gain empty slot', async () => {
+    const { El } = require('./dom')
+    // desired idle layout is [JEREMY, MOKALSIUM, GODZAMOK]; with swaps === 2 only one
+    // swap can be spent before hitting RESERVE_SWAPS, so tick must replace MURIDAL in
+    // diamond with JEREMY (+13% CpS) rather than slotting zero-gain GODZAMOK into empty jade
+    const h = await settle(await ready(pantheonBoot({ slots: [MURIDAL, MOKALSIUM, -1], swaps: 2 })))
+    const doc = h.game.doc
+    const drags = {}
+    for (const id of [JEREMY, MOKALSIUM, GODZAMOK, MURIDAL]) {
+        drags[id] = new El('div', { id: 'templeGodDrag' + id })
+        doc.body.append(drags[id])
+    }
+    const sockets = [0, 1, 2].map(i => new El('div', { id: 'templeSlot' + i }))
+    doc.body.append(...sockets)
+
+    await h.A.registry.get('pantheon').tick()
+    assert.equal(drags[JEREMY].events.includes('mousedown'), true)
+    assert.equal(sockets[0].events.includes('mouseup'), true)
+    assert.equal(sockets[2].events.includes('mouseup'), false)
+})
+
+test('correcting a layout prefers a two-for-one direct swap over a zero-gain empty slot', async () => {
+    const { El } = require('./dom')
+    // desired is [JEREMY, MOKALSIUM, GODZAMOK]; dragging JEREMY into slot 0 swaps
+    // JEREMY and MOKALSIUM in one worship swap instead of spending it on zero-gain jade
+    const h = await settle(await ready(pantheonBoot({ slots: [MOKALSIUM, JEREMY, -1], swaps: 2 })))
+    const doc = h.game.doc
+    const drags = {}
+    for (const id of [JEREMY, MOKALSIUM, GODZAMOK]) {
+        drags[id] = new El('div', { id: 'templeGodDrag' + id })
+        doc.body.append(drags[id])
+    }
+    const sockets = [0, 1, 2].map(i => new El('div', { id: 'templeSlot' + i }))
+    doc.body.append(...sockets)
+
+    await h.A.registry.get('pantheon').tick()
+    assert.equal(drags[JEREMY].events.includes('mousedown'), true)
+    assert.equal(sockets[0].events.includes('mouseup'), true)
+    assert.equal(sockets[2].events.includes('mouseup'), false)
 })

@@ -117,6 +117,92 @@
         }
     }
 
+    //! Offices & Brokers
+
+    //* upgradeOffice
+    // cursor levels 2, 4, 8, 10 and 12 unlock the five office tiers, which expand
+    // warehouse capacity, reveal the three loan slots, and award Pyramid scheme at
+    // the Palace of Greed
+    function upgradeOffice(lease) {
+        const button = document.getElementById('bankOfficeUpgrade')
+        if (
+            !button ||
+            button.style.display === 'none' ||
+            button.classList.contains('bankButtonOff') ||
+            button.classList.contains('disabled') ||
+            (lease && !lease.valid())
+        )
+            return false
+        simulateClick(button)
+        console.log('Alakazam: upgraded stock market office')
+        return true
+    }
+
+    function brokerTooltipCost(tip) {
+        const brokerTip = document.getElementById('tooltipMarketBrokers')
+        if (brokerTip) {
+            const tags = brokerTip.querySelectorAll('.hasTinyCookie')
+            if (tags.length) {
+                const cost = firstNumberIn(tags[tags.length - 1].innerText)
+                if (Number.isFinite(cost)) return cost
+            }
+        }
+        const raw = `${tip?.text || ''}\n${document.getElementById('tooltip')?.innerHTML || ''}`
+        const match = raw.match(/cost you\s+(?:<[^>]*>\s*)*([^<\n]+)/i)
+        if (match) {
+            const cost = firstNumberIn(match[1])
+            if (Number.isFinite(cost)) return cost
+        }
+        if (Number.isFinite(tip?.price) && /broker/i.test(`${tip?.name || ''} ${raw}`)) {
+            return tip.price
+        }
+        return NaN
+    }
+
+    //* hireBroker
+    // each broker takes 5% off trading overhead multiplicatively and costs 20
+    // minutes of highest raw CpS
+    async function hireBroker(lease) {
+        const button = document.getElementById('bankBrokersBuy')
+        if (
+            !button ||
+            button.style.display === 'none' ||
+            button.classList.contains('bankButtonOff') ||
+            button.classList.contains('disabled') ||
+            (lease && !lease.valid())
+        )
+            return false
+        const scalars = save.get().scalars
+        const rawCps = scalars?.trusted ? scalars.cookiesPsRawHighest : NaN
+        const globals = window.Alakazam.live.readGlobals()
+        const liveCps =
+            !window.Alakazam.live.hasProductionBuff() && Number.isFinite(globals.cps) ? globals.cps : 0
+        const baseCost = Math.max(rawCps, liveCps) * 1200
+        if (!Number.isFinite(baseCost) || baseCost < 0 || baseCost > globals.cookies * 0.1) return false
+        const brokers = document.getElementById('bankBrokers')
+        const ctx = lease?.ctx || window.Alakazam.safety.scope('market')
+        const tip = await window.Alakazam.catalog.readTooltip(brokers || button, ctx)
+        if (!tip || (lease && !lease.valid())) return false
+        const tooltipCost = brokerTooltipCost(tip)
+        if (
+            brokers &&
+            (brokers.getAttribute('onmouseover') || brokers.getAttribute('onMouseOver')) &&
+            !Number.isFinite(tooltipCost)
+        )
+            return false
+        const cost = Number.isFinite(tooltipCost) ? Math.max(baseCost, tooltipCost) : baseCost
+        if (
+            button.style.display === 'none' ||
+            button.classList.contains('bankButtonOff') ||
+            button.classList.contains('disabled') ||
+            cost > window.Alakazam.live.readGlobals().cookies * 0.1
+        )
+            return false
+        simulateClick(button)
+        console.log('Alakazam: hired stock market broker')
+        return true
+    }
+
     //! Trading
 
     function candidate(good, selling, overhead) {
@@ -202,10 +288,14 @@
         }
 
         if (!s.trading) return
-        if (Date.now() - lastTradeAt < TRADE_COOLDOWN_MS) return
         const lease = window.Alakazam.transactions.acquire('marketTrading')
         if (!lease) return
         try {
+            if (!window.__alakazam?.ascend?.phase || window.__alakazam.ascend.phase === 'watching') {
+                upgradeOffice(lease)
+                await hireBroker(lease)
+            }
+            if (Date.now() - lastTradeAt < TRADE_COOLDOWN_MS) return
             await trade(s, lease)
         } finally {
             lease.release()
@@ -227,11 +317,20 @@
             window.__alakazam.market = {
                 office: s.officeLevel,
                 brokers: s.brokers,
+                profit: s.profit,
                 trading: false,
                 signals: s.goods.filter(g => g.signal !== 'hold').map(g => `${g.name} ${g.signal}`)
             }
         }
     })
 
-    window.Alakazam.market = { state, signalFor, restingValue, GOODS, MODES }
+    window.Alakazam.market = {
+        state,
+        signalFor,
+        restingValue,
+        upgradeOffice,
+        hireBroker,
+        GOODS,
+        MODES
+    }
 })()

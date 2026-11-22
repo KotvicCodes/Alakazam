@@ -138,6 +138,46 @@
         return ok
     }
 
+    //* afterSwap
+    // the layout a single worship swap produces when dragging `desired[slotIndex]`
+    // into `slotIndex`: if that spirit is already in another slot, the game swaps
+    // the two occupants; otherwise it replaces whatever was in `slotIndex`.
+    function afterSwap(current, desired, slotIndex) {
+        const next = current.slice()
+        const god = desired[slotIndex]
+        const other = next.indexOf(god)
+        if (other !== -1) next[other] = next[slotIndex]
+        next[slotIndex] = god
+        return next
+    }
+
+    //* pickFix
+    // choose which wrong slot to fix next by scoring the layout a single worship
+    // swap would leave behind. That keeps a scarce swap from going on a zero-gain
+    // filler slot ahead of a real upgrade, while breaking ties in favor of filling
+    // an empty slot or completing a direct two-for-one swap.
+    function pickFix(s) {
+        const inputs = scoringState()
+        const scorer = window.Alakazam.strategy.pantheon
+        const held = scorer.score(s.current, inputs).gain
+        const candidates = s.wrong.map(i => {
+            const other = s.current.indexOf(s.desired[i])
+            return {
+                slot: i,
+                gain: scorer.score(afterSwap(s.current, s.desired, i), inputs).gain - held,
+                empty: s.current[i] === -1,
+                directSwap: other !== -1 && s.desired[other] === s.current[i]
+            }
+        })
+        candidates.sort((a, b) => {
+            if (Math.abs(b.gain - a.gain) > 1e-9) return b.gain - a.gain
+            if (a.empty !== b.empty) return a.empty ? -1 : 1
+            if (a.directSwap !== b.directSwap) return a.directSwap ? -1 : 1
+            return a.slot - b.slot
+        })
+        return candidates[0].slot
+    }
+
     async function tick() {
         const s = state()
         if (!s) return
@@ -151,9 +191,9 @@
 
         // setting up an empty pantheon is what the three starting swaps are for
         if (s.current.every(god => god === -1) && s.swaps >= 3) {
-            lastActionAt = Date.now()
             for (let i = 0; i < 3; i++) {
-                await slot(s.desired[i], i)
+                if (!(await slot(s.desired[i], i))) break
+                lastActionAt = Date.now()
             }
             return
         }
@@ -162,9 +202,10 @@
         // only when the layout on offer is worth the swap
         if (s.swaps <= RESERVE_SWAPS) return
         if (!s.worthIt) return
-        lastActionAt = Date.now()
-        const fix = s.wrong[0]
-        await slot(s.desired[fix], fix)
+        const fix = pickFix(s)
+        if (await slot(s.desired[fix], fix)) {
+            lastActionAt = Date.now()
+        }
     }
 
     function logOccasionally(s) {

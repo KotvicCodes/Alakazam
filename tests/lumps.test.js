@@ -191,3 +191,84 @@ test('a refused confirmation is not treated as an observed spend', async () => {
     assert.equal(h.game.state.lumps, 100)
     assert.equal(h.game.state.levels[7], 3)
 })
+
+test('post-plan spending unlocks level 10 achievements, then Cursor 20, then top producer', async () => {
+    const { h } = await wizard()
+    const buildings = h.A.save.get().buildings
+    buildings[7].totalCookies = 1e12
+    buildings[1].totalCookies = 1e11
+
+    // while the top producer is below level 10, level it toward 10 with the 100-lump reserve
+    buildings[7].level = 9
+    h.game.levelBadges[7].innerText = 'lvl 9'
+    assert.equal(h.A.lumps.nextSpend(109), null)
+    assert.deepEqual(
+        { ...h.A.lumps.nextSpend(110) },
+        {
+            index: 7,
+            name: 'Wizard tower',
+            cost: 10,
+            reserve: 100,
+            why: 'level 10 achievement'
+        }
+    )
+
+    // once the top producer reaches level 10, move to the next owned building below level 10
+    buildings[7].level = 10
+    h.game.levelBadges[7].innerText = 'lvl 10'
+    assert.equal(h.A.lumps.nextSpend(101), null)
+    assert.deepEqual(
+        { ...h.A.lumps.nextSpend(102) },
+        {
+            index: 1,
+            name: 'Grandma',
+            cost: 2,
+            reserve: 100,
+            why: 'level 10 achievement'
+        }
+    )
+
+    // Aura gloves alone stops improving clicks at Cursor 10. Until Luminous
+    // gloves is bought, surplus lumps should continue helping the top producer.
+    for (const id of [1, 2, 5, 6, 7]) {
+        buildings[id].level = 10
+        h.game.levelBadges[id].innerText = 'lvl 10'
+    }
+    const upgrades = h.A.save.get().upgrades
+    upgrades[719] = { id: 719, bought: 1 }
+    for (const luminous of [undefined, { id: 720, unlocked: 1, bought: 0 }]) {
+        upgrades[720] = luminous
+        const spend = h.A.lumps.nextSpend(113)
+        assert.equal(spend.index, 7)
+        assert.equal(spend.why, 'highest producing building')
+        assert.equal(spend.cost, 11)
+    }
+    // Once both gloves are owned, Cursor 13-20 adds the intended click bonus.
+    upgrades[720] = { id: 720, bought: 1 }
+    assert.equal(h.A.lumps.nextSpend(112), null)
+    assert.deepEqual(
+        { ...h.A.lumps.nextSpend(113) },
+        {
+            index: 0,
+            name: 'Cursor',
+            cost: 13,
+            reserve: 100,
+            why: 'Luminous gloves click bonus'
+        }
+    )
+
+    // once Cursor reaches level 20, resume levelling the highest-producing building
+    buildings[0].level = 20
+    h.game.levelBadges[0].innerText = 'lvl 20'
+    assert.equal(h.A.lumps.nextSpend(110), null)
+    assert.deepEqual(
+        { ...h.A.lumps.nextSpend(111) },
+        {
+            index: 7,
+            name: 'Wizard tower',
+            cost: 11,
+            reserve: 100,
+            why: 'highest producing building'
+        }
+    )
+})

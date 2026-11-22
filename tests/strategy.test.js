@@ -313,3 +313,69 @@ test('clicking upgrades have zero click value when nothing is clicking', () => {
     const idle = view({ clicksPerSecond: 0, clickCps: 0 })
     assert.equal(S.upgradeDeltaCps({ description: 'Clicking gains +1% of your CpS.' }, idle), 0)
 })
+
+test('normalises irregular plural Factories and Clone building names', () => {
+    const v = view({
+        buildings: [
+            {
+                name: 'Factory',
+                owned: 10,
+                price: 130000,
+                perUnitCps: 260,
+                baseCps: 260,
+                affordable: true
+            },
+            { name: 'You', owned: 5, price: 5e26, perUnitCps: 1000, baseCps: 1000, affordable: true }
+        ]
+    })
+    assert.equal(S.upgradeDeltaCps({ description: 'Factories are twice as efficient.' }, v), 2600)
+    assert.equal(S.upgradeDeltaCps({ description: 'Clones are twice as efficient.' }, v), 5000)
+})
+
+test('mouse/cursor doubling does not infer additive bonuses from production size', () => {
+    const description = 'The mouse and cursors are twice as efficient.'
+    // Ambidextrous with two prior doublings and Thousand fingers: current
+    // production is 12.5 CpS, but the upgrade adds only 10 CpS.
+    const additive = view({
+        clickCps: 0,
+        buildings: [
+            { name: 'Cursor', owned: 25, perUnitCps: 0.5, baseCps: 0.1 },
+            { name: 'Grandma', owned: 1, perUnitCps: 1, baseCps: 1 }
+        ],
+        upgrades: [{ description, price: 10000, kind: 'buy', affordable: true }]
+    })
+    assert.ok(Number.isNaN(S.upgradeDeltaCps({ description }, additive)))
+    assert.equal(S.scoreUpgrades(additive)[0].measured, false)
+    assert.equal(S.scoreUpgrades(additive)[0].payback, Infinity)
+
+    // A global 20x multiplier can exceed the old cutoff without any finger
+    // bonus. Neither this total nor measured click CpS identifies base terms.
+    const multiplied = view({
+        clickCps: 5,
+        buildings: [{ name: 'Cursor', owned: 1, perUnitCps: 2, baseCps: 0.1 }]
+    })
+    assert.ok(Number.isNaN(S.upgradeDeltaCps({ description }, multiplied)))
+})
+
+test('scores the actual catalog tooltip with its heading and upgrade tags', () => {
+    const description =
+        'Farmer grandmas\nUpgrade\n55,000\nGrandmas are twice as efficient. Farms gain +1% CpS per grandma.\nA nice farmer to grow more cookies.'
+    assert.equal(S.upgradeDeltaCps({ description }, view()), 440)
+    const factory = 'Sturdier conveyor belts\nUpgrade\n1.3 million\nFactories are twice as efficient.'
+    assert.equal(
+        S.upgradeDeltaCps(
+            { description: factory },
+            view({ buildings: [{ name: 'Factory', owned: 10, perUnitCps: 260 }] })
+        ),
+        2600
+    )
+})
+
+test('grandma synergy upgrades include both grandma doubling and target building bonus', () => {
+    // 50 grandmas at 4 CpS = 200; 24 farms at 20 CpS = 480, +1% per grandma (+50%) = 240
+    const delta = S.upgradeDeltaCps(
+        { description: 'Grandmas are twice as efficient. Farms gain +1% CpS per grandma.' },
+        view()
+    )
+    assert.equal(delta, 440)
+})
