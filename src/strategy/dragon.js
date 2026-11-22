@@ -17,9 +17,21 @@
 
     const { AURAS, auraById, trainedAuras } = window.Alakazam.data.dragon
 
-    // Elder Battalion counts building types other than grandmas, and there are
-    // twenty buildings in the game
+    // Elder Battalion counts non-grandma buildings owned; the building-type count
+    // stays as a fallback when only type counts are supplied
     const BUILDING_TYPES = 20
+    const ELDER_BATTALION = 3
+    const REALITY_BENDING = 18
+
+    function unboostedGrandmaShare(rawShare, boost, state) {
+        const clamped = Math.min(1, Math.max(0, rawShare || 0))
+        let activeMult = 0
+        if (state.aura === ELDER_BATTALION || state.aura2 === ELDER_BATTALION) activeMult += 1
+        if (state.aura === REALITY_BENDING || state.aura2 === REALITY_BENDING) activeMult += 0.1
+        const activeBoost = boost * activeMult
+        if (!(activeBoost > 0) || clamped <= 0) return clamped
+        return clamped / (1 + activeBoost * (1 - clamped))
+    }
 
     // What share of production comes from kittens. The game does not render the milk
     // multiplier anywhere, so this is a stated assumption rather than a measurement,
@@ -64,11 +76,14 @@
                 }
 
             case 'grandmas': {
-                const types = state.otherBuildingTypes || BUILDING_TYPES - 1
-                const share = state.grandmaShare || 0
+                const count = Number.isFinite(state.otherBuildings)
+                    ? state.otherBuildings
+                    : state.otherBuildingTypes || BUILDING_TYPES - 1
+                const boost = amount * count
+                const share = unboostedGrandmaShare(state.grandmaShare, boost, state)
                 return {
-                    gain: amount * types * share * cps,
-                    why: `${pct(amount * types)} of the ${pct(share)} of production that is grandmas`
+                    gain: boost * share * cps,
+                    why: `${pct(boost)} of the ${pct(share)} of production that is grandmas`
                 }
             }
 
@@ -212,11 +227,16 @@
             .map(aura => {
                 const others = trained.filter(a => a.id !== aura.id)
                 const { gain, why, assumed } = gainOf(aura, state, others)
+                const base =
+                    aura.kind === 'click' || aura.kind === 'flightRoll'
+                        ? state.clickCps || 0
+                        : state.cps || 0
                 return {
                     aura: aura.id,
                     name: aura.name,
                     gain,
                     score: 1 + gain / income,
+                    mult: base > 0 ? 1 + gain / base : 1 + gain / income,
                     assumed: !!assumed,
                     why
                 }
@@ -228,12 +248,16 @@
     // the best aura, and the best of the rest for the second slot once a fully
     // trained dragon has one. The game refuses to put the same aura in both, and
     // taking the two best separately is the same answer as scoring every pair unless
-    // two auras overlap, which only Reality Bending does: it is worth a tenth of the
-    // others whichever slot it sits in.
+    // two auras overlap, which only Reality Bending does: its tenth of the primary
+    // aura stacks additively on a multiplier the first slot is already providing.
     function chooseAuras(state) {
         const table = scoreAuras(state)
         const best = table[0] || null
-        const second = state.slot2 ? table[1] || null : null
+        const second =
+            state.slot2 && best
+                ? table.slice(1).sort((a, b) => secondSlotGain(b, best) - secondSlotGain(a, best))[0] ||
+                  null
+                : null
 
         return {
             primary: best ? best.aura : 0,
@@ -241,6 +265,20 @@
             why: best ? `${best.name}: ${best.why}` : 'the dragon knows no auras yet',
             table
         }
+    }
+
+    function secondSlotGain(row, best) {
+        if (!row) return 0
+        if (!best) return row.gain
+        const bestMult = best.mult || best.score
+        const rowMult = row.mult || row.score
+        if (row.aura === 18 && bestMult > 1) {
+            return Math.max(0, row.gain - 0.1 * best.gain * (1 - 1 / bestMult))
+        }
+        if (best.aura === 18 && rowMult > 1) {
+            return Math.max(0, row.gain - 0.1 * row.gain * (1 - 1 / rowMult))
+        }
+        return row.gain
     }
 
     window.Alakazam = window.Alakazam || {}
