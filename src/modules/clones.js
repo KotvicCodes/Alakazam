@@ -27,6 +27,7 @@
     const DECLINED_KEY = 'clonesStyleDeclined'
     // Cookie Clicker 2.058; browser coverage checks the game's own definition.
     const LIKENESS_ID = 597
+    let earnedHere = null
     let completedHere = null
 
     //* THEIRS_KEY
@@ -247,6 +248,7 @@
         }
         store.set(RECOVERY_KEY, restoredHere.mark)
         forgetIfSaved(mark)
+        if (mark.earned && earnedHere?.runId === runId && earnedHere.unchanged()) completed()
         ctx.input('simulateClick', el('promptOption0'))
         return true
     }
@@ -307,7 +309,7 @@
                 if (!(await move(FREE_GENE, 1, ctx, mark, who.runId, unchanged))) return
                 if (!(await move(FREE_GENE, -1, ctx, mark, who.runId, unchanged))) return
                 mark.earned = true
-                completed()
+                earnedHere = { runId: who.runId, unchanged: safety.cosmeticCheck() }
                 store.set(RECOVERY_KEY, { ...mark })
             } finally {
                 await ctx.cleanup(() => restore(mark, ctx, who.runId, unchanged))
