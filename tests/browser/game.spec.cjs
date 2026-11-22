@@ -14,6 +14,39 @@ const {
     buffTooltip
 } = require('./fixtures.cjs')
 
+for (const owned of [false, true]) {
+    test(`Fading luck confirmation follows the game's actual achievement (owned: ${owned})`, async ({
+        game
+    }) => {
+        const result = await game.evaluate(async owned => {
+            Game.shimmers.slice().forEach(shimmer => shimmer.die())
+            const achievement = Game.Achievements['Fading luck']
+            achievement.won = Number(owned)
+            // This unrelated achievement was previously mistaken for Fading luck.
+            Game.AchievementsById[268].won = Number(!owned)
+            Game.WriteSave()
+            await Alakazam.registry.get('saveWatch').tick()
+            Alakazam.store.setSetting('enabled', true)
+            Alakazam.store.set('fadingLuckDone', false)
+            const first = new Game.shimmer('golden', { noWrath: true })
+            first.force = 'lucky'
+            await Alakazam.registry.get('shimmers').tick()
+            const second = new Game.shimmer('golden', { noWrath: true })
+            second.force = 'lucky'
+            second.l.style.opacity = '0.5'
+            await Alakazam.registry.get('shimmers').tick()
+            return {
+                saved: Alakazam.save.get().achievements[achievement.id],
+                done: Alakazam.store.get('fadingLuckDone', false),
+                clicked: !Game.shimmers.includes(second)
+            }
+        }, owned)
+        expect(result.saved).toBe(owned)
+        expect(result.done).toBe(owned)
+        expect(result.clicked).toBe(owned)
+    })
+}
+
 test('reads actual save output and dispatches a store purchase', async ({ game }) => {
     await game.evaluate(() => {
         Game.cookies = 1000
