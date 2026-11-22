@@ -332,65 +332,43 @@ test('normalises irregular plural Factories and Clone building names', () => {
     assert.equal(S.upgradeDeltaCps({ description: 'Clones are twice as efficient.' }, v), 5000)
 })
 
-test('mouse and cursors doubling sums cursor building production and click CpS', () => {
-    // 100 cursors at 0.5 CpS = 50 CpS from the building line, plus 660 clickCps
-    const clicky = view({ clicksPerSecond: 3.3, clickCps: 660 })
-    assert.equal(
-        S.upgradeDeltaCps({ description: 'The mouse and cursors are twice as efficient.' }, clicky),
-        710
-    )
-    // when idle (clickCps is 0), the cursor building contribution is still counted
-    const idle = view({ clicksPerSecond: 0, clickCps: 0 })
-    assert.equal(
-        S.upgradeDeltaCps({ description: 'The mouse and cursors are twice as efficient.' }, idle),
-        50
-    )
-    // when Thousand fingers has inflated cursor per-unit CpS (e.g. 10.4 CpS per
-    // cursor with 25 cursors and 100 grandmas), the additive finger term cannot
-    // be separated from the base doubling, so the upgrade reports unknown rather
-    // than claiming 260 CpS
-    const withThousandFingers = view({
-        clicksPerSecond: 0,
+test('mouse/cursor doubling does not infer additive bonuses from production size', () => {
+    const description = 'The mouse and cursors are twice as efficient.'
+    // Ambidextrous with two prior doublings and Thousand fingers: current
+    // production is 12.5 CpS, but the upgrade adds only 10 CpS.
+    const additive = view({
         clickCps: 0,
         buildings: [
-            {
-                name: 'Cursor',
-                owned: 25,
-                price: 1000,
-                perUnitCps: 10.4,
-                baseCps: 0.1,
-                affordable: true
-            },
-            {
-                name: 'Grandma',
-                owned: 100,
-                price: 5000,
-                perUnitCps: 4,
-                baseCps: 1,
-                affordable: true
-            }
+            { name: 'Cursor', owned: 25, perUnitCps: 0.5, baseCps: 0.1 },
+            { name: 'Grandma', owned: 1, perUnitCps: 1, baseCps: 1 }
         ],
-        upgrades: [
-            {
-                name: 'Ambidextrous',
-                price: 10000,
-                kind: 'buy',
-                affordable: true,
-                description: 'The mouse and cursors are twice as efficient.'
-            }
-        ]
+        upgrades: [{ description, price: 10000, kind: 'buy', affordable: true }]
     })
-    assert.ok(
-        Number.isNaN(
-            S.upgradeDeltaCps(
-                { description: 'The mouse and cursors are twice as efficient.' },
-                withThousandFingers
-            )
-        )
+    assert.ok(Number.isNaN(S.upgradeDeltaCps({ description }, additive)))
+    assert.equal(S.scoreUpgrades(additive)[0].measured, false)
+    assert.equal(S.scoreUpgrades(additive)[0].payback, Infinity)
+
+    // A global 20x multiplier can exceed the old cutoff without any finger
+    // bonus. Neither this total nor measured click CpS identifies base terms.
+    const multiplied = view({
+        clickCps: 5,
+        buildings: [{ name: 'Cursor', owned: 1, perUnitCps: 2, baseCps: 0.1 }]
+    })
+    assert.ok(Number.isNaN(S.upgradeDeltaCps({ description }, multiplied)))
+})
+
+test('scores the actual catalog tooltip with its heading and upgrade tags', () => {
+    const description =
+        'Farmer grandmas\nUpgrade\n55,000\nGrandmas are twice as efficient. Farms gain +1% CpS per grandma.\nA nice farmer to grow more cookies.'
+    assert.equal(S.upgradeDeltaCps({ description }, view()), 440)
+    const factory = 'Sturdier conveyor belts\nUpgrade\n1.3 million\nFactories are twice as efficient.'
+    assert.equal(
+        S.upgradeDeltaCps(
+            { description: factory },
+            view({ buildings: [{ name: 'Factory', owned: 10, perUnitCps: 260 }] })
+        ),
+        2600
     )
-    const scored = S.scoreUpgrades(withThousandFingers)
-    assert.equal(scored[0].measured, false)
-    assert.equal(scored[0].payback, Infinity)
 })
 
 test('grandma synergy upgrades include both grandma doubling and target building bonus', () => {

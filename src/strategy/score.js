@@ -103,7 +103,14 @@
 
     function findBuilding(buildings, name) {
         const wanted = normaliseName(name)
-        return buildings.find(b => normaliseName(b.name) === wanted) || null
+        // The catalog includes the tooltip heading and tags before the effect.
+        // Only the building immediately before "are"/"gain" names the target.
+        return (
+            buildings.find(b => {
+                const key = normaliseName(b.name)
+                return wanted === key || wanted.endsWith(' ' + key)
+            }) || null
+        )
     }
 
     //* buildingContribution
@@ -122,28 +129,12 @@
         const text = (upgrade.description || '').replace(/\s+/g, ' ')
         if (!text) return NaN
 
-        // "The mouse and cursors are twice as efficient." doubles the base
-        // cursor and mouse terms before additive Thousand fingers bonuses are
-        // added. Once cursor per-unit CpS exceeds the pure doubling range, an
-        // additive finger bonus is mixed into the tooltip total and cannot be
-        // separated, so report the gain as unknown rather than overstating it.
+        // This doubles the base mouse/cursor terms before additive finger and
+        // clicking bonuses. The measured totals do not separate those terms,
+        // and their size cannot establish which bonuses are owned. Keep the
+        // gain unknown until those base components can be measured separately.
         if (/mouse and cursors are twice as efficient/i.test(text)) {
-            const cursor = findBuilding(view.buildings, 'cursor')
-            if (
-                cursor &&
-                Number.isFinite(cursor.perUnitCps) &&
-                Number.isFinite(cursor.baseCps) &&
-                cursor.perUnitCps > cursor.baseCps * 8
-            ) {
-                return NaN
-            }
-            const cursorCps = cursor ? buildingContribution(cursor) : NaN
-            const clickCps = view.clickCps
-            if (!Number.isFinite(cursorCps) && !Number.isFinite(clickCps)) return NaN
-            return (
-                (Number.isFinite(cursorCps) && cursorCps > 0 ? cursorCps : 0) +
-                (Number.isFinite(clickCps) && clickCps > 0 ? clickCps : 0)
-            )
+            return NaN
         }
 
         // "Cursors are twice as efficient." / "... are 4 times as efficient."
