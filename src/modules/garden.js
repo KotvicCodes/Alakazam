@@ -84,7 +84,13 @@
             if (s.unlocked.indexOf(plant.key) !== -1) continue
             for (const recipe of plants.recipesFor(plant.key)) {
                 if (!plants.reachable(recipe, s.unlocked, slots)) continue
-                if (!best || recipe.chance > best.recipe.chance) best = { plant, recipe }
+                const candidate = { plant, recipe }
+                // Total plot size alone cannot establish room for a recipe.
+                // Immortal plants may permanently block every eight-parent
+                // nursery while another mutation remains possible nearby.
+                if (Array.isArray(s.occupied) && Array.isArray(s.empty) && !bestNursery(s, candidate))
+                    continue
+                if (!best || recipe.chance > best.recipe.chance) best = candidate
             }
         }
         return best

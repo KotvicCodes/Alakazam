@@ -281,6 +281,31 @@ test('plantAt refuses to click a locked tile whose DOM element is hidden', async
     assert.equal(h.tile.events.includes('click'), false)
 })
 
+test('an immortal blocker cannot trap the garden on an impossible Juicy Queenbeet goal', () => {
+    const plants = boot({}).A.data.plants
+    const unlocked = plants.PLANTS.flatMap((p, id) =>
+        p.key !== 'goldenClover' && p.key !== 'queenbeetLump' ? [id] : []
+    )
+    const plot = Array.from({ length: 6 }, () => Array.from({ length: 6 }, () => [0, 0]))
+    plot[3][3] = [plants.byKey('elderwort').id + 1, 100]
+    const h = boot({
+        save: fx.save({
+            levels: { 2: 3 },
+            amounts: { 2: 1 },
+            minigames: { 2: fx.garden({ unlocked, plot }) }
+        }).raw
+    })
+    const state = h.A.garden.state()
+    assert.equal(state.plotTiles, 9)
+    assert.equal(state.empty.length, 8)
+    assert.equal(h.A.garden.nextGoal(state).plant.key, 'goldenClover')
+    // Removing the blocker restores a real 3x3 nursery, so the higher chance
+    // Juicy Queenbeet recipe becomes eligible again.
+    state.empty.push({ x: 3, y: 3 })
+    state.occupied = []
+    assert.equal(h.A.garden.nextGoal(state).plant.key, 'queenbeetLump')
+})
+
 test('nextGoal targets queenbeetLump when queenbeet is unlocked and 9+ tiles exist', () => {
     const allExceptJuicy = Array.from({ length: 34 }, (_, i) => i).filter(i => i !== 21)
 
