@@ -413,7 +413,8 @@ test('shimmers clicks the first golden cookie immediately and holds the next one
     // a 2-second (60-frame at 30fps) Cookie Chain cookie whose final frame
     // opacity is 1 - (29/30)^4 = 0.1268 (> 0.10) still releases and clicks
     // inside the < 1s Fading luck window before life reaches 0
-    const h3 = boot({})
+    const time = require('./clock').clock()
+    const h3 = boot({ clock: time })
     await h3.A.store.ready('t3')
     const s3 = h3.game.doc.getElementById('shimmers')
     const mod3 = h3.A.registry.get('shimmers')
@@ -431,6 +432,7 @@ test('shimmers clicks the first golden cookie immediately and holds the next one
     let life = 60
     let clickedAtLife = null
     for (let t = 0; t <= 2000 && life > 0; t += 50) {
+        if (t > 0) time.advance(50)
         life = 60 - Math.floor((t * 30) / 1000)
         if (life <= 0) {
             s3.children = s3.children.filter(c => c !== chainCookie)
@@ -451,6 +453,48 @@ test('shimmers clicks the first golden cookie immediately and holds the next one
     )
     assert.equal(h3.A.store.get('fadingLuckDone', false), true)
 })
+
+for (const duration of [13, 52, 74]) {
+    test(`throttled shimmer polling waits for the final second of a ${duration}s cookie`, async () => {
+        const time = require('./clock').clock()
+        const h = boot({ clock: time })
+        await h.A.store.ready('throttled-shimmers')
+        const parent = h.game.doc.getElementById('shimmers')
+        const mod = h.A.registry.get('shimmers')
+        const spawn = opacity => {
+            const el = new El('div', {
+                class: 'shimmer goldenCookie',
+                style: { backgroundImage: 'url(img/goldCookie.png)', opacity: String(opacity) }
+            })
+            el.addEventListener('click', () => {
+                parent.children = parent.children.filter(c => c !== el)
+            })
+            parent.append(el)
+            return el
+        }
+        spawn(0.1)
+        mod.tick() // secure Early bird first
+        const cookie = spawn(0)
+        const frames = duration * 30
+        let clickedAtLife = null
+        let previousMs = 0
+        // Offset from the frame boundary so the final observation has 29 frames
+        // left. At 59 frames the old two-observation predictor clicked too early.
+        for (let ms = 50; ms < duration * 1000; ms += 1000) {
+            time.advance(ms - previousMs)
+            previousMs = ms
+            const life = frames - Math.floor((ms * 30) / 1000)
+            cookie.style.opacity = String(1 - Math.pow((life / frames) * 2 - 1, 4))
+            mod.tick()
+            if (cookie.events.includes('click')) {
+                clickedAtLife = life
+                break
+            }
+            if (life >= 30) assert.equal(h.A.store.get('fadingLuckDone', false), false)
+        }
+        assert.ok(clickedAtLife > 0 && clickedAtLife < 30, `clicked at ${clickedAtLife} frames`)
+    })
+}
 
 test('manual FTHOF cookies neither get held when #grimoireInfo advances nor permanently suppress Fading luck when unconfirmed by the next save', async () => {
     let now = 1_750_000_010_000
@@ -522,7 +566,11 @@ test('manual FTHOF cookies neither get held when #grimoireInfo advances nor perm
     assert.equal(naturalRetry.events.includes('click'), false, 'natural retry cookie is held')
     naturalRetry.style.opacity = '0.08'
     mod.tick()
-    assert.equal(naturalRetry.events.includes('click'), true, 'natural retry cookie is clicked in fade window')
+    assert.equal(
+        naturalRetry.events.includes('click'),
+        true,
+        'natural retry cookie is clicked in fade window'
+    )
     assert.equal(h.A.store.get('fadingLuckDone', false), true)
 
     // next autosave confirms achievements[268] === true -> permanently done

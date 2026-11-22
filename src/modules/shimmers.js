@@ -134,22 +134,34 @@
                     const peak = Math.max(prev ? prev.peak : 0, opacity)
                     const falling = (prev && prev.falling) || (prev !== undefined && opacity < prev.last)
                     const u = 0.5 * (1 + Math.pow(Math.max(0, 1 - opacity), 0.25))
+                    const at = Date.now()
                     const fallingTicks = falling ? (prev && prev.falling ? prev.fallingTicks + 1 : 1) : 0
                     const firstFallingU = falling ? (prev && prev.falling ? prev.firstFallingU : u) : 0
-                    const du = fallingTicks >= 2 && u > prev.u ? u - prev.u : 0
-                    const avgDu =
-                        fallingTicks >= 2 && u > firstFallingU
-                            ? (u - firstFallingU) / (fallingTicks - 1)
+                    const firstFallingAt = falling
+                        ? prev && prev.falling
+                            ? prev.firstFallingAt
+                            : at
+                        : 0
+                    const rate = fallingTicks >= 2 && at > prev.at ? (u - prev.u) / (at - prev.at) : 0
+                    const averageRate =
+                        fallingTicks >= 2 && at > firstFallingAt
+                            ? (u - firstFallingU) / (at - firstFallingAt)
                             : 0
-                    const step = Math.max(du, avgDu)
-                    const aboutToExpire = fallingTicks >= 3 && step > 0 && u + step * 2 >= 1
+                    const progressPerMs = Math.max(rate, averageRate)
+                    // Background tabs may poll a second apart. Observations are
+                    // not units of time: release only inside the game's <1s
+                    // achievement window, even when two polls span two seconds.
+                    const aboutToExpire =
+                        fallingTicks >= 3 && progressPerMs > 0 && (1 - u) / progressPerMs < 999
                     opacityState.set(shimmer.element, {
                         peak,
                         last: opacity,
                         falling,
                         u,
+                        at,
                         fallingTicks,
-                        firstFallingU
+                        firstFallingU,
+                        firstFallingAt
                     })
                     const inFadePhase = peak >= FADING_LUCK_PEAK || falling
                     if (
