@@ -372,6 +372,23 @@
     // slots seen this ascension, so a pass that runs over several ticks does not
     // reopen a picker it has already been through
     let slotsDone = new Set()
+    let pendingSlot = null
+
+    async function resumeSlot(until) {
+        if (pendingSlot && pendingSlot.prompt !== window.Alakazam.safety.prompt()) {
+            // Never resume a replacement picker without its original occupant.
+            // Close our owned picker and let the slot audit read it afresh.
+            pendingSlot = null
+            act.cancelPrompt('permanent')
+            return false
+        }
+        const pending = pendingSlot?.prompt === window.Alakazam.safety.prompt() ? pendingSlot : null
+        await fillSlot(until, pending?.holding)
+        if (act.promptIs('permanent')) return false
+        if (pending) slotsDone.add(pending.id)
+        pendingSlot = null
+        return true
+    }
 
     // how many time slices the reassignment pass gets before the run is allowed to
     // end without it
@@ -439,9 +456,17 @@
 
             // clicking an owned slot runs its activateFunction and reopens the picker
             act.buy(crate)
+            pendingSlot = {
+                id: crate.id,
+                holding: found.holding,
+                prompt: window.Alakazam.safety.prompt()
+            }
             await wait(REDRAW_MS)
-            await fillSlot(until, found.holding)
-            slotsDone.add(crate.id)
+            if (!act.promptIs('permanent')) {
+                pendingSlot = null
+                return false
+            }
+            if (!(await resumeSlot(until))) return false
             await wait(REDRAW_MS)
         }
         return true
@@ -468,7 +493,7 @@
         while (Date.now() < until) {
             // a picker left open from the previous purchase blocks everything else
             if (act.promptIs('permanent')) {
-                await fillSlot(until)
+                if (!(await resumeSlot(until))) return 'busy'
                 await wait(REDRAW_MS)
                 continue
             }
@@ -585,11 +610,15 @@
     function hoardSafe(confirming = false) {
         const current = decisionForRun()
         if (!current) return false
-        if (current.discarded) return true
         // A blocked gate stays blocked between retries without repeatedly
         // interrupting the player with Export Save. Never reuse evidence to
         // authorize a confirmation: that path still requires a fresh export.
-        if (!confirming && hoardCheck?.decisionId === current.id && Date.now() < hoardCheck.retryAt) {
+        if (
+            !current.discarded &&
+            !confirming &&
+            hoardCheck?.decisionId === current.id &&
+            Date.now() < hoardCheck.retryAt
+        ) {
             Object.assign(window.__alakazam.ascend, hoardCheck.status)
             return false
         }
@@ -597,7 +626,10 @@
         // read a fresh export immediately before the irreversible confirmation.
         if (confirming && act.promptIs('ascend')) act.cancelPrompt('ascend')
         const evidence = act.liveHoard()
-        const safe = evidence && evidence.hoard === 0
+        // Consent waives only the hoard restriction. liveHoard still verifies
+        // the exported family/run against the current decision: a file import
+        // can replace the live game while its localStorage autosave stays old.
+        const safe = evidence && (evidence.hoard === 0 || current.discarded)
         if (safe) hoardCheck = null
         if (!safe) {
             const status = {
@@ -692,6 +724,7 @@
                 skipped = new Set()
                 bought = []
                 slotsDone = new Set()
+                pendingSlot = null
                 repickTries = 0
                 setPhase('shopping')
                 return
@@ -866,6 +899,7 @@
         taken = []
         harvestFrom = 0
         slotsDone = new Set()
+        pendingSlot = null
         repickTries = 0
         setup()
     }

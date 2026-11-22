@@ -16,7 +16,7 @@
     const expected = {
         achievements: ['NameBakery', 'ExportSave'],
         clones: ['CustomizeYou', 'ExportSave'],
-        gifts: ['GiftSend', 'GiftSendReady', 'GiftRedeem'],
+        gifts: ['GiftSend', 'GiftSendReady', 'GiftRedeem', 'GiftRedeemed'],
         ascend: ['Ascend', 'Reincarnate', 'PickPermaUpgrade', 'ExportSave'],
         dragon: ['PickDragonAura'],
         lumps: ['SpendLump']
@@ -213,7 +213,7 @@
                     // Gifts dismiss completed Wrap results only after persisting
                     // their code. Failed storage must leave that result visible.
                     if (name === 'GiftSendReady') return
-                    const option = ['CustomizeYou', 'ExportSave'].includes(name)
+                    const option = ['CustomizeYou', 'ExportSave', 'GiftRedeemed'].includes(name)
                         ? 0
                         : name === 'NameBakery'
                           ? 2

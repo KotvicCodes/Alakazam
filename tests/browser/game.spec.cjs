@@ -708,17 +708,18 @@ for (const kind of ['name', 'clones']) {
     }) => {
         const fixture = await cosmeticRecoveryFixture(game, kind, 'family-owned')
         await game.evaluate(
-            async ({ kind, temporary, key }) => {
+            async ({ kind, stored, key }) => {
                 if (kind === 'name') {
                     Alakazam.store.forget(key)
                     await Alakazam.store.flush()
                 } else {
-                    // Prepare an interrupted same-run appearance for recovery.
-                    Game.YouCustomizer.load(temporary.join(','))
-                    Game.bakeryNameRefresh()
+                    // A real import resets/rebuilds the live game before loading
+                    // the same-run temporary appearance. Reassigning an unchanged
+                    // bakery label alone need not replace its text node.
+                    Game.ImportSaveCode(stored)
                 }
             },
-            { kind, temporary: fixture.temporary, key: fixture.key }
+            { kind, stored: fixture.stored, key: fixture.key }
         )
         await game.locator('#prefsButton').click()
         await game.evaluate(kind => {
@@ -738,7 +739,9 @@ for (const kind of ['name', 'clones']) {
                       )
                     : Alakazam.clones.recover()
         }, kind)
-        await game.waitForFunction(() => typeof window.releaseCosmeticFlush === 'function')
+        await game.waitForFunction(() => typeof window.releaseCosmeticFlush === 'function', null, {
+            timeout: 5000
+        })
         const journal = await game.evaluate(key => Alakazam.store.get(key), fixture.key)
         const prompt = kind === 'name' ? '#promptContentNameBakery' : '#promptContentCustomizeYou'
         await expect(game.locator(prompt)).toHaveCount(1)
@@ -798,4 +801,129 @@ test('cosmetic recovery retries a temporarily stale actual export', async ({ gam
             { timeout: 15000, intervals: [500] }
         )
         .toBe('Acceptance Original')
+})
+
+test('holding Shift cannot vault an upgrade through automated purchase', async ({ game }) => {
+    await game.evaluate(async () => {
+        Game.startDate = Date.now() - 3600000
+        Game.Upgrades['Inspired checklist'].bought = 1
+        Game.Upgrades['Reinforced index finger'].unlocked = 1
+        Game.Objects.Cursor.amount = 1
+        Game.Objects.Cursor.highest = 1
+        Game.cookies = 1000
+        Game.cookiesEarned = 1000
+        Game.RefreshStore()
+        Game.RebuildUpgrades()
+        Game.WriteSave()
+        await Alakazam.registry.get('saveWatch').tick()
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await expect.poll(() => game.evaluate(() => Alakazam.live.readProducts().length)).toBeGreaterThan(0)
+    for (let i = 0; i < 3; i++) await game.evaluate(() => Alakazam.registry.get('catalog').tick())
+    await game.keyboard.down('Shift')
+    try {
+        await game.evaluate(() =>
+            Alakazam.registry.get('purchase').tick({ budget: Alakazam.scheduler.budget(1) })
+        )
+        expect(await game.evaluate(() => Game.vault)).toEqual([])
+        expect(await game.evaluate(() => Game.Upgrades['Reinforced index finger'].bought)).toBe(0)
+        expect(await game.evaluate(() => Alakazam.purchase.totalBought())).toBe(0)
+    } finally {
+        await game.keyboard.up('Shift')
+    }
+    await expect.poll(() => game.evaluate(() => Game.buyBulkShortcut || 0)).toBe(0)
+    await game.evaluate(() =>
+        Alakazam.registry.get('purchase').tick({ budget: Alakazam.scheduler.budget(1) })
+    )
+    expect(await game.evaluate(() => Game.Upgrades['Reinforced index finger'].bought)).toBe(1)
+    expect(await game.evaluate(() => Game.vault)).toEqual([])
+})
+
+test('redeeming a valid gift closes its owned result and resumes automation', async ({ game }) => {
+    await game.evaluate(async () => {
+        Game.cookies = 1e10
+        Game.cookiesEarned = 1e10
+        Game.Upgrades['Wrapping paper'].bought = 1
+        Game.WriteSave()
+        await Alakazam.registry.get('saveWatch').tick()
+        Alakazam.store.setSetting('enabled', true)
+        Alakazam.store.set('giftCode', {
+            code: btoa('MAIL|' + Date.now() + '|50|-|Browser fixture'),
+            at: Date.now() - 2 * 3600000
+        })
+    })
+    await expect.poll(() => game.evaluate(() => Alakazam.live.readGlobals().cookies)).toBe(1e10)
+    await game.evaluate(() => Alakazam.registry.get('gifts').tick())
+    expect(await game.evaluate(() => Game.HasAchiev('No time like the present'))).toBe(1)
+    expect(await game.evaluate(() => Game.cookiesReceived)).toBe(50)
+    await expect(game.locator('#promptContentGiftRedeemed')).toBeHidden()
+    expect(await game.evaluate(() => Alakazam.safety.prompt())).toBeNull()
+    const before = await game.evaluate(() => Game.cookieClicks)
+    await game.evaluate(() => Alakazam.registry.get('autoclick').tick())
+    expect(await game.evaluate(() => Game.cookieClicks)).toBeGreaterThan(before)
+})
+
+test('discard consent cannot authorize a different live family before autosave', async ({ game }) => {
+    await game.evaluate(() => {
+        Game.cookiesEarned = 5e19
+        Game.cookiesReset = 0
+        Game.resets = 0
+        Alakazam.store.setSetting('enabled', true)
+    })
+    await publish(game)
+    const result = await game.evaluate(async () => {
+        const mod = Alakazam.registry.get('ascend')
+        await mod.setup()
+        Game.wrinklers[0].phase = 2
+        Game.wrinklers[0].sucked = 5e15
+        await mod.tick()
+        const granted = Alakazam.ascend.discardHoard(__alakazam.ascend.decisionId)
+        const stored = localStorage.getItem(Game.SaveTo)
+        const sections = Alakazam.savefile.decode(Game.WriteSave(1)).split('|')
+        const run = sections[2].split(';')
+        run[1] = String(Number(run[1]) - 86400000)
+        run[4] = 'unrelated-live-family'
+        sections[2] = run.join(';')
+        Game.ImportSaveCode(escape(btoa(unescape(encodeURIComponent(sections.join('|')))) + '!END!'))
+        Game.time = Date.now() + 1
+        for (let i = 0; i < 3; i++) await mod.tick()
+        return {
+            granted,
+            unchanged: localStorage.getItem(Game.SaveTo) === stored,
+            onAscend: Game.OnAscend,
+            timer: Game.AscendTimer,
+            prompt: Alakazam.safety.prompt()?.id || null,
+            blocked: __alakazam.ascend.hoardBlocked
+        }
+    })
+    expect(result.granted).toBe(true)
+    expect(result.unchanged).toBe(true)
+    expect(result.onAscend).toBeFalsy()
+    expect(result.timer).toBe(0)
+    expect(result.prompt).toBeNull()
+    expect(result.blocked).toBe(true)
+})
+
+test('clone completion requires the actual saved likeness achievement', async ({ game }) => {
+    const fixture = await cosmeticRecoveryFixture(game, 'clones', 'same-run')
+    const result = await game.evaluate(async ({ key, original }) => {
+        Alakazam.store.forget(key)
+        Alakazam.store.set('clonesStyled', true)
+        const achievement = Game.Achievements['In her likeness']
+        achievement.won = 0
+        Game.WriteSave()
+        await Alakazam.registry.get('saveWatch').tick()
+        await Alakazam.registry.get('clones').tick()
+        return {
+            earned: Game.HasAchiev('In her likeness'),
+            saved: Alakazam.save.get().achievements[achievement.id],
+            persisted: Alakazam.store.get('clonesStyled', false),
+            appearance: Game.YouCustomizer.currentGenes,
+            original
+        }
+    }, fixture)
+    expect(result.earned).toBe(1)
+    expect(result.saved).toBe(false)
+    expect(result.persisted).toBe(false)
+    expect(result.appearance).toEqual(result.original)
 })

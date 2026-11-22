@@ -61,6 +61,27 @@ test('a purchase updates scoring immediately before autosave', async () => {
     assert.equal(view.buildings[index].price, h.game.unitPrice(index))
 })
 
+for (const [key, keyCode] of [
+    ['Shift', 16],
+    ['Control', 17]
+]) {
+    test(`store automation waits for a held ${key} key to be released`, async () => {
+        const h = boot({ game: { bank: 5000, crates: [] } })
+        await h.A.store.ready('held-modifier')
+        h.game.doc.fire('keydown', { isTrusted: true, key, keyCode })
+        assert.equal(h.A.transactions.acquire('purchase'), null)
+        assert.equal(h.A.transactions.acquire('marketTrading'), null)
+        await purchaseTick(h)
+        assert.equal(h.game.state.log.filter(line => /^buy /.test(line)).length, 0)
+        // Synthetic key releases cannot clear the real player's held state.
+        h.game.doc.fire('keyup', { isTrusted: false, key, keyCode })
+        assert.equal(h.A.transactions.acquire('purchase'), null)
+        h.game.doc.fire('keyup', { isTrusted: true, key, keyCode })
+        await purchaseTick(h)
+        assert.equal(h.game.state.log.filter(line => /^buy /.test(line)).length, 1)
+    })
+}
+
 test('slow redraws cannot turn bulk or sell prices into a unit buy', async () => {
     const h = boot({ game: { bank: 5000, crates: [] } })
     click(h, 'storeBulk10')
@@ -529,36 +550,44 @@ test('user changes while verifying a market fill stop further attempts', async (
     assert.equal(h.game.state.log.length, 1)
 })
 
-test('identical-price redraws after a purchase do not strand later transactions', async () => {
-    const h = boot({ game: { bank: 5000, crates: [] } })
-    const price = h.game.doc.getElementById('product0').querySelector('.price')
-    const initial = price.innerText
-    const observers = new Set()
-    h.ctx.MutationObserver = class {
-        constructor(callback) {
-            this.callback = callback
+for (const witness of ['price', 'productName']) {
+    test(`identical-price rebuilds witnessed by ${witness} allow later transactions`, async () => {
+        const h = boot({ game: { bank: 5000, crates: [] } })
+        const price = h.game.doc.getElementById('product0').querySelector('.price')
+        const initial = price.innerText
+        const observers = new Set()
+        h.ctx.MutationObserver = class {
+            constructor(callback) {
+                this.callback = callback
+            }
+            observe() {
+                observers.add(this)
+            }
+            disconnect() {
+                observers.delete(this)
+            }
         }
-        observe() {
-            observers.add(this)
+        // Model free buildings being bought back: ownership increases while the
+        // game's draw writes the same price text. The event handler still buys.
+        Object.defineProperty(price, 'innerText', {
+            get: () => initial,
+            set: () => {
+                const records =
+                    witness === 'price'
+                        ? [{ target: price }]
+                        : h.game.doc
+                              .querySelectorAll('.product.unlocked .productName')
+                              .map(target => ({ target }))
+                for (const observer of observers) observer.callback(records)
+            }
+        })
+        for (let i = 0; i < 3; i++) {
+            const product = h.A.act.store.unitProducts().find(item => item.index === 0)
+            assert.ok(product, 'unit prices remain usable after the previous redraw')
+            const result = await h.A.act.store.buy(product, 1, 5000)
+            assert.equal(result.bought, true)
+            assert.equal(h.game.state.owned[0], i + 1)
         }
-        disconnect() {
-            observers.delete(this)
-        }
-    }
-    // Model free buildings being bought back: ownership increases while the
-    // game's draw writes the same price text. The event handler still buys.
-    Object.defineProperty(price, 'innerText', {
-        get: () => initial,
-        set: () => {
-            for (const observer of observers) observer.callback([{ target: price }])
-        }
+        assert.equal(observers.size, 0, 'observers are disconnected after the redraw')
     })
-    for (let i = 0; i < 3; i++) {
-        const product = h.A.act.store.unitProducts().find(item => item.index === 0)
-        assert.ok(product, 'unit prices remain usable after the previous redraw')
-        const result = await h.A.act.store.buy(product, 1, 5000)
-        assert.equal(result.bought, true)
-        assert.equal(h.game.state.owned[0], i + 1)
-    }
-    assert.equal(observers.size, 0, 'observers are disconnected after the redraw')
-})
+}

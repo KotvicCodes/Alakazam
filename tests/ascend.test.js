@@ -1328,12 +1328,75 @@ test('a buff that has not been identified yet also holds the sequence back', asy
     assert.equal(h.A.ascend.state().phase, 'ready')
 })
 
+test('discard consent cannot ascend an imported live run before autosave catches up', async () => {
+    const h = boot({
+        save: fx.save({ cookiesEarned: 400 ** 3 * 1e12, wrinklerHoard: 1e15, wrinklers: 1 }).raw
+    })
+    await h.A.store.ready('discard-import')
+    const mod = h.A.registry.get('ascend')
+    await mod.setup()
+    await mod.tick()
+    assert.equal(h.A.ascend.discardHoard(h.debug().ascend.decisionId), true)
+    // File imports update the live game before its old autosave. The fresh
+    // export belongs to an unrelated family, so the old consent cannot apply.
+    h.game.state.exportSave = () =>
+        fx.save({
+            cookiesEarned: 1e6,
+            cookies: 1e6,
+            fullDate: 1700000000000,
+            seed: 'unrelated-family',
+            wrinklerHoard: 9e15,
+            wrinklers: 10
+        }).raw
+    h.game.doc.getElementById('bakeryName').textContent = 'Imported family'
+    for (let i = 0; i < 3; i++) await mod.tick()
+    assert.equal(h.A.act.ascend.onAscendScreen(), false)
+    assert.equal(h.A.act.ascend.promptIs('ascend'), false)
+    assert.equal(h.debug().ascend.hoardBlocked, true)
+    assert.equal(
+        h.game.state.log.some(line => /ascending|took.*loan/i.test(line)),
+        false
+    )
+})
+
 //! Reassigning permanent slots
 // A slot is not a decision made once: the game reopens its picker whenever the
 // crate is clicked, owned or not, and the run that just ended nearly always owns a
 // stronger kitten than the run that filled the slot did.
 
 const OWNED_SLOT = { heavenlyBought: ['Legacy', 'Permanent upgrade slot I'] }
+
+test('a permanent-slot scan spanning ticks retains the original holding guard', async () => {
+    const heavenly = [
+        { id: 5, name: 'Permanent upgrade slot I', cost: 100, slot: true },
+        { id: 6, name: 'Permanent upgrade slot II', cost: 20000, slot: true }
+    ]
+    const choices = Array.from({ length: 28 }, (_, i) => ({
+        id: 1000 + i,
+        name: 'Non-preferred ' + i,
+        price: 1e5
+    })).concat([
+        { id: 91, name: 'Kitten admins', price: 9e47 },
+        { id: 90, name: 'Kitten strategists', price: 9e50 },
+        { id: 92, name: 'Kitten experts', price: 9e29 }
+    ])
+    const h = boot({
+        save: fx.save({ cookiesEarned: 400 ** 3 * 1e12, permanentSlots: [90, 91, -1, -1, -1] }).raw,
+        game: {
+            heavenly,
+            heavenlyBought: heavenly.map(upgrade => upgrade.name),
+            permanents: {
+                'Permanent upgrade slot I': 'Kitten strategists',
+                'Permanent upgrade slot II': 'Kitten admins'
+            },
+            permanentChoices: choices,
+            chips: 0
+        }
+    })
+    const state = await pump(h, 12)
+    assert.deepEqual(Object.values(state.permanents).sort(), ['Kitten admins', 'Kitten strategists'])
+    assert.ok(state.log.includes('reincarnated'))
+})
 
 test('a slot holding a weaker kitten is reassigned at the next ascension', async () => {
     const state = await pump(
