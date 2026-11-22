@@ -252,8 +252,8 @@
         return resource ? revisions.get(resource) || 0 : userRevision
     }
 
-    // LoadSave refreshes this label with textContent, replacing its text node
-    // even when the imported name is unchanged. Check the node synchronously:
+    // ImportSaveCode resets the bakery label before LoadSave restores its name,
+    // replacing its text node even for the same run. Check it synchronously:
     // FileReader.onload can finish long after selection and any intervening
     // recovery. Prompt revisions alone cannot prove cosmetics are still live.
     function cosmeticCheck() {

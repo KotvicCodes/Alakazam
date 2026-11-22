@@ -247,7 +247,6 @@
         }
         store.set(RECOVERY_KEY, restoredHere.mark)
         forgetIfSaved(mark)
-        if (mark.earned) completed()
         ctx.input('simulateClick', el('promptOption0'))
         return true
     }
@@ -308,6 +307,7 @@
                 if (!(await move(FREE_GENE, 1, ctx, mark, who.runId, unchanged))) return
                 if (!(await move(FREE_GENE, -1, ctx, mark, who.runId, unchanged))) return
                 mark.earned = true
+                completed()
                 store.set(RECOVERY_KEY, { ...mark })
             } finally {
                 await ctx.cleanup(() => restore(mark, ctx, who.runId, unchanged))
