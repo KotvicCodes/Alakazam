@@ -227,6 +227,7 @@
             window.__alakazam.market = {
                 office: s.officeLevel,
                 brokers: s.brokers,
+                profit: s.profit,
                 trading: false,
                 signals: s.goods.filter(g => g.signal !== 'hold').map(g => `${g.name} ${g.signal}`)
             }
