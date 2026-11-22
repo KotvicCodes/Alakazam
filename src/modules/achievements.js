@@ -41,10 +41,12 @@
     // panel every few seconds is exactly the kind of thrashing this avoids.
     const RETRY_COOLDOWN_MS = 60000
 
-    // the news ticker has three separate achievements at increasing click counts,
-    // and the highest is well into the hundreds. clicks are spread across sessions
-    // rather than hammered in one go, and the running total is remembered.
-    const TICKER_TARGET = 1000
+    // Tabloid addiction is the only click-count achievement on the news ticker and
+    // unlocks at 50 clicks in a single session (Game.TickerClicks is not saved).
+    // Stopping there matters: every manual click resets Game.TickerAge, which
+    // suppresses the natural rotations that Fortune Cookies only spawn on.
+    const TABLOID_ADDICTION_ID = 243
+    const TICKER_TARGET = 50
     const TICKER_PER_TICK = 6
 
     // the game swaps the news item on each registered click, so leave a beat for
@@ -56,6 +58,8 @@
     const TICKER_MAX_TRIES = 200
 
     let pending = []
+    let sessionTickerClicks = 0
+    let tickerCompletionRevision = null
 
     function attempts(name) {
         return store.get('attempts:' + name, 0)
@@ -257,6 +261,46 @@
         }
     }
 
+    //* Just wrong: sell a grandma once at least two are owned
+    // Selling the last grandma locks Elder Pledge and collects wrinklers, so wait
+    // until at least two are held before selling one.
+    function grandmaCount() {
+        const liveOwned = window.Alakazam.live?.readProducts().find(p => p.index === 1)?.owned
+        if (Number.isFinite(liveOwned)) return liveOwned
+        return save.building(1)?.amount || 0
+    }
+
+    function justWrongReady() {
+        if (!window.Alakazam.act?.store?.available()) return false
+        const phase = window.__alakazam?.ascend?.phase
+        if (phase && phase !== 'watching') return false
+        return grandmaCount() >= 2
+    }
+
+    async function justWrong() {
+        if (!justWrongReady()) return false
+        const ctx = window.Alakazam.safety.scope('achievements')
+        let lease = null
+        const deadline = Date.now() + MENU_MS
+        while (!lease && Date.now() <= deadline) {
+            ctx.check()
+            lease = window.Alakazam.transactions.acquire('achievements', ctx)
+            if (!lease) await wait(25)
+        }
+        if (!lease) return 'defer'
+        try {
+            if (!justWrongReady()) return 'defer'
+            const grandma = window.Alakazam.live?.readProducts().find(p => p.index === 1) || {
+                index: 1
+            }
+            const res = await window.Alakazam.act.store.sell(grandma, 1, lease)
+            ctx.check()
+            return res !== null && res !== false
+        } finally {
+            lease.release()
+        }
+    }
+
     const ONE_OFFS = [
         { name: 'statsPanel', run: statsPanel, ready: () => !!statsButton() },
         { name: 'oldenDays', run: oldenDays, ready: () => !!logButton() },
@@ -264,7 +308,8 @@
             name: 'godComplex',
             run: godComplex,
             ready: () => !!document.getElementById('bakeryName')
-        }
+        },
+        { name: 'justWrong', run: justWrong, ready: justWrongReady }
     ]
 
     //! Running them
@@ -274,11 +319,10 @@
 
     // opening a menu is visible and mildly annoying, so a routine that has to be
     // retried waits rather than going again on the very next tick
-    let nextAttemptAt = 0
+    const retryAt = new Map()
 
     async function runPending() {
         if (running || pending.length === 0) return
-        if (Date.now() < nextAttemptAt) return
         running = true
         try {
             // every routine that is ready gets its turn this tick, one after the
@@ -289,9 +333,9 @@
             pending = []
 
             for (const job of queue) {
-                if (!job.ready()) {
-                    // the menu it needs is not even drawn yet, so this is not an
-                    // attempt at all: hold it back and look again next tick
+                if (Date.now() < (retryAt.get(job.name) || 0) || !job.ready()) {
+                    // the menu it needs is not even drawn yet, or it is still on
+                    // cooldown from a previous attempt: hold it back for later
                     pending.push(job)
                     continue
                 }
@@ -307,6 +351,11 @@
                     console.warn(`Alakazam: achievement routine "${job.name}" failed`, err)
                 }
 
+                if (worked === 'defer') {
+                    pending.push(job)
+                    continue
+                }
+
                 // Opening a menu is the expensive, visible part, and it happened
                 // whether or not the thing we wanted was inside. So it counts as
                 // an attempt either way. Only counting successes meant a routine
@@ -318,14 +367,16 @@
                 if (worked) {
                     // found it: no reason to ever come back
                     store.set('attempts:' + job.name, MAX_ATTEMPTS)
+                    retryAt.delete(job.name)
                 } else if (giveUp(job.name)) {
                     console.log(`Alakazam: done trying "${job.name}" for this save`)
+                    retryAt.delete(job.name)
                 } else {
                     console.log(`Alakazam: "${job.name}" found nothing to click, will retry later`)
+                    retryAt.set(job.name, Date.now() + RETRY_COOLDOWN_MS)
                     pending.push(job)
                 }
             }
-            if (pending.length > 0) nextAttemptAt = Date.now() + RETRY_COOLDOWN_MS
         } finally {
             running = false
         }
@@ -344,50 +395,111 @@
     //! Ongoing work
 
     //* tickerTarget
-    // The news ticker is two stacked text layers, #commentsText1 and
-    // #commentsText2, that the game swaps between as the news rotates. Clicking a
-    // particular layer is unreliable: half the time it is the hidden one, and
-    // clicking the ticker advances the news, which swaps the nodes underneath.
-    //
-    // So aim at the stable container instead and let the event bubble, which is
-    // what happens when a player clicks the ticker anyway.
+    // Cookie Clicker attaches its ticker click handler directly to #commentsText1
+    // (Game.tickerL), not to #comments or #commentsText. Since DOM events bubble up
+    // from child to ancestor and never down, clicks aimed at #comments miss the
+    // listener in the real game. Prefer #commentsText1 and keep the outer containers
+    // as fallbacks for simplified test DOMs.
     function tickerTarget() {
         return (
-            document.getElementById('comments') ||
+            document.getElementById('commentsText1') ||
             document.getElementById('commentsText') ||
-            document.getElementById('commentsText1')
+            document.getElementById('comments')
         )
     }
 
     function tickerText() {
-        const el = document.getElementById('commentsText') || tickerTarget()
+        const el =
+            document.getElementById('commentsText1') ||
+            document.getElementById('commentsText') ||
+            tickerTarget()
         return el ? el.innerText : ''
     }
 
+    //* hasFortune
+    // Fortune cookies render a <span class="fortune"> inside the active ticker line.
+    // Ignore #commentsText2 so the outgoing layer does not look like a second fortune
+    // while it fades out after a click.
+    function hasFortune() {
+        const fortune =
+            document.querySelector('#commentsText1 .fortune') ||
+            document.querySelector('#comments .fortune')
+        if (!fortune) return false
+        const below = document.getElementById('commentsText2')
+        return !(below && below.contains && below.contains(fortune))
+    }
+
+    //* hasTabloidAddiction
+    // Game.TickerClicks is an in-memory counter that resets to 0 on every page
+    // reload, while Tabloid addiction (id 247) requires 50 clicks in one session.
+    // If a previous session stopped before 50 and the save still lacks achievement
+    // 243, persisted tickerClicks alone cannot retire ticker clicking.
+    function hasTabloidAddiction() {
+        const s = save.get()
+        if (s.ok && Array.isArray(s.achievements) && s.achievements.length > TABLOID_ADDICTION_ID) {
+            if (s.achievements[TABLOID_ADDICTION_ID]) {
+                store.set('tabloidAddictionDone', true)
+                return true
+            }
+            // Extension storage can be newer than a reloaded game save, or an
+            // imported backup can remove a previously confirmed achievement.
+            // Only this document's observations may bridge the autosave delay.
+            if (store.get('tabloidAddictionDone', false)) store.forget('tabloidAddictionDone')
+            if (
+                tickerCompletionRevision !== null &&
+                save.stats().revision !== tickerCompletionRevision
+            ) {
+                sessionTickerClicks = 0
+                tickerCompletionRevision = null
+            }
+            return sessionTickerClicks >= TICKER_TARGET
+        }
+        return sessionTickerClicks >= TICKER_TARGET || store.get('tickerClicks', 0) >= TICKER_TARGET
+    }
+
     //* clickTicker
-    // The ticker achievements are pure persistence, but only clicks the game
-    // actually registers count, and it registers at most one per news item.
-    // Firing a dozen clicks into the same millisecond therefore did almost
-    // nothing: the counter here climbed to its target while the game had seen a
-    // handful. Now each click is given a moment to land and is only counted when
-    // the news item actually changed, which is the observable proof it registered.
+    // The ticker achievement is pure persistence, but only clicks the game actually
+    // registers count, and it registers at most one per news item. Firing a dozen
+    // clicks into the same millisecond therefore did almost nothing: the counter
+    // here climbed to its target while the game had seen a handful. Now each click
+    // is given a moment to land and is only counted when the news item actually
+    // changed, which is the observable proof it registered.
+    //
+    // Once Tabloid addiction is done, ordinary ticker clicking stops so manual
+    // clicks do not keep resetting Game.TickerAge, but fortune headlines are still
+    // clicked whenever they appear to unlock O Fortuna and the fortune upgrades.
     async function clickTicker() {
-        if (store.get('tickerClicks', 0) >= TICKER_TARGET) return
+        const needClicks =
+            !hasTabloidAddiction() &&
+            !(
+                store.get('tickerTries', 0) > TICKER_MAX_TRIES &&
+                sessionTickerClicks === 0 &&
+                store.get('tickerClicks', 0) === 0
+            )
+        if (!needClicks && !hasFortune()) return
 
-        // if clicks never seem to register, stop rather than poking forever
-        const tries = store.get('tickerTries', 0)
-        if (tries > TICKER_MAX_TRIES && store.get('tickerClicks', 0) === 0) return
-
-        for (let i = 0; i < TICKER_PER_TICK; i++) {
+        const steps = needClicks ? TICKER_PER_TICK : 1
+        for (let i = 0; i < steps; i++) {
+            if (i > 0 && hasTabloidAddiction() && !hasFortune()) break
             const target = tickerTarget()
             if (!target) return
+            const fortune = hasFortune()
             const before = tickerText()
             simulateClick(target)
             await wait(TICKER_GAP_MS)
             store.set('tickerTries', store.get('tickerTries', 0) + 1)
-            if (tickerText() !== before) {
-                store.set('tickerClicks', store.get('tickerClicks', 0) + 1)
+            const changed = tickerText() !== before
+            if (fortune && (!hasFortune() || changed)) {
+                store.set('fortunesClicked', store.get('fortunesClicked', 0) + 1)
             }
+            if (changed) {
+                sessionTickerClicks++
+                store.set('tickerClicks', store.get('tickerClicks', 0) + 1)
+                if (sessionTickerClicks >= TICKER_TARGET) {
+                    tickerCompletionRevision = save.stats().revision
+                }
+            }
+            if (fortune && hasFortune()) break
         }
     }
 
@@ -410,6 +522,7 @@
             known: s.ok && s.achievements ? s.achievements.length : 0,
             tickerClicks: store.get('tickerClicks', 0),
             tickerTries: store.get('tickerTries', 0),
+            fortunesClicked: store.get('fortunesClicked', 0),
             waiting: pending.map(j => j.name),
             attempts: ONE_OFFS.map(j => `${j.name}:${attempts(j.name)}`)
         }
@@ -418,7 +531,9 @@
     registry.register({
         reset: () => {
             pending = []
-            nextAttemptAt = 0
+            sessionTickerClicks = 0
+            tickerCompletionRevision = null
+            retryAt.clear()
             setup()
         },
         name: 'achievements',
@@ -427,5 +542,19 @@
         tick
     })
 
-    window.Alakazam.achievements = { ONE_OFFS, attempts, giveUp, MAX_ATTEMPTS, godComplex, recoverName }
+    window.Alakazam.achievements = {
+        ONE_OFFS,
+        attempts,
+        giveUp,
+        MAX_ATTEMPTS,
+        TABLOID_ADDICTION_ID,
+        TICKER_TARGET,
+        hasTabloidAddiction,
+        tickerTarget,
+        tickerText,
+        clickTicker,
+        justWrong,
+        godComplex,
+        recoverName
+    }
 })()

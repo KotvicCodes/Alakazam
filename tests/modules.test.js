@@ -1442,6 +1442,237 @@ test('the ticker gives up if no click ever registers', async () => {
     assert.equal(comments.events.filter(e => e === 'click').length, 0, 'should have stopped poking it')
 })
 
+test('tickerTarget and tickerText prefer #commentsText1 where the game binds its click handler', async () => {
+    const h = boot({})
+    const d = h.game.doc
+    const comments = new El('div', { id: 'comments' })
+    const text = new El('div', { id: 'commentsText' })
+    const layer1 = new El('div', { id: 'commentsText1', class: 'commentsText', text: 'active news 0' })
+    const layer2 = new El('div', { id: 'commentsText2', class: 'commentsText', text: 'fading news' })
+    text.append(layer1, layer2)
+    comments.append(text)
+    d.body.append(comments)
+
+    assert.equal(h.A.achievements.tickerTarget(), layer1)
+    assert.equal(h.A.achievements.tickerText(), 'active news 0')
+
+    // Cookie Clicker binds AddEvent(Game.tickerL, 'click', ...) on #commentsText1;
+    // events bubble up from child to ancestor, never down from #comments.
+    let clicks = 0
+    layer1.addEventListener('click', () => {
+        clicks++
+        layer2.text = layer1.text
+        layer1.text = 'active news ' + clicks
+    })
+
+    await h.A.store.ready('t')
+    await h.A.achievements.clickTicker()
+    assert.equal(clicks, 6)
+    assert.equal(h.A.store.get('tickerClicks', 0), 6)
+})
+
+test('ticker clicking stops at 50 for Tabloid addiction, but still claims Fortune Cookies', async () => {
+    const h = boot({ disk: { 'legacy:t': { tickerClicks: 50 } } })
+    assert.equal(h.A.achievements.TICKER_TARGET, 50)
+
+    const d = h.game.doc
+    const comments = new El('div', { id: 'comments' })
+    const text = new El('div', { id: 'commentsText' })
+    const layer1 = new El('div', { id: 'commentsText1', class: 'commentsText', text: 'ordinary news' })
+    const layer2 = new El('div', { id: 'commentsText2', class: 'commentsText' })
+    text.append(layer1, layer2)
+    comments.append(text)
+    d.body.append(comments)
+
+    let clicks = 0
+    layer1.addEventListener('click', () => {
+        clicks++
+        // Game.TickerDraw() moves the clicked fortune into #commentsText2 as it fades out
+        layer2.children = layer1.children.slice()
+        layer2.children.forEach(c => (c.parentElement = layer2))
+        layer1.children = []
+        layer1.innerText = 'news after fortune ' + clicks
+    })
+
+    await h.A.store.ready('t')
+    await h.A.registry.get('achievements').tick()
+    assert.equal(clicks, 0, 'does not hammer the ticker past 50 on ordinary news')
+    assert.equal(h.A.store.get('fortunesClicked', 0), 0)
+
+    // a natural rotation spawns a Fortune Cookie inside #commentsText1
+    layer1.text = ''
+    layer1.append(new El('span', { class: 'fortune', text: 'Today is your lucky day!' }))
+
+    await h.A.registry.get('achievements').tick()
+    assert.equal(clicks, 1, 'clicks the fortune even after tickerClicks >= 50')
+    assert.equal(h.A.store.get('fortunesClicked', 0), 1)
+    assert.equal(h.debug().achievements.fortunesClicked, 1)
+
+    // the departing fortune in #commentsText2 is not clicked a second time
+    await h.A.registry.get('achievements').tick()
+    assert.equal(clicks, 1)
+    assert.equal(h.A.store.get('fortunesClicked', 0), 1)
+})
+
+test('persisted tickerClicks from an earlier reload do not stop before Tabloid addiction unlocks', async () => {
+    // Game.TickerClicks resets to 0 on every reload and is not stored in the save.
+    // If 49 clicks were recorded before a reload and save achievement 243 is still
+    // locked, clicking must not stop after 1 click in the new session.
+    const h = boot({
+        localStorage: fx.storage({
+            CookieClickerGame: fx.save({ achievementBits: '0'.repeat(300) }).raw
+        }),
+        disk: { 'legacy:t': { tickerClicks: 49 } }
+    })
+    assert.equal(h.A.save.get().achievements[243], false)
+
+    const d = h.game.doc
+    const comments = new El('div', { id: 'comments' })
+    const text = new El('div', { id: 'commentsText' })
+    const layer1 = new El('div', { id: 'commentsText1', class: 'commentsText', text: 'news 0' })
+    text.append(layer1)
+    comments.append(text)
+    d.body.append(comments)
+
+    let sessionClicks = 0
+    layer1.addEventListener('click', () => {
+        sessionClicks++
+        layer1.text = 'news ' + sessionClicks
+    })
+
+    await h.A.store.ready('t')
+    await h.A.achievements.clickTicker()
+    assert.equal(
+        sessionClicks,
+        6,
+        'continues past persisted tickerClicks === 50 when Tabloid addiction is still locked'
+    )
+    assert.equal(h.A.store.get('tickerClicks', 0), 55)
+    assert.equal(h.A.achievements.hasTabloidAddiction(), false)
+
+    while (sessionClicks < h.A.achievements.TICKER_TARGET) {
+        await h.A.achievements.clickTicker()
+    }
+    assert.equal(sessionClicks, 50, 'stops once 50 clicks are registered in the current session')
+    assert.equal(
+        h.A.store.get('tabloidAddictionDone', false),
+        false,
+        'inferred completion stays in memory'
+    )
+    assert.equal(h.A.achievements.hasTabloidAddiction(), true)
+
+    await h.A.achievements.clickTicker()
+    assert.equal(sessionClicks, 50, 'does not click further after 50 session clicks')
+
+    await h.A.store.flush()
+    const reloaded = boot({
+        save: fx.save({ achievementBits: '0'.repeat(300) }).raw,
+        disk: h.disk
+    })
+    const headline = new El('div', { id: 'commentsText1', text: 'reloaded news' })
+    let reloadClicks = 0
+    headline.addEventListener('click', () => (headline.innerText = 'news ' + ++reloadClicks))
+    reloaded.game.doc.body.append(headline)
+    await reloaded.A.store.ready('t')
+    await reloaded.A.achievements.clickTicker()
+    assert.equal(reloadClicks, 6, 'reload before the game autosaves the achievement retries it')
+
+    // A backup imported into this document must also invalidate inferred or
+    // persisted completion when its newer save revision lacks the achievement.
+    h.A.save.get().achievements[243] = true
+    assert.equal(h.A.achievements.hasTabloidAddiction(), true)
+    assert.equal(h.A.store.get('tabloidAddictionDone', false), true)
+    h.ctx.localStorage.setItem(
+        'CookieClickerGame',
+        fx.save({ achievementBits: '0'.repeat(300), lastDate: Date.now() + 1 }).raw
+    )
+    await h.A.registry.get('saveWatch').tick()
+    await h.A.achievements.clickTicker()
+    assert.equal(sessionClicks, 56, 'an older backup with the achievement missing resumes clicking')
+    assert.equal(h.A.store.get('tabloidAddictionDone', false), false)
+})
+
+test('a persisted Tabloid completion flag cannot override a missing save achievement', async () => {
+    const h = boot({
+        save: fx.save({ achievementBits: '0'.repeat(300) }).raw,
+        disk: { 'legacy:t': { tickerClicks: 50, tabloidAddictionDone: true } }
+    })
+    await h.A.store.ready('t')
+    assert.equal(h.A.achievements.hasTabloidAddiction(), false)
+    assert.equal(h.A.store.get('tabloidAddictionDone', false), false)
+})
+
+test('justWrong sells a grandma only when at least two are owned and no ascension is running', async () => {
+    const h = boot({
+        game: { bank: 1e6, owned: [0, 1, 0, 0, 0, 0, 0, 0] },
+        disk: {
+            'legacy:t': {
+                'attempts:statsPanel': 4,
+                'attempts:oldenDays': 4,
+                'attempts:godComplex': 4
+            }
+        }
+    })
+    await h.A.store.ready('t')
+    const job = h.A.achievements.ONE_OFFS.find(j => j.name === 'justWrong')
+    assert.ok(job, 'justWrong should be registered in ONE_OFFS')
+    assert.equal(job.ready(), false, 'never sells the last grandma')
+
+    h.A.registry.get('achievements').setup()
+    await h.A.registry.get('achievements').tick()
+    assert.equal(h.game.state.owned[1], 1)
+    assert.equal(h.A.achievements.attempts('justWrong'), 0)
+
+    // once two grandmas are owned, it still holds off while an ascension is in flight
+    h.game.state.owned[1] = 2
+    h.game.refresh()
+    h.debug().ascend = { phase: 'loans' }
+    assert.equal(job.ready(), false, 'holds off during ascension')
+
+    h.debug().ascend = { phase: 'watching' }
+    assert.equal(job.ready(), true)
+
+    await h.A.registry.get('achievements').tick()
+    assert.equal(h.game.state.owned[1], 1, 'sold one grandma for Just wrong')
+    assert.equal(h.game.state.mode, 'buy', 'restored the store to buy mode')
+    assert.equal(h.game.state.amount, 1)
+    assert.equal(h.A.achievements.giveUp('justWrong'), true, 'retired after selling')
+})
+
+test('justWrong defers while purchase holds the store lease and sells once it is released', async () => {
+    const h = boot({
+        game: { bank: 1e6, owned: [0, 2, 0, 0, 0, 0, 0, 0] },
+        disk: {
+            'legacy:t': {
+                'attempts:statsPanel': 4,
+                'attempts:oldenDays': 4,
+                'attempts:godComplex': 4
+            }
+        }
+    })
+    await h.A.store.ready('t')
+    h.A.registry.get('achievements').setup()
+
+    const held = h.A.transactions.acquire('purchase')
+    assert.ok(held, 'purchase should acquire the store transaction lease')
+
+    for (let i = 0; i < 5; i++) {
+        await h.A.registry.get('achievements').tick()
+        assert.equal(
+            h.A.achievements.attempts('justWrong'),
+            0,
+            'deferring on lease contention must not count as an attempt'
+        )
+        assert.equal(h.game.state.owned[1], 2)
+    }
+    assert.equal(h.A.achievements.giveUp('justWrong'), false)
+
+    held.release()
+    await h.A.registry.get('achievements').tick()
+    assert.equal(h.game.state.owned[1], 1, 'sold one grandma as soon as the purchase lease released')
+    assert.equal(h.A.achievements.giveUp('justWrong'), true)
+})
+
 //! Version reporting
 
 test('no version number is hardcoded into the popup markup', () => {

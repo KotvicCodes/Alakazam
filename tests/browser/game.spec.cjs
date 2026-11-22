@@ -47,6 +47,42 @@ for (const owned of [false, true]) {
     })
 }
 
+test('ticker completion uses the game achievement and retries a missing saved award', async ({
+    game
+}) => {
+    const result = await game.evaluate(async () => {
+        const achievement = Game.Achievements['Tabloid addiction']
+        achievement.won = 0
+        Game.TickerClicks = 0
+        Game.WriteSave()
+        await Alakazam.registry.get('saveWatch').tick()
+        Alakazam.store.setSetting('enabled', true)
+        Alakazam.store.set('tickerClicks', 50)
+        Alakazam.store.set('tabloidAddictionDone', true)
+        const missing = Alakazam.achievements.hasTabloidAddiction()
+        await Alakazam.achievements.clickTicker()
+        const clicks = Game.TickerClicks
+        achievement.won = 1
+        Game.WriteSave()
+        await Alakazam.registry.get('saveWatch').tick()
+        const confirmed = Alakazam.achievements.hasTabloidAddiction()
+        await Alakazam.achievements.clickTicker()
+        return {
+            id: achievement.id,
+            trackedId: Alakazam.achievements.TABLOID_ADDICTION_ID,
+            missing,
+            clicks,
+            confirmed,
+            after: Game.TickerClicks
+        }
+    })
+    expect(result.trackedId).toBe(result.id)
+    expect(result.missing).toBe(false)
+    expect(result.clicks).toBeGreaterThan(0)
+    expect(result.confirmed).toBe(true)
+    expect(result.after).toBe(result.clicks)
+})
+
 test('reads actual save output and dispatches a store purchase', async ({ game }) => {
     await game.evaluate(() => {
         Game.cookies = 1000
