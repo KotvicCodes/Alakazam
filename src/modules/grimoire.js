@@ -47,6 +47,7 @@
 
     const FTHOF = SPELLS[1]
     const CONJURE = SPELLS[0]
+    const HAGGLER = SPELLS[4]
 
     // casting drops the bar a long way, and regeneration is slowest when the bar
     // is low, so idle spending only happens while comfortably full
@@ -58,6 +59,7 @@
     const SPELL_DISCOUNT = 0.1
 
     let lastCastAt = 0
+    let idleMagicBefore = null
 
     //! Formulas
 
@@ -184,11 +186,12 @@
 
     //! Casting
 
-    function cast(spell, why) {
+    function cast(spell, why, magicBefore) {
         const button = document.getElementById('grimoireSpell' + spell.id)
         if (!button) return false
         simulateClick(button)
         lastCastAt = Date.now()
+        idleMagicBefore = spell === HAGGLER ? magicBefore : null
         store.update('spellsCast', 0, n => n + 1)
         console.log(`Alakazam: casting ${spell.name} (${why})`)
         return true
@@ -203,24 +206,36 @@
         window.__alakazam.grimoire = { ...s, blocked: guard.blocked ? guard.reason : '' }
         if (guard.blocked) return
 
-        // never cast twice in a row without letting the bar move
-        if (Date.now() - lastCastAt < 5000) return
+        const comboReady = buffs.hasSpellComboBuff() && s.magic >= s.fthofCost
+        // A confirmed idle cast must not delay a newly available combo. Keep
+        // the normal cooldown until the live bar reflects that idle spend.
+        const idleCastConfirmed = idleMagicBefore !== null && s.magic < idleMagicBefore
+        if (Date.now() - lastCastAt < 5000 && !(comboReady && idleCastConfirmed)) return
 
         // the whole point of Force the Hand of Fate is starting a combo, and a
         // conjured golden cookie is worth far more stacked on a production buff
         // than used on its own
-        if (buffs.hasSpellComboBuff() && s.magic >= s.fthofCost) {
-            cast(FTHOF, 'production buff is up')
+        if (comboReady) {
+            cast(FTHOF, 'production buff is up', s.magic)
             return
         }
 
         // otherwise, only spend when the bar is essentially full: regeneration
         // scales with how full it is, so running it down is self-defeating
         const conjureCost = spellCost(CONJURE, s.magicM, s.discount)
-        if (s.magic >= s.magicM * IDLE_CAST_FRACTION && s.magic >= conjureCost) {
+        // Saved auras can lag manual aura changes. Reserve undiscounted costs
+        // so removing Supreme Intellect cannot spend Fate's promised magic.
+        const hagglerCost = spellCost(HAGGLER, s.magicM)
+        const fateReserve = spellCost(FTHOF, s.magicM)
+        if (s.magic >= s.magicM * IDLE_CAST_FRACTION) {
             // hold the bar for Force the Hand of Fate if it is nearly affordable,
             // rather than spending it on cookies moments before a buff lands
-            if (s.magic < s.fthofCost) cast(CONJURE, 'magic is capped and would otherwise be wasted')
+            if (s.magic < s.fthofCost) {
+                if (s.magic >= conjureCost)
+                    cast(CONJURE, 'magic is capped and would otherwise be wasted', s.magic)
+            } else if (s.magic >= hagglerCost && s.magic - hagglerCost >= fateReserve) {
+                cast(HAGGLER, 'magic is capped and Force the Hand of Fate remains covered', s.magic)
+            }
         }
     }
 
