@@ -499,7 +499,7 @@ for (const duration of [13, 52, 74]) {
 test('manual FTHOF cookies neither get held when #grimoireInfo advances nor permanently suppress Fading luck when unconfirmed by the next save', async () => {
     let now = 1_750_000_010_000
     const bitsWithoutFadingLuck = '0'.repeat(300)
-    const bitsWithFadingLuck = '0'.repeat(268) + '1' + '0'.repeat(31)
+    const bitsWithFadingLuck = '0'.repeat(264) + '1' + '0'.repeat(31)
     const auto = fx.autosaves({ achievementBits: bitsWithoutFadingLuck }, { now: () => now })
     const h = boot({ localStorage: auto.localStorage })
     await h.A.store.ready('t-fading')
@@ -548,7 +548,7 @@ test('manual FTHOF cookies neither get held when #grimoireInfo advances nor perm
     assert.equal(untrackedSpellCookie.events.includes('click'), true)
     assert.equal(h.A.store.get('fadingLuckDone', false), true)
 
-    // next autosave arrives with achievements[268] still false -> fadingLuckDone is cleared
+    // next autosave arrives with achievements[264] still false -> fadingLuckDone is cleared
     now += 60_000
     auto.change({ cookies: 2e6, achievementBits: bitsWithoutFadingLuck })
     auto.publish()
@@ -557,7 +557,7 @@ test('manual FTHOF cookies neither get held when #grimoireInfo advances nor perm
     assert.equal(
         h.A.store.get('fadingLuckDone', false),
         false,
-        'unconfirmed Fading luck attempt is cleared once a newer save still lacks achievement 268'
+        'unconfirmed Fading luck attempt is cleared once a newer save still lacks achievement 264'
     )
 
     // the next solo natural golden cookie is held again for Fading luck
@@ -573,7 +573,7 @@ test('manual FTHOF cookies neither get held when #grimoireInfo advances nor perm
     )
     assert.equal(h.A.store.get('fadingLuckDone', false), true)
 
-    // next autosave confirms achievements[268] === true -> permanently done
+    // next autosave confirms achievements[264] === true -> permanently done
     now += 60_000
     auto.change({ cookies: 3e6, achievementBits: bitsWithFadingLuck })
     auto.publish()

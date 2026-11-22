@@ -18,7 +18,7 @@
     const { live, registry, save, store } = window.Alakazam
 
     const INTERVAL_MS = 50
-    const FADING_LUCK_ID = 268
+    const FADING_LUCK_ID = 264
     const FADING_LUCK_PEAK = 0.85
     // even at the ~68.9s maximum golden-cookie lifespan (Lucky day + Serendipity +
     // 36 mature green rot on clay), opacity <= 0.10 is strictly under 30 frames (1s)
