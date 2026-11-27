@@ -1,8 +1,10 @@
 # HUD and active-tab status verification
 
-The extension still loads plain scripts directly from `manifest.json` and
-`popup.html`; there is no build step. Install/reload the unpacked extension from
-this directory, then reload existing game tabs to load the updated content scripts.
+Use Node 22.22+ (22.x) or 24.x. Run `npm ci` and `npm run build`, then load the
+generated `dist/` directory as the unpacked extension. The build emits the plain
+scripts referenced by `manifest.json` and `popup.html`. After source changes,
+rebuild, reload the extension, and reload existing game tabs to load the updated
+content scripts.
 
 The HUD starts as a compact bottom-left strip. Pause/Resume remains visible;
 Configure expands grouped module controls and diagnostics. Native buttons support
@@ -20,7 +22,9 @@ that supplies the displayed module states. Save parse warnings remain visible.
 ## Automated checks
 
 ```sh
-npm install
+npm ci
+npm run typecheck
+npm run build
 npm test
 npm run format:check
 ```
@@ -42,9 +46,11 @@ this runner prepare disposable fixtures; extension code continues to use the DOM
 and saved data.
 
 ```sh
-npm install --no-save playwright
-npx playwright install chromium
-node tests/extension.browser.cjs
+npm ci
+npm run build
+npx playwright install chromium --no-shell
+npm run test:game:fetch
+ALAKAZAM_GAME_DIR="$PWD/.cache/cookieclicker" npx tsx tests/extension.browser.ts
 ```
 
 `ALAKAZAM_PLAYWRIGHT` can point to a separately installed Playwright package;
@@ -73,8 +79,10 @@ The runner checks:
 - Unsupported-language, unresolved-identity and injected scheduler failures reach
   the popup, including the original failure message.
 
-Validation completed with Chromium 154 and the actual Cookie Clicker 2.058 source
-mirror, using the installed unpacked extension and its real popup document.
+The original HUD validation used Chromium 154 and the actual Cookie Clicker 2.058
+source mirror, with the installed unpacked extension and its real popup document.
+That historical run predates the TypeScript migration; it does not establish a new
+acceptance result for the rebuilt extension.
 Screenshots are written to `ALAKAZAM_ARTIFACTS` or a directory in the system temp
 folder. The runner opens the popup document as an extension tab and activates the
 game tab through Chrome's tabs API to reproduce the toolbar popup's active-tab
