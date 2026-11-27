@@ -1,0 +1,461 @@
+// wrapped in an IIFE so its top-level names stay private: all content scripts
+// share one scope, so bare top-level declarations across files would collide
+export const api = (function () {
+    //! Sugar Lumps
+    // A lump grows for 20 hours, is mature for 3 more, is ripe for 1, then falls
+    // on its own. Harvesting a mature lump fails half the time and yields nothing;
+    // harvesting a ripe one always works. Nothing on screen says in so many words
+    // which stage a lump is at, but the save records the moment it started
+    // growing, so the stage is arithmetic and the harvest can be timed properly.
+    //
+    // Waiting for ripe is very nearly free: a lump left alone falls by itself an
+    // hour later anyway. The only reason to harvest early is the one achievement
+    // that requires it, so that gamble is taken exactly once per save.
+    //
+    // Lumps are then spent on building levels. Every level adds 1% to that
+    // building, but the first level of four specific buildings unlocks a whole
+    // minigame, which is worth far more than any percentage.
+    //
+    //! Those hours are not constants
+    // Stevia Caelestis, Sugar aging process and Rigidel each take up to an hour
+    // off the ripening time, and the game sets the moment a lump falls to exactly
+    // one hour after it ripens. So every one of those reductions pulls the
+    // auto-harvest earlier too, and on a save with all three the lump has fallen
+    // by hour 21. Waiting for hour 23 on that save means never harvesting a lump
+    // at all: they all fall on their own, an hour later than they had to, and the
+    // next one starts growing an hour late every time.
+    //
+    // Which of those upgrades are owned is not readable from the save in any form
+    // that survives a game patch (the bitfield is by upgrade id, and ids move), so
+    // the schedule is measured off the lump itself instead. See lifeSpan below.
+
+    const { simulateClick } = window.Alakazam.safety.input('lumps')
+    const { save, store, registry } = window.Alakazam
+
+    const INTERVAL_MS = 30000
+    const HOUR = 60 * 60 * 1000
+
+    //* MATURE_MS
+    // 20 hours, the game's base. Every modifier only ever lowers the real figure,
+    // so a lump this old is certainly mature whatever the save owns. That is all
+    // this is used for: the one deliberate early harvest below needs a moment that
+    // is definitely past maturity, and being late to it costs nothing.
+    const MATURE_MS = 20 * HOUR
+
+    // and the base fall time, used until the real one has been measured
+    const FALL_MS = 24 * HOUR
+
+    // the game's own gap between ripening and falling, which it never varies:
+    // lumpOverripeAge is written as lumpRipeAge plus one hour
+    const RIPE_BEFORE_FALL_MS = HOUR
+
+    // a measured lifespan outside this range is a misread rather than a discovery.
+    // Nothing can push it above the 24 hour base, and the reductions together
+    // cannot bring it below about 19 hours.
+    const MIN_MEASURED_MS = 2 * HOUR
+
+    const LUMP_TYPES = ['normal', 'bifurcated', 'golden', 'meaty', 'caramelized']
+
+    //* Spending plan
+    // in order. the first level of these four buildings unlocks a minigame, which
+    // is the best return sugar lumps ever offer, so they come before everything.
+    // after that: the garden wants a full 6x6 plot, cursors want the levels that
+    // improve click combos, and 100 lumps banked is itself a production bonus.
+    const PLAN = [
+        { building: 7, level: 1, why: 'unlocks the Grimoire' },
+        { building: 6, level: 1, why: 'unlocks the Pantheon' },
+        { building: 2, level: 1, why: 'unlocks the Garden' },
+        { building: 5, level: 1, why: 'unlocks the Stock Market' },
+        { building: 2, level: 9, why: 'grows the garden to a full 6x6 plot' },
+        { building: 0, level: 12, why: 'improves click combos and loan slots' }
+    ]
+
+    // below this, lumps are spent; at or above it they are banked, because holding
+    // 100 is itself worth 1% production per lump
+    const BANK_TARGET = 100
+    // Cookie Clicker 2.058: Aura gloves caps at Cursor 10 until Luminous gloves.
+    const AURA_GLOVES_ID = 719
+    const LUMINOUS_GLOVES_ID = 720
+
+    let lastHarvestAt = 0
+    const pending = []
+    let balanceCeiling = Infinity
+
+    function reconcile(s) {
+        if (!s.ok || !s.buildings) return
+        // once autosave contains a spend, it no longer needs reconciliation
+        for (let i = pending.length - 1; i >= 0; i--) {
+            const p = pending[i]
+            if (
+                s.buildings[p.index]?.level >= p.level ||
+                // an unreadable click is only a bank hold, not an assumed level.
+                // a fresh trusted save settles a refusal as well as a success.
+                (p.uncertain && !s.stale && s.scalars?.trusted && s.run?.lastDate > p.at)
+            )
+                pending.splice(i, 1)
+        }
+        // A harvest may leave the live balance above our conservative ceiling.
+        // Once all spends are saved, that ceiling must not hide future earnings.
+        if (!pending.length) balanceCeiling = Infinity
+    }
+
+    function levels() {
+        const s = save.get()
+        if (!s.ok || !s.buildings) return []
+        reconcile(s)
+        return s.buildings.map(b => {
+            const badge = el('productLevel' + b.id)
+            const liveLevel = badge ? window.Alakazam.parse.firstNumberIn(badge.innerText) : NaN
+            const planned = pending
+                .filter(p => p.index === b.id && !p.uncertain)
+                .reduce((n, p) => Math.max(n, p.level), 0)
+            const level = Number.isInteger(liveLevel) && liveLevel >= 0 ? liveLevel : b.level
+            return { ...b, level: Math.max(level, planned) }
+        })
+    }
+
+    //! How long this save's lumps actually live
+    // The lump icon is a sprite, and the frame is picked from how far through its
+    // life the lump is. From the game's own draw call:
+    //
+    //   sevenths = (age / fallAge) * 7
+    //   #lumpsIcon  background-position column = 23 + min(floor(sevenths), 5)
+    //   #lumpsIcon2 opacity                    = min(6, sevenths) % 1
+    //
+    // with the opacity forced to 1 once six sevenths are up. So the column gives
+    // the whole part and the opacity the fraction, and together they are `sevenths`
+    // to several decimal places. The age is known from the save, so the whole
+    // lifespan is age * 7 / sevenths, and everything else follows from it.
+    //
+    // The reading saturates in the last seventh, which is exactly the part that
+    // matters, so the answer is measured all through the lump's life and kept.
+    // It is stored per save because it only changes when an upgrade does, and
+    // because a page reload late in a lump's life would otherwise have nothing.
+
+    const LUMP_KEY = 'lumpLifeSpan'
+
+    // sprite geometry, matching measure/buffs.js: 48px cells, and the lump frames
+    // start at column 23
+    const CELL = 48
+    const FIRST_COLUMN = 23
+
+    // below this the age is too short for the ratio to be worth anything: a few
+    // minutes in, a small misreading of the fraction is a large one of the whole
+    const MEASURE_AFTER_MS = HOUR
+
+    function el(id) {
+        return document.getElementById(id)
+    }
+
+    //* sevenths
+    // how far through its life the lump on screen is, in the game's own sevenths.
+    // NaN when it cannot be read at all and when the reading has saturated, which
+    // are the same answer as far as any caller is concerned: no new information.
+    function sevenths() {
+        const icon = el('lumpsIcon')
+        const fade = el('lumpsIcon2')
+        if (!icon || !icon.style || !fade || !fade.style) return NaN
+
+        const found = String(icon.style.backgroundPosition || '').match(/(-?\d+(?:\.\d+)?)px/)
+        if (!found) return NaN
+        const whole = Math.round(-parseFloat(found[1]) / CELL) - FIRST_COLUMN
+        if (!(whole >= 0 && whole <= 5)) return NaN
+
+        const opacity = parseFloat(fade.style.opacity)
+        if (!Number.isFinite(opacity)) return NaN
+        // the frame stops advancing and the second icon goes fully opaque together,
+        // six sevenths in. Past that the sprite says only "nearly done".
+        if (whole === 5 && opacity >= 1) return NaN
+
+        return whole + opacity
+    }
+
+    //* measure
+    // update the stored lifespan from what the icon is showing, if it is showing
+    // anything useful. Silent when it is not: the fallback is the game's base.
+    function measure(age) {
+        if (!(age > MEASURE_AFTER_MS)) return
+        const at = sevenths()
+        if (!(at > 0)) return
+        const span = (age * 7) / at
+        // nothing can lengthen a lump's life past the base, and the reductions
+        // together cannot halve it, so anything outside that is a bad read
+        if (!(span >= MIN_MEASURED_MS && span <= FALL_MS)) return
+        store.set(LUMP_KEY, Math.round(span))
+    }
+
+    //* lifeSpan
+    // how long a lump lives on this save, in milliseconds. Takes a fresh reading
+    // first, so it is correct whoever asks and in whatever order.
+    //
+    // The remembered value is what carries the answer through the last seventh,
+    // where the sprite stops saying anything, and through a page reload. Until
+    // there has ever been a reading it is the game's own base, which is the safe
+    // direction to be wrong in: too late to harvest costs an hour, too early
+    // costs half the lumps.
+    function lifeSpan() {
+        return measuredSpan() || FALL_MS
+    }
+
+    //* measuredSpan
+    // the lifespan if it has actually been read off the game, and zero if the
+    // only thing behind the answer so far is the base timing
+    function measuredSpan() {
+        const s = save.get()
+        if (s.ok && s.scalars && s.scalars.lumpsState === 'unlocked' && s.scalars.lumpT) {
+            measure(Date.now() - s.scalars.lumpT)
+        }
+        const held = store.get(LUMP_KEY, 0)
+        return held >= MIN_MEASURED_MS && held <= FALL_MS ? held : 0
+    }
+
+    //! Reading the current lump
+
+    function lumpState() {
+        const s = save.get()
+        if (!s.ok || !s.scalars) return null
+        const scalars = s.scalars
+        if (scalars.lumpsState !== 'unlocked' || !scalars.lumpT) return null
+
+        const age = Date.now() - scalars.lumpT
+        const measured = measuredSpan()
+        const falls = measured || FALL_MS
+        const ripeAt = falls - RIPE_BEFORE_FALL_MS
+        return {
+            lumps: scalars.lumps,
+            total: scalars.lumpsTotal,
+            type: LUMP_TYPES[scalars.lumpCurrentType] || 'normal',
+            age,
+            mature: age >= MATURE_MS,
+            ripe: age >= ripeAt,
+            hoursToRipe: Math.max(0, (ripeAt - age) / HOUR),
+            // whether that came off the game or is still the base guess
+            measured: measured > 0,
+            // worth showing: on an upgraded save this is hours below the 24 the
+            // guides quote, and it is the whole reason the timing changed
+            lifeSpanHours: falls / HOUR,
+            trusted: scalars.trusted
+        }
+    }
+
+    //! Harvesting
+
+    function harvest(reason) {
+        const lumps = el('lumps')
+        if (!lumps) return false
+        simulateClick(lumps)
+        lastHarvestAt = Date.now()
+        console.log(`Alakazam: harvesting sugar lump (${reason})`)
+        return true
+    }
+
+    //* shouldGamble
+    // one deliberate early harvest per save, for the achievement that can only be
+    // earned by picking a lump before it ripens. it is a coin flip, so it is taken
+    // once and never again.
+    //
+    // It waits for a measured lifespan rather than going on the base timings,
+    // because the gamble is only worth taking if we know where ripe is: guessing
+    // it an hour late on a shortened save spends the one attempt on a lump that
+    // was already ripe, or already gone. On a save whose ripening has been pulled
+    // in below twenty hours there is no moment we can be sure is past maturity
+    // but short of ripe, and this simply never fires. That is the right way
+    // round: a wasted lump is worse than an achievement earned by hand.
+    function shouldGamble(lump) {
+        if (!lump.mature || lump.ripe || !lump.measured) return false
+        return !store.get('handPickedTried', false)
+    }
+
+    //! Spending
+
+    //* nextSpend
+    // the first entry in the plan that is not satisfied yet, or the best ordinary
+    // level-up once the plan is complete
+    function nextSpend(lumps) {
+        const buildings = levels()
+        if (!buildings.length) return null
+        // do not retry an unreadable action before a save settles its outcome
+        if (pending.some(p => p.uncertain)) return null
+
+        for (const step of PLAN) {
+            const building = buildings[step.building]
+            if (!building) continue
+            // a building has to exist before it can be levelled
+            if (building.amount < 1) continue
+            if (building.level >= step.level) continue
+            const cost = building.level + 1
+            if (cost > lumps) return null
+            return { index: step.building, name: building.name, cost, reserve: 0, why: step.why }
+        }
+
+        // plan complete: keep a hundred banked for the production bonus, then
+        // bring every owned building to level 10 for its achievement, take
+        // cursors to 20 when the gloves support it, then favor top production
+        if (lumps <= BANK_TARGET) return null
+        const owned = buildings.filter(b => b.amount > 0).sort((a, b) => b.totalCookies - a.totalCookies)
+        if (!owned.length) return null
+        const under10 = owned.find(b => b.level < 10)
+        const upgrades = save.get().upgrades
+        const extendedGloves =
+            upgrades?.[AURA_GLOVES_ID]?.bought && upgrades?.[LUMINOUS_GLOVES_ID]?.bought
+        const cursor20 =
+            extendedGloves && buildings[0]?.amount > 0 && buildings[0].level < 20 ? buildings[0] : null
+        const best = under10 || cursor20 || owned[0]
+        const why = under10
+            ? 'level 10 achievement'
+            : cursor20
+              ? 'Luminous gloves click bonus'
+              : 'highest producing building'
+        const cost = best.level + 1
+        if (cost > lumps - BANK_TARGET) return null
+        return {
+            index: best.id,
+            name: best.name,
+            cost,
+            reserve: BANK_TARGET,
+            why
+        }
+    }
+
+    function spendPrompt() {
+        const node = window.Alakazam.safety.prompt()
+        return node?.id === 'promptContentSpendLump' ? node : null
+    }
+
+    //* levelUp
+    // The level control is #productLevel<n>. It is not part of the store product
+    // it belongs to: the game builds it into the building's own row, over on the
+    // other side of the page, so looking for it inside the store listing finds
+    // nothing and no lump was ever spent. It is addressed by id instead.
+    async function levelUp(spend, lease) {
+        const badge = el('productLevel' + spend.index)
+        if (!badge || !lease.valid()) return false
+        const before = banked()
+        const level = levels()[spend.index]?.level
+        if (level + 1 !== spend.cost || before - spend.cost < spend.reserve) return false
+        const previousPrompt = spendPrompt()
+        if (previousPrompt) return false
+        simulateClick(badge)
+        // remember a confirmation even if the player dismisses it before the wait
+        let prompt = spendPrompt()
+        const spent = () => {
+            const badgeLevel = window.Alakazam.parse.firstNumberIn(badge.innerText)
+            const amount = el('lumpsAmount')
+            const held = amount ? window.Alakazam.parse.firstNumberIn(amount.innerText) : NaN
+            return (
+                badgeLevel > level ||
+                save.get().buildings?.[spend.index]?.level > level ||
+                held <= before - spend.cost
+            )
+        }
+        const reserve = uncertain => {
+            balanceCeiling = Math.min(balanceCeiling, before - spend.cost)
+            const reservation = {
+                index: spend.index,
+                level: level + 1,
+                cost: spend.cost,
+                uncertain,
+                at: Date.now()
+            }
+            pending.push(reservation)
+            return reservation
+        }
+        try {
+            // confirmations may arrive on a later draw; there is no detached timer
+            const outcome = await window.Alakazam.transactions.until(lease, () => {
+                const currentPrompt = spendPrompt()
+                if (currentPrompt) prompt = currentPrompt
+                return currentPrompt || spent()
+            })
+            if (!outcome || !lease.valid()) {
+                // cancellation of an unconfirmed prompt is not a spend. If no
+                // prompt or result was readable, hold the bank only until a save
+                // settles the click; an invalid lease cannot prove a level-up.
+                if (spent()) reserve(false)
+                else if (!prompt) reserve(true)
+                return false
+            }
+            if (prompt) {
+                const actualCost = window.Alakazam.parse.firstNumberIn(prompt.innerText)
+                const current = nextSpend(banked())
+                if (
+                    !current ||
+                    current.index !== spend.index ||
+                    actualCost !== current.cost ||
+                    banked() - actualCost < current.reserve ||
+                    !lease.valid()
+                )
+                    return false
+                const option = el('promptOption0')
+                if (!option || spendPrompt() !== prompt) return false
+                simulateClick(option)
+            }
+            // account for this spend immediately, before the next autosave or draw
+            const reservation = reserve(!spent())
+            const observed = await window.Alakazam.transactions.until(lease, spent)
+            if (observed) reservation.uncertain = false
+            return !!observed
+        } finally {
+            if (prompt && spendPrompt() === prompt) {
+                const cancel = el('promptOption1')
+                if (cancel) simulateClick(cancel)
+            }
+        }
+    }
+
+    //! Tick
+
+    //* banked
+    // prefer the live balance; until redraw/autosave, subtract our outstanding
+    // spends so repeated ticks cannot spend the same lumps twice.
+    function banked() {
+        const s = save.get()
+        reconcile(s)
+        const node = el('lumpsAmount')
+        const live = node ? window.Alakazam.parse.firstNumberIn(node.innerText) : NaN
+        if (Number.isFinite(live) && live >= 0) {
+            if (live <= balanceCeiling) balanceCeiling = Infinity
+            return Math.min(live, balanceCeiling)
+        }
+        if (!s.ok || !s.scalars || !s.scalars.trusted) return NaN
+        const unrecorded = pending.filter(p => (s.buildings[p.index]?.level ?? -1) < p.level)
+        return s.scalars.lumps - unrecorded.reduce((n, p) => n + p.cost, 0)
+    }
+
+    async function tick() {
+        const lump = lumpState()
+        if (lump) {
+            window.__alakazam.lumps = lump
+
+            // the lump timings come from positional save fields, so if that layout
+            // could not be trusted we do not gamble a lump on it
+            if (lump.trusted && Date.now() - lastHarvestAt > 60000) {
+                if (lump.ripe) {
+                    harvest(`ripe ${lump.type} lump`)
+                } else if (shouldGamble(lump)) {
+                    store.set('handPickedTried', true)
+                    harvest('mature but not ripe, for the one achievement that needs it')
+                }
+            }
+        }
+
+        const held = banked()
+        if (!Number.isFinite(held)) return
+        const spend = nextSpend(held)
+        if (spend) {
+            console.log(`Alakazam: levelling ${spend.name} for ${spend.cost} sugar lumps (${spend.why})`)
+            const lease = window.Alakazam.transactions.acquire('lumps')
+            if (!lease) return
+            try {
+                await levelUp(spend, lease)
+            } finally {
+                lease.release()
+            }
+        }
+    }
+
+    registry.register({ name: 'lumps', interval: INTERVAL_MS, tick })
+
+    return { lumpState, nextSpend, lifeSpan, sevenths, PLAN, MATURE_MS, FALL_MS }
+})()
+window.Alakazam.lumps = api
