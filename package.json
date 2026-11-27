@@ -1,19 +1,26 @@
 {
     "name": "alakazam",
-    "version": "1.4.0",
+    "version": "1.4.1",
     "description": "Analyzes and optimizes Cookie Clicker strategy",
     "scripts": {
-        "test": "node scripts/test-unit.cjs",
+        "test": "npm run build && tsx scripts/test-unit.ts",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "test:browser": "playwright test --project=game",
-        "test:extension": "playwright test --project=extension",
-        "test:integration": "playwright test",
-        "test:game:fetch": "node scripts/fetch-test-game.cjs"
+        "test:browser": "npm run build && playwright test --project=game",
+        "test:extension": "npm run build && playwright test --project=extension",
+        "test:integration": "npm run build && playwright test",
+        "test:game:fetch": "tsx scripts/fetch-test-game.ts",
+        "build": "tsx scripts/build.ts",
+        "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.tests.json"
     },
     "devDependencies": {
+        "@playwright/test": "1.64.1",
+        "@types/chrome": "^0.1.43",
+        "@types/node": "^22.20.7",
+        "esbuild": "^0.28.2",
         "prettier": "^3.1.0",
-        "@playwright/test": "1.64.1"
+        "tsx": "^4.23.15",
+        "typescript": "~5.9.3"
     },
     "prettier": {
         "semi": false,

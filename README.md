@@ -8,13 +8,13 @@ This extension will eventually be included on [Chrome Web Store](https://chromew
 Also please do not sue me if your computer explodes, implodes or does something unexpected after loading this. However, as long as I've committed something recently, you can be sure my computer survived all my quality code
 
 ### Guide
-1. Clone or download this repository to your computer
+1. Clone or download this repository to your computer, then run `npm ci` and `npm run build` using Node 22.22+ or 24.x
 2. Navigate to "chrome://extensions/", "brave://extensions/" or the equivalent extensions page of your Chromium based browser. You may also find it under a puzzle icon on your browser's toolbar, to the right of the search bar, or in the "more options menu" (three dots icon) of your browser
 3. Turn on Developer mode
-4. Click "Load unpacked" and select the folder containing this repository
+4. Click "Load unpacked" and select the generated `dist/` folder
 5. Open Cookie Clicker and profit!
 
-There is no build step. The repository *is* the extension.
+The TypeScript sources build into `dist/`. Rebuild after source changes, then reload the unpacked extension in your browser. Generated JavaScript is ignored by Git.
 
 ## Using it
 A panel appears in the top right of the game. It shows what Alakazam is currently
@@ -32,6 +32,8 @@ changing dependencies; CI installs it with `npm ci`.
 
 ```bash
 npm ci
+npm run typecheck            # application, test, and tooling types
+npm run build                # load dist/ as the unpacked extension
 npm test                     # unit harness, no browser needed
 npm run format:check         # prettier
 npx playwright install chromium --no-shell
@@ -39,7 +41,12 @@ npm run test:game:fetch       # pinned disposable Cookie Clicker 2.058 mirror
 npm run test:integration      # game DOM tests + unpacked-extension smoke
 ```
 
-The unit harness loads content scripts in manifest order into a fake document.
+All executable sources, tests, and tooling are TypeScript. The build preserves the
+manifest script paths and order, wraps each entry in its own scope, and copies only
+the extension assets into `dist/`. API types are shared through type-only links, so
+content scripts keep their existing isolated-world loading behavior.
+
+The unit harness loads the built content scripts in manifest order into a fake document.
 The Playwright layer uses an ignored game checkout and temporary browser profiles.
 The extension smoke loads a temporary unpacked copy with localhost-only matches;
 production permissions remain in `manifest.json`. See [Testing](docs/TESTING.md)

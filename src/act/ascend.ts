@@ -1,0 +1,339 @@
+// wrapped in an IIFE so its top-level names stay private: all content scripts
+// share one scope, so bare top-level declarations across files would collide
+export const api = (function () {
+    //! Ascension Screen Controls
+    // Every click the ascension sequence makes, and nothing else. The decision to
+    // ascend is in modules/ascend.js and the arithmetic behind it is in
+    // strategy/ascend.js; this file only knows how to work the screen.
+    //
+    // It is separated for the same reason act/store.js is: these are the controls
+    // that can do real damage if they are driven from the wrong place, so they live
+    // somewhere with one obvious owner.
+    //
+    //! Never confirm a prompt you did not open
+    // The game funnels every confirmation through one element. `Game.Prompt` writes
+    // its options as #promptOption0, #promptOption1 and so on, so the confirm button
+    // for "Ascend", for "Reincarnate", and for "Really wipe save" are all the same
+    // id. Clicking #promptOption0 because a prompt happens to be open is how an
+    // extension deletes somebody's save.
+    //
+    // What makes this safe is that Game.Prompt also stamps the prompt's own name
+    // into the DOM: content beginning with `<id Ascend>` is wrapped in a div called
+    // #promptContentAscend. So every confirm here names the prompt it expects and
+    // refuses to click when that prompt is not the one on screen.
+
+    const { parseGameNumber } = window.Alakazam.parse
+
+    //* Prompts we are willing to confirm
+    // by the id Game.Prompt derives from the prompt's own name. Anything not on
+    // this list is a prompt the ascension sequence has no business answering.
+    const PROMPTS = {
+        ascend: 'promptContentAscend',
+        reincarnate: 'promptContentReincarnate',
+        permanent: 'promptContentPickPermaUpgrade'
+    }
+
+    function el(id) {
+        return document.getElementById(id)
+    }
+
+    //! Where we are
+
+    //* screen
+    // The game tracks its own mode in the class list of #game. Three matter:
+    //
+    //   ascendIntro   the cookie is exploding; nothing is clickable yet
+    //   ascending     the heavenly upgrade tree is up and shopping can start
+    //   reincarnating the fade back into a fresh run
+    //
+    // Reading the class rather than Game.OnAscend keeps this on the DOM side of the
+    // fair-play contract, and it is the same fact: the class is what the game's own
+    // stylesheet keys off.
+    function screen() {
+        const game = el('game')
+        if (!game || !game.classList) return 'playing'
+        if (game.classList.contains('ascending')) return 'ascending'
+        if (game.classList.contains('ascendIntro')) return 'intro'
+        if (game.classList.contains('reincarnating')) return 'reincarnating'
+        return 'playing'
+    }
+
+    function onAscendScreen() {
+        return screen() === 'ascending'
+    }
+
+    //* animating
+    // the five second ascend animation, and the fade back afterwards. both are
+    // periods where clicking achieves nothing, so the caller waits them out.
+    function animating() {
+        const where = screen()
+        return where === 'intro' || where === 'reincarnating'
+    }
+
+    //! Prompts
+
+    function promptIs(which) {
+        const id = PROMPTS[which]
+        const node = window.Alakazam.safety.prompt()
+        return !!(id && node && node.id === id)
+    }
+
+    //* confirmPrompt
+    // click the confirm option, but only when the prompt on screen is the one named.
+    // returns false rather than clicking anything when it is not.
+    function confirmPrompt(which, ctx = window.Alakazam.safety.context('ascend')) {
+        return clickOption(which, 'promptOption0', ctx)
+    }
+
+    //* cancelPrompt
+    // the second option, which every prompt the sequence opens uses for Cancel or
+    // No. Backing out has to be possible: a picker with nothing worth picking would
+    // otherwise sit open forever, and everything else waits behind it.
+    function cancelPrompt(which, ctx = window.Alakazam.safety.context('ascend')) {
+        return clickOption(which, 'promptOption1', ctx)
+    }
+
+    function clickOption(which, id, ctx) {
+        if (!promptIs(which) || !window.Alakazam.safety.ownsPrompt(ctx.owner, PROMPTS[which].slice(13)))
+            return false
+        const option = el(id)
+        if (!option) return false
+        ctx.input('simulateClick', option)
+        return true
+    }
+
+    //* liveSave
+    // ExportSave renders a fresh WriteSave(1) into a read-only textarea. Share
+    // that DOM route with cosmetic recovery; ownership belongs to its caller.
+    function liveSave(ctx = window.Alakazam.safety.context('ascend')) {
+        ctx.check()
+        const { safety, savefile, identity } = window.Alakazam
+        if (safety.prompt()) return null
+        const prefs = el('prefsButton')
+        if (!prefs) return null
+        const previous = ['prefsButton', 'statsButton', 'logButton']
+            .map(el)
+            .find(node => node && node.classList.contains('selected'))
+        let opened = false
+        try {
+            if (previous !== prefs) {
+                ctx.input('simulateClick', prefs)
+                opened = true
+            }
+            const button = Array.from(document.querySelectorAll<HTMLElement>('#menu a.option')).find(
+                node =>
+                    /Game\.ExportSave\(\)/.test(
+                        node.getAttribute('onclick') || node.getAttribute('ontouchend') || ''
+                    )
+            )
+            if (!button) return null
+            const requestedAt = Date.now()
+            const key = savefile.selectedKey()
+            const unchanged = safety.cosmeticCheck()
+            ctx.input('simulateClick', button)
+            if (!safety.ownsPrompt(ctx.owner, 'ExportSave')) return null
+            const field = el('textareaPrompt') as HTMLTextAreaElement
+            if (!field) return null
+            const snapshot = savefile.parse(savefile.decode(field.value))
+            // Exports have no key; only this page's selected variant authorizes it.
+            snapshot.key = key
+            if (
+                !snapshot.ok ||
+                snapshot.stale ||
+                !snapshot.scalars ||
+                !identity.fromSave(snapshot).known ||
+                Math.abs(requestedAt - snapshot.run.lastDate) > 2000 ||
+                !unchanged() ||
+                key !== savefile.selectedKey()
+            )
+                return null
+            return snapshot
+        } finally {
+            ctx.cleanup(() => {
+                if (safety.ownsPrompt(ctx.owner, 'ExportSave')) {
+                    ctx.input('simulateClick', el('promptOption0'))
+                }
+                if (opened && !safety.prompt() && prefs.classList.contains('selected')) {
+                    ctx.input('simulateClick', previous || prefs)
+                }
+            })
+        }
+    }
+
+    //* liveHoard
+    function liveHoard(ctx = window.Alakazam.safety.context('ascend')) {
+        const snapshot = liveSave(ctx)
+        if (!snapshot) return null
+        const { identity } = window.Alakazam
+        const who = identity.fromSave(snapshot)
+        const current = identity.current()
+        if (who.runId !== current.runId || who.legacyId !== current.legacyId) return null
+        const s = snapshot.scalars
+        if (
+            ![s.wrinklersAmount, s.wrinklersShinyAmount, s.wrinklersNumber, s.wrinklersShiny].every(
+                value => Number.isFinite(value) && value >= 0
+            )
+        )
+            return null
+        return {
+            at: snapshot.run.lastDate,
+            runId: who.runId,
+            resets: s.resets,
+            hoard: s.wrinklersAmount + s.wrinklersShinyAmount,
+            active: s.wrinklersNumber
+        }
+    }
+
+    //! Leaving the run
+
+    //* openLegacy
+    // the Legacy button in the corner, which opens the Ascend prompt. It does not
+    // ascend on its own: the prompt still has to be confirmed, which is the second
+    // step and a separate call.
+    function openLegacy(ctx = window.Alakazam.safety.context('ascend')) {
+        const button = el('legacyButton')
+        if (!button) return false
+        ctx.input('simulateClick', button)
+        return true
+    }
+
+    //! On the ascension screen
+
+    //* chips
+    // the heavenly chips available to spend, read off the screen rather than the
+    // save, because the save has not been written since the ascension started.
+    //
+    // The figure the game renders climbs toward its real value over a second or so
+    // after arriving, so a caller that needs it settled polls until it stops moving.
+    function chips() {
+        const box = el('ascendHCs')
+        if (!box) return NaN
+        const price = box.querySelector ? box.querySelector<HTMLElement>('.price') : null
+        return parseGameNumber((price || box).innerText)
+    }
+
+    function prestige() {
+        const box = el('ascendPrestige')
+        return box ? parseGameNumber(box.innerText) : NaN
+    }
+
+    //* crates
+    // every heavenly upgrade the tree is currently offering that is worth clicking.
+    //
+    // A ghosted crate is one whose prerequisites are not met: the game renders it as
+    // a plain div with no click handler at all, so clicking it does nothing and only
+    // costs a hover to find that out.
+    //
+    //! Never click one you already own
+    // A crate on this tree carries `enabled` if and only if it is already bought:
+    // Game.crate sets it from `me.bought` in the ascend context. Clicking one is not
+    // merely wasted, it is actively harmful, because Game.Upgrade.buy ends with
+    //
+    //   if (this.bought && this.activateFunction) this.activateFunction();
+    //
+    // outside the branch that checks whether anything was purchased. Every permanent
+    // upgrade slot has an activateFunction that opens its picker. So clicking an
+    // owned slot reopens the picker, the shopping pass fills it in, comes round,
+    // finds the same affordable crate still on offer, and clicks it again: a loop
+    // that spends nothing, never reports itself finished, and therefore never
+    // reincarnates. That is why the run sat on the ascension screen.
+    //
+    // Both of these are dropped here rather than in the caller so no consumer can
+    // forget.
+    function crates() {
+        const out = []
+        const tree = el('ascendUpgrades')
+        if (!tree || !tree.querySelectorAll) return out
+        for (const node of tree.querySelectorAll<HTMLElement>('.crate.upgrade.heavenly')) {
+            if (!node.classList) continue
+            if (node.classList.contains('ghosted')) continue
+            if (node.classList.contains('enabled')) continue
+            const id = node.getAttribute ? node.getAttribute('data-id') : null
+            // the tree draws a decorative crate with no id behind the real ones
+            if (!id) continue
+            out.push({ id, element: node })
+        }
+        return out
+    }
+
+    //* ownedCrates
+    // The bought ones, which crates() drops on purpose. Only one thing wants them:
+    // a permanent upgrade slot is reassignable at any ascension, and reassigning it
+    // means clicking the crate that is already owned. Anything walking this list has
+    // to know what it is doing, which is why it is a second function rather than a
+    // flag on the first.
+    function ownedCrates() {
+        const out = []
+        const tree = el('ascendUpgrades')
+        if (!tree || !tree.querySelectorAll) return out
+        for (const node of tree.querySelectorAll<HTMLElement>('.crate.upgrade.heavenly')) {
+            if (!node.classList || !node.classList.contains('enabled')) continue
+            const id = node.getAttribute ? node.getAttribute('data-id') : null
+            if (!id) continue
+            out.push({ id, element: node })
+        }
+        return out
+    }
+
+    function buy(crate, ctx = window.Alakazam.safety.context('ascend')) {
+        if (!crate || !crate.element) return false
+        ctx.input('simulateClick', crate.element)
+        return true
+    }
+
+    //! Permanent upgrade slots
+    // Buying a slot does not fill it. Clicking the slot's own crate opens a picker
+    // of every upgrade bought last run, and the choice is only committed by the
+    // prompt's Confirm.
+
+    function permanentChoices() {
+        const out = []
+        const prompt = el(PROMPTS.permanent)
+        if (!prompt || !prompt.querySelectorAll) return out
+        for (const node of prompt.querySelectorAll<HTMLElement>('.crate.upgrade')) {
+            const id = node.id || ''
+            if (id.indexOf('upgradeForPermanent') !== 0) continue
+            out.push({ id: id.slice('upgradeForPermanent'.length), element: node })
+        }
+        return out
+    }
+
+    function pickPermanent(choice, ctx = window.Alakazam.safety.context('ascend')) {
+        if (!choice || !choice.element) return false
+        ctx.input('simulateClick', choice.element)
+        return true
+    }
+
+    //! Coming back
+
+    function reincarnate(ctx = window.Alakazam.safety.context('ascend')) {
+        const button = el('ascendButton')
+        if (!button) return false
+        ctx.input('simulateClick', button)
+        return true
+    }
+
+    window.Alakazam = window.Alakazam || ({} as typeof window.Alakazam)
+    window.Alakazam.act = window.Alakazam.act || ({} as typeof window.Alakazam.act)
+    return {
+        liveSave,
+        liveHoard,
+        screen,
+        onAscendScreen,
+        animating,
+        promptIs,
+        confirmPrompt,
+        cancelPrompt,
+        openLegacy,
+        chips,
+        prestige,
+        crates,
+        buy,
+        ownedCrates,
+        permanentChoices,
+        pickPermanent,
+        reincarnate,
+        PROMPTS
+    }
+})()
+window.Alakazam.act.ascend = api

@@ -1,0 +1,11 @@
+{
+    "extends": "./tsconfig.json",
+    "include": [
+        "src/**/*.ts",
+        "types/**/*.ts",
+        "popup.ts",
+        "scripts/**/*.ts",
+        "tests/**/*.ts",
+        "playwright.config.ts"
+    ]
+}

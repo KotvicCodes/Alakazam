@@ -1,0 +1,144 @@
+//! Extension harness
+// Loads the content scripts, in manifest order, into a vm context wired to a fake
+// document. Returns the window.Alakazam namespace plus the pieces a test needs to
+// poke at the page.
+
+const fs = require('fs')
+const vm = require('vm')
+const path = require('path')
+const game = require('./game')
+const { storageFixture } = require('./storage')
+const storageByDisk = new WeakMap()
+
+const ROOT = path.join(__dirname, '../dist')
+
+function boot(opts: Record<string, any> = {}) {
+    const g = game.build(opts.game || {})
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'))
+    // main.js is the page bootstrap: it waits three seconds and then starts the
+    // scheduler on its own. Tests drive the scheduler themselves, so it is left
+    // out unless a test explicitly asks for the real boot sequence.
+    const files = manifest.content_scripts[0].js.filter(
+        f => opts.includeMain === true || f !== 'src/main.js'
+    )
+
+    const disk = opts.storage ? opts.storage.disk : opts.disk || {}
+    if (!storageByDisk.has(disk)) storageByDisk.set(disk, storageFixture(disk))
+    const storage = opts.storage || storageByDisk.get(disk)
+    const chrome = storage.chrome()
+    opts.connectChrome?.(chrome)
+
+    const rafQueue = []
+    const events = []
+
+    class FakeEvent {
+        [key: string]: any
+        constructor(type, init: Record<string, any> = {}) {
+            Object.assign(this, init)
+            this.type = type
+            this.isTrusted = false
+        }
+    }
+
+    const ctx: Record<string, any> = {
+        console,
+        location: opts.location,
+        document: g.doc,
+        chrome,
+        setTimeout: opts.clock?.setTimeout || setTimeout,
+        clearTimeout: opts.clock?.clearTimeout || clearTimeout,
+        setInterval: opts.clock?.setInterval || setInterval,
+        clearInterval: opts.clock?.clearInterval || clearInterval,
+        requestAnimationFrame: fn => rafQueue.push(fn),
+        MouseEvent: FakeEvent,
+        PointerEvent: FakeEvent,
+        Event: FakeEvent,
+        // Buffer's base64 decoder silently discards anything outside the
+        // alphabet, where a browser throws. Validating first is what makes this
+        // stand in for the real one: without it, "not a save at all" decodes to
+        // bytes instead of failing, and the code under test never sees the branch
+        // it takes in a browser.
+        atob: s => {
+            if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s)) {
+                const err = new Error('invalid character')
+                err.name = 'InvalidCharacterError'
+                throw err
+            }
+            return Buffer.from(s, 'base64').toString('binary')
+        },
+        addEventListener: (type, fn) => events.push({ type, fn }),
+        innerWidth: 1440,
+        innerHeight: 900,
+        localStorage: opts.localStorage || {
+            getItem: k => (opts.save && k === 'CookieClickerGame' ? opts.save : null)
+        }
+    }
+    if (opts.clock) ctx.Date = opts.clock.Date
+    ctx.window = ctx
+    ctx.PointerEvent = FakeEvent
+    vm.createContext(ctx)
+
+    for (const f of files) {
+        vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f })
+    }
+
+    const { savefile } = ctx.window.Alakazam
+    const initial = savefile.read()
+    const scalar = initial.scalars || {}
+    g.state.wrinklerHoard = scalar.wrinklersAmount || 0
+    g.state.wrinklers = scalar.wrinklersNumber || 0
+    g.state.shinyHoard = scalar.wrinklersShinyAmount || 0
+    g.state.shinyWrinklers = scalar.wrinklersShiny || 0
+    g.state.exportSave = () => {
+        const fx = require('./fixtures')
+        const decoded = savefile.decode(
+            ctx.localStorage.getItem(savefile.selectedKey()) || opts.save || fx.save().raw
+        )
+        const sections = decoded.split('|')
+        const run = sections[2].split(';')
+        run[2] = String(vm.runInContext('Date.now()', ctx))
+        run[5] = g.state.genes.join(',')
+        sections[2] = run.join(';')
+        const scalars = sections[4].split(';')
+        scalars[23] = g.state.wrinklerHoard
+        scalars[24] = g.state.wrinklers
+        scalars[40] = g.state.shinyWrinklers
+        scalars[41] = g.state.shinyHoard
+        sections[4] = scalars.join(';')
+        return fx.encode(sections.join('|'))
+    }
+
+    return {
+        A: ctx.window.Alakazam,
+        debug: () => ctx.window.__alakazam,
+        ctx,
+        game: g,
+        disk,
+        storage,
+        rafQueue,
+        frame: () => {
+            const q = rafQueue.splice(0, rafQueue.length)
+            q.forEach(fn => fn())
+        },
+        events
+    }
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+//* waitFor
+// poll a condition instead of sleeping for however long the thing under test is
+// expected to take. Modules run on their own intervals, so a fixed sleep has to
+// be long enough for the slowest tick under load, and any sleep short enough to
+// keep the suite quick is one that fails on a busy machine. Returns whether the
+// condition ever held, so callers can assert on it.
+const waitFor = async (condition, timeout = 10000, step = 50) => {
+    const until = Date.now() + timeout
+    while (Date.now() < until) {
+        if (condition()) return true
+        await sleep(step)
+    }
+    return condition()
+}
+
+module.exports = { boot, sleep, waitFor, ROOT }

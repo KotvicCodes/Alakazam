@@ -1,0 +1,16 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "CommonJS",
+        "moduleResolution": "Node",
+        "moduleDetection": "force",
+        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+        "types": ["node", "chrome"],
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "noEmit": true,
+        "forceConsistentCasingInFileNames": true,
+        "skipLibCheck": true
+    },
+    "include": ["src/**/*.ts", "types/**/*.ts", "popup.ts"]
+}

@@ -6,6 +6,8 @@ lines and browser tests on Node 22, Ubuntu, and Playwright's bundled Chromium.
 
 ```sh
 npm ci
+npm run typecheck
+npm run build
 npm test
 npx playwright install chromium --no-shell
 npm run test:game:fetch
@@ -20,24 +22,30 @@ to install browser system libraries too. A display server is not needed. The
 browser download and game fetch require network access; test pages block requests
 outside the local fixture server. Do not point this suite at a real game/profile.
 
+TypeScript checks cover the runtime, Node tooling, fixtures, and tests. Runtime
+API declarations use the implementation exports. Existing flexible configuration
+and fixture dictionaries retain explicit dynamic types; this migration does not
+enable TypeScript strict mode. The test scripts build first, so VM and browser
+assertions exercise the generated extension JavaScript.
+
 ## Layers and limits
 
-- **Unit harness:** `npm test` recursively discovers `tests/**/*.test.js` and
-  passes explicit sorted filenames to `node --test` without shell glob expansion.
-  `.spec.cjs` browser tests and helpers are excluded. The original 283 tests stay
-  here, with two tests for clock/storage fixture isolation. `tests/harness.js`
-  loads content scripts in manifest order into a VM, omitting the bootstrap unless
+- **Unit harness:** `npm test` recursively discovers `tests/**/*.test.ts` and
+  passes explicit sorted filenames to `node --import tsx --test` without shell glob expansion.
+  `.spec.ts` browser tests and helpers are excluded. The original 283 tests stay
+  here, with two tests for clock/storage fixture isolation. `tests/harness.ts`
+  loads generated scripts from `dist/` in manifest order into a VM, omitting the bootstrap unless
   `includeMain` is requested. Fake DOM/storage checks do not establish browser
   compatibility.
-- **Game browser layer:** `tests/browser/game.spec.cjs` exercises save decoding,
+- **Game browser layer:** `tests/browser/game.spec.ts` exercises save decoding,
   event-driven purchases, ascension DOM states, French game-generated tooltips,
   lump changes between saves, warehouse capacity, and live cosmetic changes. It
   loads the content scripts in manifest order except `main.js`, starts with the master
   switch disabled, and enables it only for specific manually invoked actions.
   Transaction restoration and live garden maturity with a selected seed have combined regressions. These scripts share the page's world;
   this project makes no isolated-world or native-storage claim.
-- **Unpacked-extension smoke:** `tests/browser/extension.spec.cjs` copies the
-  extension into a temporary directory, generates a test-only key, and replaces
+- **Unpacked-extension smoke:** `tests/browser/extension.spec.ts` copies the
+  built extension from `dist/` into a temporary directory, generates a test-only key, and replaces
   origin permissions/matches and the temporary popup/background origin guards with
   localhost. Chromium loads it through
   `--load-extension`, including `main.js`. The test proves that the page's `Game`
@@ -69,14 +77,14 @@ for seven days. Inspect a trace with `npx playwright show-trace <trace.zip>`.
 
 ## Broader installed-extension acceptance
 
-`tests/extension.browser.cjs` also exercises keyboard controls, focus and scroll
+`tests/extension.browser.ts` also exercises keyboard controls, focus and scroll
 preservation, dragging across refreshes, viewport clamping, two game tabs, active-tab
 selection, restrictions, module failures, and navigation/close cleanup. It uses a
 fresh Chromium profile and canonical game URLs. Route those requests to the pinned
 local mirror to run without a live-site dependency:
 
 ```sh
-ALAKAZAM_GAME_DIR="$PWD/.cache/cookieclicker" node tests/extension.browser.cjs
+ALAKAZAM_GAME_DIR="$PWD/.cache/cookieclicker" npx tsx tests/extension.browser.ts
 ```
 
 The runner reports its screenshot directory and removes its disposable profile.
@@ -86,14 +94,14 @@ live-site availability, toolbar popup lifecycle, or a real player profile.
 
 ## Reusable fixtures
 
-`tests/clock.js` exports `clock(start)`. Pass it as `boot({ clock })` to control the
+`tests/clock.ts` exports `clock(start)`. Pass it as `boot({ clock })` to control the
 VM's Date, timeouts, and intervals without modifying the test process's globals.
 `clock.advance(ms)` synchronously drains due timers in order; await promises as
 needed after advancing to allow their continuations to run. The existing explicit
 `h.frame()` remains the animation-frame driver. A fresh clock per harness prevents
 one test from changing another test's time.
 
-`tests/fixtures.js` exports browser-shaped `storage(initial)` and
+`tests/fixtures.ts` exports browser-shaped `storage(initial)` and
 `autosaves(initial, { key, now })`. `change(patch)` changes the live fixture state;
 `publish()` writes a new encoded save. Before publish, readers still see the old
 save. `now` can be `clock.now`, and `save({ now })` also accepts an explicit timestamp.
@@ -119,7 +127,7 @@ test('observe a published save', async () => {
 })
 ```
 
-`tests/browser/fixtures.cjs` exports:
+`tests/browser/fixtures.ts` exports:
 
 - `openGame(page, 'EN' | 'FR')`, `localOnly(context)`, `loadAlakazam(page)`:
   disposable language-specific sessions, request isolation, and manual module setup.

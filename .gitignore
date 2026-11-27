@@ -41,3 +41,10 @@ temp/
 .cache/
 playwright-report/
 test-results/
+
+# Local agent instructions
+AGENTS.md
+CLAUDE.md
+.claude/
+.codex/
+copilot-instructions.md
